@@ -115,7 +115,14 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
       if (check(TokenType::DotDotDot))
         break;
       bool isRef = match(TokenType::Ampersand);
-      bool hasPointer = match(TokenType::Caret);
+      bool hasPointer = false;
+      bool isUnique = false;
+      if (match(TokenType::Caret)) {
+        hasPointer = true;
+        isUnique = true;
+      } else if (match(TokenType::Star)) {
+        hasPointer = true;
+      }
       Token argName = consume(TokenType::Identifier, "Expected argument name");
       std::string argType = "i64"; // fallback
       if (match(TokenType::Colon)) {
@@ -156,7 +163,14 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
 std::unique_ptr<VariableDecl> Parser::parseVariableDecl() {
   consume(TokenType::KwLet, "Expected 'let'");
   bool isRef = match(TokenType::Ampersand);
-  bool hasPointer = match(TokenType::Caret);
+  bool hasPointer = false;
+  bool isUnique = false;
+  if (match(TokenType::Caret)) {
+    hasPointer = true;
+    isUnique = true;
+  } else if (match(TokenType::Star)) {
+    hasPointer = true;
+  }
   Token name = consume(TokenType::Identifier, "Expected variable name");
 
   std::string typeName = "";
@@ -176,6 +190,7 @@ std::unique_ptr<VariableDecl> Parser::parseVariableDecl() {
   auto node = std::make_unique<VariableDecl>(name.Text, std::move(init));
   node->setLocation(name, m_CurrentFile);
   node->HasPointer = hasPointer;
+  node->IsUnique = isUnique;
   node->IsReference = isRef;
   node->IsMutable = name.HasWrite;
   node->IsNullable = name.HasNull;
@@ -347,6 +362,32 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     auto node = std::make_unique<StringExpr>(tok.Text);
     node->setLocation(tok, m_CurrentFile);
     expr = std::move(node);
+  } else if (match(TokenType::KwNew)) {
+    Token kw = previous();
+    Token typeName =
+        consume(TokenType::Identifier, "Expected type after 'new'");
+    std::unique_ptr<Expr> init = nullptr;
+    if (check(TokenType::LBrace)) {
+      advance(); // LBrace
+      std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
+      while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+        Token fieldName = consume(TokenType::Identifier, "Expected field name");
+        consume(TokenType::Equal, "Expected '=' after field name");
+        fields.push_back({fieldName.Text, parseExpr()});
+        match(TokenType::Comma);
+      }
+      consume(TokenType::RBrace, "Expected '}'");
+      auto node =
+          std::make_unique<InitStructExpr>(typeName.Text, std::move(fields));
+      node->setLocation(typeName, m_CurrentFile);
+      init = std::move(node);
+    } else {
+      error(kw, "Expected '{' initializer for new expression");
+      return nullptr;
+    }
+    auto node = std::make_unique<NewExpr>(typeName.Text, std::move(init));
+    node->setLocation(kw, m_CurrentFile);
+    expr = std::move(node);
   } else if (match(TokenType::LBracket)) {
     // Array literal [1, 2, 3]
     std::vector<std::unique_ptr<Expr>> elements;
@@ -382,7 +423,14 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       expr = std::move(elements[0]);
     }
   } else {
-    bool hasPointer = match(TokenType::Caret);
+    bool hasPointer = false;
+    bool isUnique = false;
+    if (match(TokenType::Caret)) {
+      hasPointer = true;
+      isUnique = true;
+    } else if (match(TokenType::Star)) {
+      hasPointer = true;
+    }
     if (match(TokenType::Identifier)) {
       Token name = previous();
       if (check(TokenType::LBrace)) {
@@ -415,6 +463,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         auto var = std::make_unique<VariableExpr>(name.Text);
         var->setLocation(name, m_CurrentFile);
         var->HasPointer = hasPointer;
+        var->IsUnique = isUnique;
         var->IsMutable = name.HasWrite;
         var->IsNullable = name.HasNull;
         expr = std::move(var);
@@ -465,7 +514,7 @@ std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
     do {
       if (check(TokenType::DotDotDot))
         break;
-      bool hasPointer = match(TokenType::Caret);
+      bool hasPointer = match(TokenType::Caret) || match(TokenType::Star);
       Token argName = consume(TokenType::Identifier, "Expected argument name");
       std::string argType = "i64";
       if (match(TokenType::Colon)) {

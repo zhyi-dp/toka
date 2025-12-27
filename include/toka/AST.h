@@ -58,6 +58,7 @@ class VariableExpr : public Expr {
 public:
   std::string Name;
   bool HasPointer = false;
+  bool IsUnique = false;
   bool IsMutable = false;
   bool IsNullable = false;
 
@@ -207,6 +208,18 @@ public:
   std::string toString() const override { return "Call(" + Callee + ")"; }
 };
 
+class NewExpr : public Expr {
+public:
+  std::string Type;
+  std::unique_ptr<Expr> Initializer;
+  NewExpr(const std::string &type, std::unique_ptr<Expr> init)
+      : Type(type), Initializer(std::move(init)) {}
+  std::string toString() const override {
+    return "New(" + Type + ", " + (Initializer ? Initializer->toString() : "") +
+           ")";
+  }
+};
+
 // --- Statements ---
 
 class BlockStmt : public Stmt {
@@ -263,6 +276,7 @@ public:
   std::unique_ptr<Expr> Init;
   std::string TypeName;
   bool HasPointer = false;
+  bool IsUnique = false;
   bool IsReference = false;
   bool IsMutable = false;
   bool IsNullable = false;
@@ -314,6 +328,7 @@ public:
     std::string Name;
     std::string Type;
     bool HasPointer = false;
+    bool IsUnique = false;
     bool IsReference = false;
     bool IsMutable = false;
     bool IsNullable = false;

@@ -236,7 +236,21 @@ Token Lexer::punctuation() {
       advance();
       return Token{TokenType::StarEqual, "*=", line, col};
     }
-    return Token{TokenType::Star, "*", line, col};
+    {
+      Token t{TokenType::Star, "*", line, col};
+      if (match('#')) {
+        t.IsSwappablePtr = true;
+        t.Text += "#";
+      } else if (match('?')) {
+        t.HasNull = true;
+        t.Text += "?";
+      } else if (match('!')) {
+        t.IsSwappablePtr = true;
+        t.HasNull = true;
+        t.Text += "!";
+      }
+      return t;
+    }
   case '/':
     if (peek() == '=') {
       advance();

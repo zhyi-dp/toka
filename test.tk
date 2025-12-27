@@ -1,4 +1,5 @@
 import "core/io";
+import "core/memory";
 
 struct Point {
     x: i32,
@@ -100,6 +101,17 @@ fn main() {
     let d# = 100;
     printf("[%03d]Prefix ++: d is %d\n", logi#++, ++d#);
     printf("[%03d]Prefix --: d is %d\n", logi#++, --d#);
+
+    // Heap Allocation Test
+    let ^heapNode = new Point{x = 777, y = 888, z = 0};
+    printf("[%03d]Heap Point is (%d, %d)\n", logi#++, heapNode.x, heapNode.y);
+
+    {
+        printf("Testing Move Semantics...\n");
+        let ^p = new Point{x=999, y=111, z=0};
+        let ^q = ^p;
+        printf("[%03d]Moved Heap Point: q.x=%d\n", logi#++, q.x);
+    }
 
     return;
 }

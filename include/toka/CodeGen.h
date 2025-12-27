@@ -38,6 +38,14 @@ private:
   std::map<std::string, std::string> m_TypeAliases;
   std::map<std::string, bool> m_ValueIsReference;
   std::map<std::string, bool> m_ValueIsMutable;
+  std::map<std::string, bool> m_ValueIsUnique; // Tracks ^Type for variables
+
+  struct VariableScopeInfo {
+    std::string Name;
+    llvm::Value *Alloca;
+    bool IsUniquePointer; // ^Type
+  };
+  std::vector<std::vector<VariableScopeInfo>> m_ScopeStack;
 
   llvm::Type *resolveType(const std::string &baseType, bool hasPointer);
 

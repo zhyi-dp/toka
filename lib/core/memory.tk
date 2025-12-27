@@ -1,0 +1,3 @@
+extern fn malloc(size: u64) -> *void;
+extern fn free(*ptr: void) -> void;
+extern fn memcpy(*dest: void, *src: void, n: u64) -> *void;

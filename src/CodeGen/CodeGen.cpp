@@ -103,6 +103,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
   llvm::BasicBlock *bb = llvm::BasicBlock::Create(m_Context, "entry", f);
   m_Builder.SetInsertPoint(bb);
 
+  m_ScopeStack.push_back({});
+
   size_t idx = 0;
   for (auto &arg : f->args()) {
     arg.setName(func->Args[idx].Name);
@@ -130,6 +132,9 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
       m_Builder.CreateStore(&arg, alloca);
       m_NamedValues[func->Args[idx].Name] = alloca;
       m_ValueIsReference[func->Args[idx].Name] = false;
+      m_ValueIsUnique[func->Args[idx].Name] = func->Args[idx].IsUnique;
+      m_ScopeStack.back().push_back(
+          {func->Args[idx].Name, alloca, func->Args[idx].IsUnique});
     }
     m_ValueTypes[func->Args[idx].Name] = baseType;
     m_ValueIsMutable[func->Args[idx].Name] = func->Args[idx].IsMutable;
@@ -148,14 +153,46 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
     idx++;
   }
 
-  for (const auto &stmt : func->Body->Statements) {
-    genStmt(stmt.get());
+  genStmt(func->Body.get());
+
+  if (!m_Builder.GetInsertBlock()->getTerminator()) {
+    // Cleanup Arguments (Implicit Return)
+    llvm::Function *freeFunc = m_Module->getFunction("free");
+    if (freeFunc) {
+      auto &scope = m_ScopeStack.back();
+      for (auto it = scope.rbegin(); it != scope.rend(); ++it) {
+        if (it->IsUniquePointer && it->Alloca) {
+          llvm::Value *val = m_Builder.CreateLoad(
+              llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType(),
+              it->Alloca);
+          llvm::BasicBlock *curBB = m_Builder.GetInsertBlock();
+          llvm::Function *func = curBB->getParent();
+          llvm::BasicBlock *freeBB =
+              llvm::BasicBlock::Create(m_Context, "free_block", func);
+          llvm::BasicBlock *contBB =
+              llvm::BasicBlock::Create(m_Context, "free_cont", func);
+
+          llvm::Value *notNull = m_Builder.CreateIsNotNull(val, "not_null");
+          m_Builder.CreateCondBr(notNull, freeBB, contBB);
+
+          m_Builder.SetInsertPoint(freeBB);
+          llvm::Value *casted = m_Builder.CreateBitCast(
+              val,
+              llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+          m_Builder.CreateCall(freeFunc, casted);
+          m_Builder.CreateBr(contBB);
+
+          m_Builder.SetInsertPoint(contBB);
+        }
+      }
+    }
+
+    if (func->Name == "main" || func->ReturnType == "void") {
+      m_Builder.CreateRetVoid();
+    }
   }
 
-  if (func->Name == "main" || func->ReturnType == "void") {
-    if (!m_Builder.GetInsertBlock()->getTerminator())
-      m_Builder.CreateRetVoid();
-  }
+  m_ScopeStack.pop_back();
 
   llvm::verifyFunction(*f);
   return f;
@@ -163,18 +200,75 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
 
 llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
   if (auto *ret = dynamic_cast<const ReturnStmt *>(stmt)) {
+    llvm::Value *retVal = nullptr;
     if (ret->ReturnValue) {
-      llvm::Value *val = genExpr(ret->ReturnValue.get());
-      if (val) {
-        return m_Builder.CreateRet(val);
+      retVal = genExpr(ret->ReturnValue.get());
+      if (auto *varExpr =
+              dynamic_cast<const VariableExpr *>(ret->ReturnValue.get())) {
+        if (varExpr->IsUnique) {
+          if (auto *alloca = m_NamedValues[varExpr->Name]) {
+            if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(alloca)) {
+              m_Builder.CreateStore(
+                  llvm::Constant::getNullValue(ai->getAllocatedType()), alloca);
+            }
+          }
+        }
       }
-    } else {
-      return m_Builder.CreateRetVoid();
     }
+
+    llvm::Function *freeFunc = m_Module->getFunction("free");
+    if (freeFunc) {
+      for (auto scopeIt = m_ScopeStack.rbegin(); scopeIt != m_ScopeStack.rend();
+           ++scopeIt) {
+        for (auto it = scopeIt->rbegin(); it != scopeIt->rend(); ++it) {
+          if (it->IsUniquePointer && it->Alloca) {
+            llvm::Value *val = m_Builder.CreateLoad(
+                llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType(),
+                it->Alloca);
+            llvm::BasicBlock *curBB = m_Builder.GetInsertBlock();
+            llvm::Function *func = curBB->getParent();
+            llvm::BasicBlock *freeBB =
+                llvm::BasicBlock::Create(m_Context, "free_block", func);
+            llvm::BasicBlock *contBB =
+                llvm::BasicBlock::Create(m_Context, "free_cont", func);
+
+            llvm::Value *notNull = m_Builder.CreateIsNotNull(val, "not_null");
+            m_Builder.CreateCondBr(notNull, freeBB, contBB);
+
+            m_Builder.SetInsertPoint(freeBB);
+            llvm::Value *casted = m_Builder.CreateBitCast(
+                val,
+                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+            m_Builder.CreateCall(freeFunc, casted);
+            m_Builder.CreateBr(contBB);
+
+            m_Builder.SetInsertPoint(contBB);
+          }
+        }
+      }
+    }
+
+    if (retVal)
+      return m_Builder.CreateRet(retVal);
+    return m_Builder.CreateRetVoid();
   } else if (auto *var = dynamic_cast<const VariableDecl *>(stmt)) {
     llvm::Value *initVal = nullptr;
     if (var->Init) {
       initVal = genExpr(var->Init.get());
+      if (var->IsUnique) {
+        if (auto *varExpr =
+                dynamic_cast<const VariableExpr *>(var->Init.get())) {
+          if (m_ValueIsUnique[varExpr->Name]) {
+            llvm::Value *srcVal = m_NamedValues[varExpr->Name];
+            if (srcVal && llvm::isa<llvm::AllocaInst>(srcVal)) {
+              m_Builder.CreateStore(
+                  llvm::Constant::getNullValue(
+                      llvm::cast<llvm::AllocaInst>(srcVal)->getAllocatedType()),
+                  srcVal);
+            }
+          }
+        }
+      }
     }
 
     llvm::Type *type = nullptr;
@@ -225,11 +319,13 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     m_ValueElementTypes[var->Name] = elemTy;
     m_ValueIsReference[var->Name] = var->IsReference;
     m_ValueIsMutable[var->Name] = var->IsMutable;
+    m_ValueIsUnique[var->Name] = var->IsUnique;
 
-    if (var->Init) { // Keep original `var->Init`
-      initVal =
-          genExpr(var->Init.get()); // Re-generate initVal here as it might have
-                                    // been null before type resolution
+    if (!m_ScopeStack.empty()) {
+      m_ScopeStack.back().push_back({var->Name, alloca, var->IsUnique});
+    }
+
+    if (var->Init) { // Keep verification logic
       if (initVal) {
         if (initVal->getType() != type) {
           std::string expected, actual;
@@ -303,8 +399,43 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     m_Builder.SetInsertPoint(afterBB);
     return nullptr;
   } else if (auto *bs = dynamic_cast<const BlockStmt *>(stmt)) {
+    m_ScopeStack.push_back({});
     for (const auto &s : bs->Statements)
       genStmt(s.get());
+
+    // RAII Cleanup
+    auto &scope = m_ScopeStack.back();
+    if (!m_Builder.GetInsertBlock()->getTerminator()) {
+      for (auto it = scope.rbegin(); it != scope.rend(); ++it) {
+        if (it->IsUniquePointer && it->Alloca) {
+          llvm::Function *freeFunc = m_Module->getFunction("free");
+          if (freeFunc) {
+            llvm::Value *val = m_Builder.CreateLoad(
+                llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType(),
+                it->Alloca);
+            llvm::BasicBlock *curBB = m_Builder.GetInsertBlock();
+            llvm::Function *func = curBB->getParent();
+            llvm::BasicBlock *freeBB =
+                llvm::BasicBlock::Create(m_Context, "free_block", func);
+            llvm::BasicBlock *contBB =
+                llvm::BasicBlock::Create(m_Context, "free_cont", func);
+
+            llvm::Value *notNull = m_Builder.CreateIsNotNull(val, "not_null");
+            m_Builder.CreateCondBr(notNull, freeBB, contBB);
+
+            m_Builder.SetInsertPoint(freeBB);
+            llvm::Value *casted = m_Builder.CreateBitCast(
+                val,
+                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+            m_Builder.CreateCall(freeFunc, casted);
+            m_Builder.CreateBr(contBB);
+
+            m_Builder.SetInsertPoint(contBB);
+          }
+        }
+      }
+    }
+    m_ScopeStack.pop_back();
     return nullptr;
   } else if (auto *es = dynamic_cast<const ExprStmt *>(stmt)) {
     return genExpr(es->Expression.get());
@@ -550,6 +681,49 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
         return nullptr;
       }
 
+      if (bin->Op == "=") {
+        if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
+          if (m_ValueIsUnique[varLHS->Name]) {
+            // 1. Free old value
+            if (destType) {
+              llvm::Value *oldVal = m_Builder.CreateLoad(destType, ptr);
+              llvm::Function *freeFunc = m_Module->getFunction("free");
+              if (freeFunc) {
+                llvm::BasicBlock *currBB = m_Builder.GetInsertBlock();
+                llvm::Function *func = currBB->getParent();
+                llvm::BasicBlock *freeBB =
+                    llvm::BasicBlock::Create(m_Context, "assign_free", func);
+                llvm::BasicBlock *contBB =
+                    llvm::BasicBlock::Create(m_Context, "assign_cont", func);
+
+                llvm::Value *notNull = m_Builder.CreateIsNotNull(oldVal);
+                m_Builder.CreateCondBr(notNull, freeBB, contBB);
+                m_Builder.SetInsertPoint(freeBB);
+                llvm::Value *casted = m_Builder.CreateBitCast(
+                    oldVal, llvm::PointerType::getUnqual(
+                                llvm::Type::getInt8Ty(m_Context)));
+                m_Builder.CreateCall(freeFunc, casted);
+                m_Builder.CreateBr(contBB);
+                m_Builder.SetInsertPoint(contBB);
+              }
+            }
+            // 2. Nullify RHS if variable
+            if (auto *varRHS =
+                    dynamic_cast<const VariableExpr *>(bin->RHS.get())) {
+              if (m_ValueIsUnique[varRHS->Name]) {
+                llvm::Value *rhsPtr = m_NamedValues[varRHS->Name];
+                if (rhsPtr) {
+                  if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(rhsPtr))
+                    m_Builder.CreateStore(
+                        llvm::Constant::getNullValue(ai->getAllocatedType()),
+                        rhsPtr);
+                }
+              }
+            }
+          }
+        }
+      }
+
       m_Builder.CreateStore(rhsVal, ptr);
       return rhsVal;
     }
@@ -590,6 +764,79 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     if (val->getType()->isIntegerTy() && targetType->isIntegerTy())
       return m_Builder.CreateIntCast(val, targetType, true);
     return val;
+  }
+  if (auto *newExpr = dynamic_cast<const NewExpr *>(expr)) {
+    llvm::Type *type = resolveType(newExpr->Type, false);
+    if (!type)
+      return nullptr;
+
+    // Size of type
+    uint64_t size = m_Module->getDataLayout().getTypeAllocSize(type);
+
+    // Call malloc
+    llvm::Function *mallocFn = m_Module->getFunction("malloc");
+    if (!mallocFn) {
+      error(newExpr,
+            "malloc function not found (missing import 'core/memory'?)");
+      return nullptr;
+    }
+
+    llvm::Value *sizeVal =
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), size);
+    llvm::Value *voidPtr = m_Builder.CreateCall(mallocFn, sizeVal, "new_alloc");
+
+    // Cast to T*
+    llvm::Value *heapPtr = m_Builder.CreateBitCast(
+        voidPtr, llvm::PointerType::getUnqual(type), "new_ptr");
+
+    if (newExpr->Initializer) {
+      if (auto *strInit = dynamic_cast<const InitStructExpr *>(
+              newExpr->Initializer.get())) {
+        // Struct initialization on heap
+        // We need to resolve struct type to get field indices
+        llvm::StructType *st = m_StructTypes[newExpr->Type];
+        if (!st) {
+          error(newExpr, "Unknown struct type " + newExpr->Type);
+          return nullptr;
+        }
+
+        auto &fields = m_StructFieldNames[newExpr->Type];
+        for (const auto &f : strInit->Fields) {
+          int idx = -1;
+          for (int i = 0; i < fields.size(); ++i) {
+            if (fields[i] == f.first) {
+              idx = i;
+              break;
+            }
+          }
+          if (idx == -1) {
+            error(newExpr, "Unknown field " + f.first);
+            return nullptr;
+          }
+
+          llvm::Value *fieldVal = genExpr(f.second.get());
+          if (!fieldVal)
+            return nullptr;
+
+          // GEP
+          llvm::Value *fieldAddr =
+              m_Builder.CreateStructGEP(st, heapPtr, idx, "field_" + f.first);
+          m_Builder.CreateStore(fieldVal, fieldAddr);
+        }
+      } else {
+        // Primitive initialization or copy
+        llvm::Value *initVal = genExpr(newExpr->Initializer.get());
+        if (initVal) {
+          if (initVal->getType() != type) {
+            error(newExpr, "Type mismatch in new initialization");
+            return nullptr;
+          }
+          m_Builder.CreateStore(initVal, heapPtr);
+        }
+      }
+    }
+
+    return heapPtr;
   }
   if (auto *mem = dynamic_cast<const MemberExpr *>(expr)) {
     llvm::Value *addr = genAddr(mem);
@@ -724,33 +971,61 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
       objType = m_ValueElementTypes[var->Name];
     } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
       objType = gep->getResultElementType();
-    } else if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
-      objType = alloca->getAllocatedType();
     }
 
-    if (!objType || !objType->isStructTy())
-      return nullptr;
-
-    llvm::StructType *st = llvm::cast<llvm::StructType>(objType);
-    int idx = -1;
-    if (!mem->Member.empty() && isdigit(mem->Member[0])) {
-      idx = std::stoi(mem->Member);
-    } else {
-      std::string structName = st->getName().str();
-      // Handle possible LLVM name suffixes like .0, .1
-      size_t dotPos = structName.find_last_of('.');
-      if (dotPos != std::string::npos && dotPos > 0 &&
-          isdigit(structName[dotPos + 1])) {
-        structName = structName.substr(0, dotPos);
+    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
+      llvm::Type *allocTy = alloca->getAllocatedType();
+      if (allocTy->isStructTy()) {
+        objType = allocTy;
+      } else if (allocTy->isPointerTy()) {
+        // It's a pointer variable (Struct**), load to get Struct*
+        objAddr = m_Builder.CreateLoad(allocTy, objAddr, "deref");
+        // We don't know the struct type from opaque ptr, will find by field
+        objType = nullptr;
       }
+    } else if (objAddr->getType()->isPointerTy()) {
+      // Result of a GEP or Load, likely Struct* (if typed) or ptr (opaque)
+      // Assume it is the address of the struct.
+      // We can't verify type easily.
+    }
 
-      if (m_StructFieldNames.count(structName)) {
-        auto &fields = m_StructFieldNames[structName];
-        for (size_t i = 0; i < fields.size(); ++i) {
+    llvm::StructType *st = nullptr;
+    if (objType && objType->isStructTy()) {
+      st = llvm::cast<llvm::StructType>(objType);
+    } else {
+      // Try to find struct by field name
+      std::string foundStruct;
+      int foundIdx = -1;
+      for (const auto &pair : m_StructFieldNames) {
+        const auto &fields = pair.second;
+        for (int i = 0; i < fields.size(); ++i) {
           if (fields[i] == mem->Member) {
-            idx = i;
+            foundStruct = pair.first;
+            foundIdx = i;
             break;
           }
+        }
+        if (!foundStruct.empty())
+          break;
+      }
+      if (!foundStruct.empty()) {
+        st = m_StructTypes[foundStruct];
+      }
+    }
+
+    if (!st)
+      return nullptr;
+
+    // Recalculate index from st
+    int idx = -1;
+    if (isdigit(mem->Member[0])) {
+      idx = std::stoi(mem->Member);
+    } else {
+      auto &fields = m_StructFieldNames[st->getName().str()];
+      for (int i = 0; i < fields.size(); ++i) {
+        if (fields[i] == mem->Member) {
+          idx = i;
+          break;
         }
       }
     }
@@ -784,6 +1059,11 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
   // Check aliases first
   if (m_TypeAliases.count(baseType)) {
     return resolveType(m_TypeAliases[baseType], hasPointer);
+  }
+
+  // Handle raw pointer types (e.g. *i32, *void) AND managed pointers (^Type)
+  if (baseType.size() > 1 && (baseType[0] == '*' || baseType[0] == '^')) {
+    return llvm::PointerType::getUnqual(resolveType(baseType.substr(1), false));
   }
 
   if (baseType[0] == '[') {
