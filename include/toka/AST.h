@@ -1,0 +1,266 @@
+#pragma once
+
+#include "toka/Token.h"
+#include <llvm/IR/Value.h>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace toka {
+
+class ASTNode {
+public:
+  virtual ~ASTNode() = default;
+  virtual std::string toString() const = 0;
+};
+
+class Expr : public ASTNode {};
+class Stmt : public ASTNode {};
+
+// --- Expressions ---
+
+class NumberExpr : public Expr {
+public:
+  int64_t Value;
+  NumberExpr(int64_t val) : Value(val) {}
+  std::string toString() const override {
+    return "Number(" + std::to_string(Value) + ")";
+  }
+};
+
+class FloatExpr : public Expr {
+public:
+  double Value;
+  FloatExpr(double val) : Value(val) {}
+  std::string toString() const override {
+    return "Float(" + std::to_string(Value) + ")";
+  }
+};
+
+class BoolExpr : public Expr {
+public:
+  bool Value;
+  BoolExpr(bool val) : Value(val) {}
+  std::string toString() const override { return Value ? "true" : "false"; }
+};
+
+class VariableExpr : public Expr {
+public:
+  std::string Name;
+  bool HasPointer = false;
+  bool IsMutable = false;
+  bool IsNullable = false;
+
+  VariableExpr(const std::string &name) : Name(name) {}
+  std::string toString() const override {
+    return std::string("Var(") + (HasPointer ? "^" : "") + Name +
+           (IsMutable ? "#" : "") + ")";
+  }
+};
+
+class StringExpr : public Expr {
+public:
+  std::string Value;
+  StringExpr(const std::string &val) : Value(val) {}
+  std::string toString() const override { return "String(\"" + Value + "\")"; }
+};
+
+class BinaryExpr : public Expr {
+public:
+  std::string Op;
+  std::unique_ptr<Expr> LHS, RHS;
+  BinaryExpr(const std::string &op, std::unique_ptr<Expr> lhs,
+             std::unique_ptr<Expr> rhs)
+      : Op(op), LHS(std::move(lhs)), RHS(std::move(rhs)) {}
+  std::string toString() const override {
+    return "Binary(" + Op + ", " + LHS->toString() + ", " + RHS->toString() +
+           ")";
+  }
+};
+
+class CastExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Expression;
+  std::string TargetType;
+  CastExpr(std::unique_ptr<Expr> expr, const std::string &type)
+      : Expression(std::move(expr)), TargetType(type) {}
+  std::string toString() const override {
+    return "Cast(" + Expression->toString() + " as " + TargetType + ")";
+  }
+};
+
+class MemberExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Object;
+  std::string Member;
+  MemberExpr(std::unique_ptr<Expr> obj, const std::string &member)
+      : Object(std::move(obj)), Member(member) {}
+  std::string toString() const override {
+    return Object->toString() + "." + Member;
+  }
+};
+
+class InitStructExpr : public Expr {
+public:
+  std::string StructName;
+  std::vector<std::pair<std::string, std::unique_ptr<Expr>>> Fields;
+  InitStructExpr(
+      const std::string &name,
+      std::vector<std::pair<std::string, std::unique_ptr<Expr>>> flds)
+      : StructName(name), Fields(std::move(flds)) {}
+  std::string toString() const override { return "Init(" + StructName + ")"; }
+};
+
+class CallExpr : public Expr {
+public:
+  std::string Callee;
+  std::vector<std::unique_ptr<Expr>> Args;
+
+  CallExpr(const std::string &callee, std::vector<std::unique_ptr<Expr>> args)
+      : Callee(callee), Args(std::move(args)) {}
+
+  std::string toString() const override { return "Call(" + Callee + ")"; }
+};
+
+// --- Statements ---
+
+class BlockStmt : public Stmt {
+public:
+  std::vector<std::unique_ptr<Stmt>> Statements;
+  BlockStmt() = default;
+  BlockStmt(std::vector<std::unique_ptr<Stmt>> stmts)
+      : Statements(std::move(stmts)) {}
+  std::string toString() const override { return "Block"; }
+};
+
+class ReturnStmt : public Stmt {
+public:
+  std::unique_ptr<Expr> ReturnValue;
+  ReturnStmt(std::unique_ptr<Expr> val) : ReturnValue(std::move(val)) {}
+  std::string toString() const override { return "Return"; }
+};
+
+class ExprStmt : public Stmt {
+public:
+  std::unique_ptr<Expr> Expression;
+  ExprStmt(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
+  std::string toString() const override { return "ExprStmt"; }
+};
+
+class IfStmt : public Stmt {
+public:
+  std::unique_ptr<Expr> Condition;
+  std::unique_ptr<Stmt> Then;
+  std::unique_ptr<Stmt> Else;
+
+  IfStmt(std::unique_ptr<Expr> cond, std::unique_ptr<Stmt> thenStmt,
+         std::unique_ptr<Stmt> elseStmt)
+      : Condition(std::move(cond)), Then(std::move(thenStmt)),
+        Else(std::move(elseStmt)) {}
+
+  std::string toString() const override { return "If(...)"; }
+};
+
+class WhileStmt : public Stmt {
+public:
+  std::unique_ptr<Expr> Condition;
+  std::unique_ptr<Stmt> Body;
+
+  WhileStmt(std::unique_ptr<Expr> cond, std::unique_ptr<Stmt> body)
+      : Condition(std::move(cond)), Body(std::move(body)) {}
+
+  std::string toString() const override { return "While(...)"; }
+};
+
+class VariableDecl : public Stmt {
+public:
+  std::string Name;
+  std::unique_ptr<Expr> Init;
+  std::string TypeName;
+  bool HasPointer = false;
+  bool IsMutable = false;
+  bool IsNullable = false;
+
+  VariableDecl(const std::string &name, std::unique_ptr<Expr> init)
+      : Name(name), Init(std::move(init)) {}
+
+  std::string toString() const override { return "Val " + Name; }
+};
+
+// --- High-level Declarations ---
+
+struct StructField {
+  std::string Name;
+  std::string Type;
+  bool HasPointer = false;
+};
+
+class StructDecl : public ASTNode {
+public:
+  std::string Name;
+  std::vector<StructField> Fields;
+  StructDecl(const std::string &name, std::vector<StructField> flds)
+      : Name(name), Fields(std::move(flds)) {}
+  std::string toString() const override { return "Struct(" + Name + ")"; }
+};
+
+class ImportDecl : public ASTNode {
+public:
+  std::string Path;
+  ImportDecl(const std::string &path) : Path(path) {}
+  std::string toString() const override { return "Import(" + Path + ")"; }
+};
+
+class FunctionDecl : public ASTNode {
+public:
+  struct Arg {
+    std::string Name;
+    std::string Type;
+    bool HasPointer = false;
+    bool IsMutable = false;
+    bool IsNullable = false;
+  };
+
+  std::string Name;
+  std::vector<Arg> Args;
+  std::string ReturnType;
+  std::unique_ptr<BlockStmt> Body;
+  bool IsVariadic = false;
+
+  FunctionDecl(const std::string &name, std::vector<Arg> args,
+               std::unique_ptr<BlockStmt> body, const std::string &retType)
+      : Name(name), Args(std::move(args)), ReturnType(retType),
+        Body(std::move(body)) {}
+  std::string toString() const override { return "Fn(" + Name + ")"; }
+};
+
+class ExternDecl : public ASTNode {
+public:
+  struct Arg {
+    std::string Name;
+    std::string Type;
+    bool HasPointer = false;
+    bool IsMutable = false;
+    bool IsNullable = false;
+  };
+  std::string Name;
+  std::vector<Arg> Args;
+  std::string ReturnType;
+  bool IsVariadic = false;
+
+  ExternDecl(const std::string &name, std::vector<Arg> args,
+             std::string retType)
+      : Name(name), Args(std::move(args)), ReturnType(retType) {}
+  std::string toString() const override { return "Extern(" + Name + ")"; }
+};
+
+class Module {
+public:
+  std::vector<std::unique_ptr<ImportDecl>> Imports;
+  std::vector<std::unique_ptr<StructDecl>> Structs;
+  std::vector<std::unique_ptr<VariableDecl>> Globals;
+  std::vector<std::unique_ptr<ExternDecl>> Externs;
+  std::vector<std::unique_ptr<FunctionDecl>> Functions;
+};
+
+} // namespace toka

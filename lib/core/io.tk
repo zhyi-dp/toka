@@ -1,0 +1,7 @@
+extern fn printf(^s: char, ...) -> i32;
+extern fn puts(^s: char) -> i32;
+
+fn println(^s: char) {
+    puts(^s);
+    return;
+}

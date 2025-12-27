@@ -1,0 +1,49 @@
+import "core/io";
+
+struct Point {
+    x: i32,
+    y: i32
+}
+
+fn addx(point: Point, x:i32) -> i32 {
+    let tmp = point.x + x;
+    return tmp;
+}
+
+fn addtox(point#: Point, x:i32) {
+    point#.x += x;
+}
+
+fn main() {
+    let p# = Point { x = 1, y = 2 };
+    let i# = 0;
+    while (i != 3) {
+        printf("p.x is %d, loop %d\n", p.x, i);
+        p#.x = p.x + 10;
+        i# = i + 1;
+    }
+    printf("p.x is %d, loop %d\n", p.x, i);
+    p#.x = addx(p, 10);
+    printf("p.x is %d\n", p.x);
+    addtox(p#, 10);
+    printf("p.x is %d\n", p.x);
+
+    let b# = true;
+    if (b) {
+        printf("bool true works\n");
+    }
+    b# = false;
+    if (b) {
+        printf("bool false error\n");
+    } else {
+        printf("bool false works\n");
+    }
+
+    let f# = 3.14;
+    printf("float is %f\n", f);
+
+    let s = "Hello Toka";
+    printf("string is %s\n", s);
+
+    return;
+}
