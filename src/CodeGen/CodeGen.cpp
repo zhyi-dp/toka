@@ -1,9 +1,15 @@
 #include "toka/CodeGen.h"
+#include <cctype>
 #include <iostream>
 
 namespace toka {
 
 void CodeGen::generate(const Module &ast) {
+  // Generate Type Aliases
+  for (const auto &alias : ast.TypeAliases) {
+    m_TypeAliases[alias->Name] = alias->TargetType;
+  }
+
   // Generate Structs
   for (const auto &str : ast.Structs) {
     genStruct(str.get());
@@ -96,6 +102,19 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
       m_NamedValues[func->Args[idx].Name] = alloca;
     }
     m_ValueTypes[func->Args[idx].Name] = baseType;
+
+    // Set Element Type
+    if (baseType->isArrayTy())
+      m_ValueElementTypes[func->Args[idx].Name] =
+          baseType->getArrayElementType();
+    else if (baseType->isPointerTy()) {
+      m_ValueElementTypes[func->Args[idx].Name] =
+          llvm::Type::getInt8Ty(m_Context); // Fallback
+    } else if (func->Args[idx].Type == "str") {
+      m_ValueElementTypes[func->Args[idx].Name] =
+          llvm::Type::getInt8Ty(m_Context);
+    }
+
     idx++;
   }
 
@@ -133,10 +152,20 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     }
 
     llvm::Type *type = nullptr;
+    llvm::Type *elemTy = nullptr;
     if (!var->TypeName.empty()) {
       type = resolveType(var->TypeName, var->HasPointer);
+      elemTy = resolveType(var->TypeName, false);
+      if (var->TypeName == "str")
+        elemTy = llvm::Type::getInt8Ty(m_Context);
     } else if (initVal) {
       type = initVal->getType();
+      if (type->isArrayTy())
+        elemTy = type->getArrayElementType();
+      else if (type->isPointerTy()) {
+        // Fallback for strings
+        elemTy = llvm::Type::getInt8Ty(m_Context);
+      }
     } else {
       type = llvm::Type::getInt64Ty(m_Context);
     }
@@ -146,6 +175,9 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     }
 
     llvm::AllocaInst *alloca = m_Builder.CreateAlloca(type, nullptr, var->Name);
+    m_NamedValues[var->Name] = alloca;
+    m_ValueTypes[var->Name] = type;
+    m_ValueElementTypes[var->Name] = elemTy;
 
     if (initVal) {
       if (initVal->getType()->isIntegerTy() && type->isIntegerTy())
@@ -397,39 +429,14 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     return val;
   }
   if (auto *mem = dynamic_cast<const MemberExpr *>(expr)) {
-    llvm::Value *objAddr = genAddr(mem->Object.get());
-    if (!objAddr)
+    llvm::Value *addr = genAddr(mem);
+    if (!addr)
       return nullptr;
-
-    llvm::Type *objType = nullptr;
-    if (auto *var = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
-      objType = m_ValueTypes[var->Name];
-    } else if (auto *childMem =
-                   dynamic_cast<const MemberExpr *>(mem->Object.get())) {
-      // Nested member... this needs better type tracking.
-      // For now try to get from GEP result if objAddr is GEP
-      if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
-        objType = gep->getResultElementType();
-      }
+    if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+      return m_Builder.CreateLoad(gep->getResultElementType(), addr,
+                                  mem->Member);
     }
-
-    if (!objType || !objType->isStructTy())
-      return nullptr;
-
-    llvm::StructType *st = llvm::cast<llvm::StructType>(objType);
-    auto &fields = m_StructFieldNames[st->getName().str()];
-    int idx = -1;
-    for (size_t i = 0; i < fields.size(); ++i)
-      if (fields[i] == mem->Member) {
-        idx = i;
-        break;
-      }
-    if (idx == -1)
-      return nullptr;
-
-    llvm::Value *fieldAddr = m_Builder.CreateStructGEP(st, objAddr, idx);
-    return m_Builder.CreateLoad(st->getElementType(idx), fieldAddr,
-                                mem->Member);
+    return nullptr;
   }
   if (auto *init = dynamic_cast<const InitStructExpr *>(expr)) {
     llvm::StructType *st = m_StructTypes[init->StructName];
@@ -456,12 +463,82 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     }
     return m_Builder.CreateLoad(st, alloca);
   }
+  if (auto *arr = dynamic_cast<const ArrayExpr *>(expr)) {
+    if (arr->Elements.empty())
+      return nullptr;
+    std::vector<llvm::Value *> vals;
+    for (auto &e : arr->Elements)
+      vals.push_back(genExpr(e.get()));
+    llvm::ArrayType *at = llvm::ArrayType::get(vals[0]->getType(), vals.size());
+    llvm::Value *alloca = m_Builder.CreateAlloca(at, nullptr, "arrayliteral");
+    for (size_t i = 0; i < vals.size(); ++i) {
+      llvm::Value *ptr = m_Builder.CreateInBoundsGEP(
+          at, alloca, {m_Builder.getInt32(0), m_Builder.getInt32((uint32_t)i)});
+      m_Builder.CreateStore(vals[i], ptr);
+    }
+    return m_Builder.CreateLoad(at, alloca);
+  }
+  if (auto *tuple = dynamic_cast<const TupleExpr *>(expr)) {
+    std::vector<llvm::Value *> vals;
+    std::vector<llvm::Type *> types;
+    for (auto &e : tuple->Elements) {
+      llvm::Value *v = genExpr(e.get());
+      vals.push_back(v);
+      types.push_back(v->getType());
+    }
+    llvm::StructType *st = llvm::StructType::get(m_Context, types);
+    llvm::Value *alloca = m_Builder.CreateAlloca(st, nullptr, "tupleliteral");
+    for (size_t i = 0; i < vals.size(); ++i) {
+      llvm::Value *ptr = m_Builder.CreateStructGEP(st, alloca, i);
+      m_Builder.CreateStore(vals[i], ptr);
+    }
+    return m_Builder.CreateLoad(st, alloca);
+  }
+  if (auto *idxExpr = dynamic_cast<const ArrayIndexExpr *>(expr)) {
+    llvm::Value *addr = genAddr(idxExpr);
+    if (!addr)
+      return nullptr;
+    // We need the element type.
+    // Try to get it from the GEP result if addr is GEP.
+    if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+      return m_Builder.CreateLoad(gep->getResultElementType(), addr);
+    }
+    return nullptr;
+  }
   return nullptr;
 }
 
 llvm::Value *CodeGen::genAddr(const Expr *expr) {
   if (auto *var = dynamic_cast<const VariableExpr *>(expr)) {
     return m_NamedValues[var->Name];
+  }
+  if (auto *idxExpr = dynamic_cast<const ArrayIndexExpr *>(expr)) {
+    llvm::Value *arrAddr = genAddr(idxExpr->Array.get());
+    if (!arrAddr) {
+      llvm::Value *arrVal = genExpr(idxExpr->Array.get());
+      arrAddr = m_Builder.CreateAlloca(arrVal->getType(), nullptr, "arrtmp");
+      m_Builder.CreateStore(arrVal, arrAddr);
+    }
+    llvm::Value *index = genExpr(idxExpr->Index.get());
+    llvm::Type *elemTy = nullptr;
+    llvm::Type *arrTy = nullptr;
+    if (auto *var = dynamic_cast<const VariableExpr *>(idxExpr->Array.get())) {
+      arrTy = m_ValueTypes[var->Name];
+      elemTy = m_ValueElementTypes[var->Name];
+    } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(arrAddr)) {
+      arrTy = gep->getResultElementType();
+      if (arrTy->isArrayTy())
+        elemTy = arrTy->getArrayElementType();
+    }
+
+    if (arrTy && arrTy->isArrayTy()) {
+      return m_Builder.CreateInBoundsGEP(arrTy, arrAddr,
+                                         {m_Builder.getInt32(0), index});
+    }
+    if (elemTy && arrTy && arrTy->isPointerTy()) {
+      return m_Builder.CreateInBoundsGEP(elemTy, arrAddr, index);
+    }
+    return nullptr;
   }
   if (auto *mem = dynamic_cast<const MemberExpr *>(expr)) {
     llvm::Value *objAddr = genAddr(mem->Object.get());
@@ -482,16 +559,22 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
 
     if (!objType || !objType->isStructTy())
       return nullptr;
+
     llvm::StructType *st = llvm::cast<llvm::StructType>(objType);
-    auto &fields = m_StructFieldNames[st->getName().str()];
     int idx = -1;
-    for (size_t i = 0; i < fields.size(); ++i)
-      if (fields[i] == mem->Member) {
-        idx = i;
-        break;
-      }
+    if (!mem->Member.empty() && isdigit(mem->Member[0])) {
+      idx = std::stoi(mem->Member);
+    } else {
+      auto &fields = m_StructFieldNames[st->getName().str()];
+      for (size_t i = 0; i < fields.size(); ++i)
+        if (fields[i] == mem->Member) {
+          idx = i;
+          break;
+        }
+    }
     if (idx == -1)
       return nullptr;
+
     return m_Builder.CreateStructGEP(st, objAddr, idx);
   }
   return nullptr;
@@ -514,7 +597,47 @@ void CodeGen::genExtern(const ExternDecl *ext) {
 
 llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
   llvm::Type *type = nullptr;
-  if (baseType == "bool")
+  if (baseType.empty())
+    return nullptr;
+
+  // Check aliases first
+  if (m_TypeAliases.count(baseType)) {
+    return resolveType(m_TypeAliases[baseType], hasPointer);
+  }
+
+  if (baseType[0] == '[') {
+    // Array: [T; N]
+    size_t lastSemi = baseType.find_last_of(';');
+    if (lastSemi != std::string::npos) {
+      std::string elemTyStr = baseType.substr(1, lastSemi - 1);
+      std::string countStr =
+          baseType.substr(lastSemi + 1, baseType.size() - lastSemi - 2);
+      llvm::Type *elemTy = resolveType(elemTyStr, false);
+      uint64_t count = std::stoull(countStr);
+      type = llvm::ArrayType::get(elemTy, count);
+    }
+  } else if (baseType[0] == '(') {
+    // Tuple: (T1, T2, ...)
+    std::vector<llvm::Type *> elemTypes;
+    std::string content = baseType.substr(1, baseType.size() - 2);
+    // Very simple split by comma, not perfect for nested but works for now
+    size_t start = 0;
+    int depth = 0;
+    for (size_t i = 0; i < content.size(); ++i) {
+      if (content[i] == '(' || content[i] == '[')
+        depth++;
+      else if (content[i] == ')' || content[i] == ']')
+        depth--;
+      else if (content[i] == ',' && depth == 0) {
+        elemTypes.push_back(
+            resolveType(content.substr(start, i - start), false));
+        start = i + 1;
+      }
+    }
+    if (start < content.size())
+      elemTypes.push_back(resolveType(content.substr(start), false));
+    type = llvm::StructType::get(m_Context, elemTypes);
+  } else if (baseType == "bool")
     type = llvm::Type::getInt1Ty(m_Context);
   else if (baseType == "i8" || baseType == "u8" || baseType == "char")
     type = llvm::Type::getInt8Ty(m_Context);
@@ -537,7 +660,7 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
   else
     type = llvm::Type::getInt64Ty(m_Context);
 
-  if (hasPointer)
+  if (hasPointer && type)
     return llvm::PointerType::getUnqual(type);
   return type;
 }

@@ -2,22 +2,30 @@ import "core/io";
 
 struct Point {
     x: i32,
-    y: i32
+    y: i32,
+    z: i32,
 }
 
-fn addx(point: Point, x:i32) -> i32 {
-    let tmp = point.x + x;
+type PointTup = (i32, i32);
+
+fn processPoint(p: PointTup) {
+    printf("Point is (%d, %d)\n", p.0, p.1);
+    return;
+}
+
+fn addx(point: Point, v: i32) -> i32 {
+    let tmp = point.x + v;
     return tmp;
 }
 
-fn addtox(point#: Point, x:i32) {
-    point#.x += x;
+fn addtox(point#: Point, v: i32) {
+    point#.x += v;
 }
 
 fn main() {
     let p# = Point { x = 1, y = 2 };
     let i# = 0;
-    while (i != 3) {
+    while (i < 3) {
         printf("p.x is %d, loop %d\n", p.x, i);
         p#.x = p.x + 10;
         i# = i + 1;
@@ -45,5 +53,21 @@ fn main() {
     let s = "Hello Toka";
     printf("string is %s\n", s);
 
+    let arr# = [10, 20, 30];
+    printf("arr[0] is %d\n", arr[0]);
+    printf("arr[1] is %d\n", arr[1]);
+    arr#[2] = 40;
+    printf("arr[2] is %d\n", arr[2]);
+
+    let tup = (1, "tuple", 1.1);
+    printf("tup.0 is %d\n", tup.0);
+    printf("tup.1 is %s\n", tup.1);
+    printf("tup.2 is %f\n", tup.2);
+
+    let pt = (100, 200);
+    processPoint(pt);
+
     return;
 }
+
+

@@ -48,6 +48,8 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->Functions.push_back(parseFunctionDecl());
     } else if (check(TokenType::KwLet)) {
       module->Globals.push_back(parseVariableDecl());
+    } else if (check(TokenType::KwType)) {
+      module->TypeAliases.push_back(parseTypeAliasDecl());
     } else if (check(TokenType::KwExtern)) {
       module->Externs.push_back(parseExternDecl());
     } else if (check(TokenType::KwImport)) {
@@ -153,10 +155,16 @@ std::unique_ptr<VariableDecl> Parser::parseVariableDecl() {
   // Type annotation : Type
   std::string typeName = "";
   if (match(TokenType::Colon)) {
-    typeName = "";
-    while (!check(TokenType::Equal) && !check(TokenType::Semicolon) &&
+    int depth = 0;
+    while ((depth > 0 ||
+            (!check(TokenType::Equal) && !check(TokenType::Semicolon))) &&
            !check(TokenType::EndOfFile)) {
-      typeName += advance().Text;
+      Token t = advance();
+      typeName += t.Text;
+      if (t.Kind == TokenType::LBracket || t.Kind == TokenType::LParen)
+        depth++;
+      else if (t.Kind == TokenType::RBracket || t.Kind == TokenType::RParen)
+        depth--;
     }
   }
 
@@ -297,6 +305,36 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     expr = std::make_unique<BoolExpr>(false);
   } else if (match(TokenType::String)) {
     expr = std::make_unique<StringExpr>(previous().Text);
+  } else if (match(TokenType::LBracket)) {
+    // Array literal [1, 2, 3]
+    std::vector<std::unique_ptr<Expr>> elements;
+    if (!check(TokenType::RBracket)) {
+      do {
+        elements.push_back(parseExpr());
+      } while (match(TokenType::Comma));
+    }
+    consume(TokenType::RBracket, "Expected ']' after array elements");
+    expr = std::make_unique<ArrayExpr>(std::move(elements));
+  } else if (match(TokenType::LParen)) {
+    // Grouping or Tuple
+    std::vector<std::unique_ptr<Expr>> elements;
+    bool isTuple = false;
+    if (!check(TokenType::RParen)) {
+      elements.push_back(parseExpr());
+      if (match(TokenType::Comma)) {
+        isTuple = true;
+        while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+          elements.push_back(parseExpr());
+          match(TokenType::Comma);
+        }
+      }
+    }
+    consume(TokenType::RParen, "Expected ')'");
+    if (isTuple || elements.empty()) {
+      expr = std::make_unique<TupleExpr>(std::move(elements));
+    } else {
+      expr = std::move(elements[0]);
+    }
   } else {
     bool hasPointer = match(TokenType::Caret);
     if (match(TokenType::Identifier)) {
@@ -334,11 +372,21 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     }
   }
 
-  // Suffixes: .member, etc.
+  // Suffixes: .member, [index], etc.
   while (expr) {
     if (match(TokenType::Dot)) {
-      Token member = consume(TokenType::Identifier, "Expected member name");
-      expr = std::make_unique<MemberExpr>(std::move(expr), member.Text);
+      if (match(TokenType::Identifier) || match(TokenType::Integer)) {
+        expr = std::make_unique<MemberExpr>(std::move(expr), previous().Text);
+      } else {
+        std::cerr << "Parser Error: Expected member name or index after '.' at "
+                  << peek().Text << "\n";
+        std::exit(1);
+      }
+    } else if (match(TokenType::LBracket)) {
+      std::unique_ptr<Expr> index = parseExpr();
+      consume(TokenType::RBracket, "Expected ']' after index");
+      expr =
+          std::make_unique<ArrayIndexExpr>(std::move(expr), std::move(index));
     } else {
       break;
     }
@@ -424,6 +472,26 @@ std::unique_ptr<ImportDecl> Parser::parseImport() {
   Token path = consume(TokenType::String, "Expected string path for import");
   consume(TokenType::Semicolon, "Expected ';' after import");
   return std::make_unique<ImportDecl>(path.Text);
+}
+
+std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl() {
+  consume(TokenType::KwType, "Expected 'type'");
+  Token name = consume(TokenType::Identifier, "Expected type alias name");
+  consume(TokenType::Equal, "Expected '='");
+
+  std::string typeName = "";
+  int depth = 0;
+  while ((depth > 0 || !check(TokenType::Semicolon)) &&
+         !check(TokenType::EndOfFile)) {
+    Token t = advance();
+    typeName += t.Text;
+    if (t.Kind == TokenType::LBracket || t.Kind == TokenType::LParen)
+      depth++;
+    else if (t.Kind == TokenType::RBracket || t.Kind == TokenType::RParen)
+      depth--;
+  }
+  consume(TokenType::Semicolon, "Expected ';'");
+  return std::make_unique<TypeAliasDecl>(name.Text, typeName);
 }
 
 } // namespace toka

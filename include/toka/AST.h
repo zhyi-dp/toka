@@ -100,6 +100,52 @@ public:
   }
 };
 
+class ArrayIndexExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Array;
+  std::unique_ptr<Expr> Index;
+
+  ArrayIndexExpr(std::unique_ptr<Expr> arr, std::unique_ptr<Expr> idx)
+      : Array(std::move(arr)), Index(std::move(idx)) {}
+  std::string toString() const override {
+    return Array->toString() + "[" + Index->toString() + "]";
+  }
+};
+
+class ArrayExpr : public Expr {
+public:
+  std::vector<std::unique_ptr<Expr>> Elements;
+  ArrayExpr(std::vector<std::unique_ptr<Expr>> elems)
+      : Elements(std::move(elems)) {}
+  std::string toString() const override {
+    std::string s = "[";
+    for (size_t i = 0; i < Elements.size(); ++i) {
+      if (i > 0)
+        s += ", ";
+      s += Elements[i]->toString();
+    }
+    s += "]";
+    return s;
+  }
+};
+
+class TupleExpr : public Expr {
+public:
+  std::vector<std::unique_ptr<Expr>> Elements;
+  TupleExpr(std::vector<std::unique_ptr<Expr>> elems)
+      : Elements(std::move(elems)) {}
+  std::string toString() const override {
+    std::string s = "(";
+    for (size_t i = 0; i < Elements.size(); ++i) {
+      if (i > 0)
+        s += ", ";
+      s += Elements[i]->toString();
+    }
+    s += ")";
+    return s;
+  }
+};
+
 class InitStructExpr : public Expr {
 public:
   std::string StructName;
@@ -195,6 +241,17 @@ struct StructField {
   bool HasPointer = false;
 };
 
+class TypeAliasDecl : public ASTNode {
+public:
+  std::string Name;
+  std::string TargetType;
+  TypeAliasDecl(const std::string &name, const std::string &target)
+      : Name(name), TargetType(target) {}
+  std::string toString() const override {
+    return "TypeAlias(" + Name + " = " + TargetType + ")";
+  }
+};
+
 class StructDecl : public ASTNode {
 public:
   std::string Name;
@@ -257,6 +314,7 @@ public:
 class Module {
 public:
   std::vector<std::unique_ptr<ImportDecl>> Imports;
+  std::vector<std::unique_ptr<TypeAliasDecl>> TypeAliases;
   std::vector<std::unique_ptr<StructDecl>> Structs;
   std::vector<std::unique_ptr<VariableDecl>> Globals;
   std::vector<std::unique_ptr<ExternDecl>> Externs;

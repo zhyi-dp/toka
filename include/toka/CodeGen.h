@@ -29,8 +29,10 @@ private:
   std::map<std::string, const ExternDecl *> m_Externs;
   std::map<std::string, llvm::Value *> m_NamedValues;
   std::map<std::string, llvm::Type *> m_ValueTypes;
+  std::map<std::string, llvm::Type *> m_ValueElementTypes;
   std::map<std::string, llvm::StructType *> m_StructTypes;
   std::map<std::string, std::vector<std::string>> m_StructFieldNames;
+  std::map<std::string, std::string> m_TypeAliases;
 
   llvm::Type *resolveType(const std::string &baseType, bool hasPointer);
 

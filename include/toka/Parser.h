@@ -31,6 +31,7 @@ private:
   std::unique_ptr<VariableDecl> parseVariableDecl();
   std::unique_ptr<ExternDecl> parseExternDecl();
   std::unique_ptr<ImportDecl> parseImport();
+  std::unique_ptr<TypeAliasDecl> parseTypeAliasDecl();
   std::unique_ptr<StructDecl> parseStruct();
 
   std::unique_ptr<Stmt> parseStmt();
