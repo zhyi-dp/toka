@@ -181,22 +181,22 @@ Toka separates **storage binding** (`let`) from **memory properties** (Tokens).
 
 ## 7. Example Valid Code
 ```scala
-struct Data { let: i32 }
+struct Data { v: i32 }
 
 fn process(d: Data) -> void {
     // d is immutable here
-    println(d.let)
+    println(d.v)
 }
 
 fn main() {
     let x# = 10         // Mutable int
     x# = 11             // Mutation with token
     
-    let ^p = new Data{let: 0} // Heap alloc
-    // p.let = 1 // Error: p points to immutable Data
+    let ^p = new Data{v = 0} // Heap alloc
+    // p.v = 1 // Error: p points to immutable Data
     
-    let ^p2# = new Data{let: 0}
-    p2#.let = 1     // OK: p2 points to mutable Data
+    let ^p2# = new Data{v = 0}
+    p2#.v = 1     // OK: p2 points to mutable Data
     
     process(p2)     // Implicit optimization to clean reference
 }
