@@ -13,17 +13,23 @@ void CodeGen::generate(const Module &ast) {
   // Generate Structs
   for (const auto &str : ast.Structs) {
     genStruct(str.get());
+    if (hasErrors())
+      return;
   }
 
   // Generate Externs
   for (const auto &ext : ast.Externs) {
     m_Externs[ext->Name] = ext.get();
     genExtern(ext.get());
+    if (hasErrors())
+      return;
   }
 
   // Generate Globals
   for (const auto &glob : ast.Globals) {
     genGlobal(glob.get());
+    if (hasErrors())
+      return;
   }
 
   // Generate Functions (decl phase)
@@ -34,6 +40,8 @@ void CodeGen::generate(const Module &ast) {
   // Generate Functions (body phase)
   for (const auto &func : ast.Functions) {
     genFunction(func.get());
+    if (hasErrors())
+      return;
   }
 }
 
@@ -61,13 +69,23 @@ void CodeGen::genGlobal(const VariableDecl *var) {
 }
 
 llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
+  m_NamedValues.clear();
+  m_ValueTypes.clear();
+  m_ValueElementTypes.clear();
+  m_ValueIsReference.clear();
+  m_ValueIsMutable.clear();
+
   llvm::Function *f = m_Module->getFunction(func->Name);
 
   if (!f) {
     std::vector<llvm::Type *> argTypes;
     for (const auto &arg : func->Args) {
-      llvm::Type *t = resolveType(arg.Type, arg.HasPointer);
-      if (arg.IsMutable)
+      llvm::Type *t = resolveType(arg.Type, arg.HasPointer || arg.IsReference);
+      // Capture Passing: Structs, Arrays, Tuples or Mutable params are passed
+      // as pointers
+      bool isCaptured = (t->isStructTy() || t->isArrayTy() || arg.IsMutable) &&
+                        !arg.IsReference && !arg.HasPointer;
+      if (isCaptured)
         t = llvm::PointerType::getUnqual(t);
       argTypes.push_back(t);
     }
@@ -88,31 +106,43 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
   size_t idx = 0;
   for (auto &arg : f->args()) {
     arg.setName(func->Args[idx].Name);
-    llvm::Type *baseType =
+    llvm::Type *targetType =
         resolveType(func->Args[idx].Type, func->Args[idx].HasPointer);
+    llvm::Type *baseType = func->Args[idx].IsReference
+                               ? llvm::PointerType::getUnqual(targetType)
+                               : targetType;
 
-    if (func->Args[idx].IsMutable) {
-      // Already a pointer (implicit reference)
+    llvm::Type *t =
+        resolveType(func->Args[idx].Type,
+                    func->Args[idx].HasPointer || func->Args[idx].IsReference);
+    bool isCaptured =
+        (t->isStructTy() || t->isArrayTy() || func->Args[idx].IsMutable) &&
+        !func->Args[idx].IsReference && !func->Args[idx].HasPointer;
+
+    if (func->Args[idx].IsReference || isCaptured) {
+      // Passed as a pointer (explicit ref or captured)
       m_NamedValues[func->Args[idx].Name] = &arg;
+      m_ValueIsReference[func->Args[idx].Name] = true;
     } else {
-      // Pass by value, create local copy
+      // Pass by value, create local alloca
       llvm::AllocaInst *alloca =
           m_Builder.CreateAlloca(baseType, nullptr, func->Args[idx].Name);
       m_Builder.CreateStore(&arg, alloca);
       m_NamedValues[func->Args[idx].Name] = alloca;
+      m_ValueIsReference[func->Args[idx].Name] = false;
     }
     m_ValueTypes[func->Args[idx].Name] = baseType;
+    m_ValueIsMutable[func->Args[idx].Name] = func->Args[idx].IsMutable;
 
-    // Set Element Type
-    if (baseType->isArrayTy())
+    // Set Element Type for indexing or member access
+    if (targetType->isArrayTy()) {
       m_ValueElementTypes[func->Args[idx].Name] =
-          baseType->getArrayElementType();
-    else if (baseType->isPointerTy()) {
-      m_ValueElementTypes[func->Args[idx].Name] =
-          llvm::Type::getInt8Ty(m_Context); // Fallback
+          targetType->getArrayElementType();
     } else if (func->Args[idx].Type == "str") {
       m_ValueElementTypes[func->Args[idx].Name] =
           llvm::Type::getInt8Ty(m_Context);
+    } else {
+      m_ValueElementTypes[func->Args[idx].Name] = targetType;
     }
 
     idx++;
@@ -136,10 +166,6 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     if (ret->ReturnValue) {
       llvm::Value *val = genExpr(ret->ReturnValue.get());
       if (val) {
-        llvm::Type *retType =
-            m_Builder.GetInsertBlock()->getParent()->getReturnType();
-        if (val->getType()->isIntegerTy() && retType->isIntegerTy())
-          val = m_Builder.CreateIntCast(val, retType, true);
         return m_Builder.CreateRet(val);
       }
     } else {
@@ -154,20 +180,39 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     llvm::Type *type = nullptr;
     llvm::Type *elemTy = nullptr;
     if (!var->TypeName.empty()) {
-      type = resolveType(var->TypeName, var->HasPointer);
+      type = resolveType(var->TypeName, var->HasPointer || var->IsReference);
       elemTy = resolveType(var->TypeName, false);
       if (var->TypeName == "str")
         elemTy = llvm::Type::getInt8Ty(m_Context);
     } else if (initVal) {
       type = initVal->getType();
-      if (type->isArrayTy())
-        elemTy = type->getArrayElementType();
-      else if (type->isPointerTy()) {
-        // Fallback for strings
-        elemTy = llvm::Type::getInt8Ty(m_Context);
+      if (var->IsReference) {
+        if (auto *addrOf =
+                dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
+          if (auto *vExpr = dynamic_cast<const VariableExpr *>(
+                  addrOf->Expression.get())) {
+            llvm::Type *targetType = m_ValueTypes[vExpr->Name];
+            if (targetType->isArrayTy())
+              elemTy = targetType->getArrayElementType();
+            else
+              elemTy = targetType;
+          }
+        }
+      }
+      if (!elemTy) {
+        if (type->isArrayTy())
+          elemTy = type->getArrayElementType();
+        else if (type->isPointerTy())
+          elemTy = llvm::Type::getInt8Ty(m_Context);
+        else
+          elemTy = type; // Store struct type or basic type
       }
     } else {
       type = llvm::Type::getInt64Ty(m_Context);
+    }
+
+    if (var->IsReference && type && !type->isPointerTy()) {
+      type = llvm::PointerType::getUnqual(type);
     }
 
     if (!type) {
@@ -178,15 +223,29 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     m_NamedValues[var->Name] = alloca;
     m_ValueTypes[var->Name] = type;
     m_ValueElementTypes[var->Name] = elemTy;
+    m_ValueIsReference[var->Name] = var->IsReference;
+    m_ValueIsMutable[var->Name] = var->IsMutable;
 
-    if (initVal) {
-      if (initVal->getType()->isIntegerTy() && type->isIntegerTy())
-        initVal = m_Builder.CreateIntCast(initVal, type, true);
-      m_Builder.CreateStore(initVal, alloca);
+    if (var->Init) { // Keep original `var->Init`
+      initVal =
+          genExpr(var->Init.get()); // Re-generate initVal here as it might have
+                                    // been null before type resolution
+      if (initVal) {
+        if (initVal->getType() != type) {
+          std::string expected, actual;
+          llvm::raw_string_ostream os_exp(expected), os_act(actual);
+          type->print(os_exp);
+          initVal->getType()->print(os_act);
+          error(var, "Type mismatch in declaration of " + var->Name +
+                         ". Expected " + expected + ", got " + actual);
+          return nullptr;
+        }
+        m_Builder.CreateStore(initVal, alloca);
+      }
     }
-
-    m_NamedValues[var->Name] = alloca;
-    m_ValueTypes[var->Name] = type;
+    // The following two lines were duplicates in the original code and are
+    // removed. m_NamedValues[var->Name] = alloca; m_ValueTypes[var->Name] =
+    // type;
     return nullptr;
   } else if (auto *ifs = dynamic_cast<const IfStmt *>(stmt)) {
     llvm::Value *cond = genExpr(ifs->Condition.get());
@@ -255,16 +314,85 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
 
 llvm::Value *CodeGen::genExpr(const Expr *expr) {
   if (auto *num = dynamic_cast<const NumberExpr *>(expr)) {
-    return llvm::ConstantInt::get(m_Context, llvm::APInt(64, num->Value));
+    return llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context),
+                                  num->Value);
   }
   if (auto *flt = dynamic_cast<const FloatExpr *>(expr)) {
-    return llvm::ConstantFP::get(m_Context, llvm::APFloat(flt->Value));
+    return llvm::ConstantFP::get(llvm::Type::getDoubleTy(m_Context),
+                                 flt->Value);
   }
   if (auto *bl = dynamic_cast<const BoolExpr *>(expr)) {
     return llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), bl->Value);
   }
   if (auto *str = dynamic_cast<const StringExpr *>(expr)) {
     return m_Builder.CreateGlobalStringPtr(str->Value);
+  }
+  if (auto *addrOf = dynamic_cast<const AddressOfExpr *>(expr)) {
+    return genAddr(addrOf->Expression.get());
+  }
+  if (auto *unary = dynamic_cast<const UnaryExpr *>(expr)) {
+    if (unary->Op == TokenType::PlusPlus ||
+        unary->Op == TokenType::MinusMinus) {
+      llvm::Value *addr = genAddr(unary->RHS.get());
+      if (!addr)
+        return nullptr;
+      llvm::Type *type = nullptr;
+      if (auto *var = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+        type = m_ValueElementTypes[var->Name];
+      } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+        type = gep->getResultElementType();
+      } else if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(addr)) {
+        type = alloca->getAllocatedType();
+      }
+      if (!type)
+        return nullptr;
+      llvm::Value *oldVal = m_Builder.CreateLoad(type, addr, "pre_old");
+      llvm::Value *newVal;
+      if (unary->Op == TokenType::PlusPlus)
+        newVal = m_Builder.CreateAdd(oldVal, llvm::ConstantInt::get(type, 1),
+                                     "preinc_new");
+      else
+        newVal = m_Builder.CreateSub(oldVal, llvm::ConstantInt::get(type, 1),
+                                     "predec_new");
+      m_Builder.CreateStore(newVal, addr);
+      return newVal;
+    }
+    llvm::Value *rhs = genExpr(unary->RHS.get());
+    if (!rhs)
+      return nullptr;
+    if (unary->Op == TokenType::Bang) {
+      return m_Builder.CreateNot(rhs, "nottmp");
+    } else if (unary->Op == TokenType::Minus) {
+      if (rhs->getType()->isFloatingPointTy())
+        return m_Builder.CreateFNeg(rhs, "negtmp");
+      return m_Builder.CreateNeg(rhs, "negtmp");
+    }
+    return nullptr;
+  }
+  if (auto *post = dynamic_cast<const PostfixExpr *>(expr)) {
+    llvm::Value *addr = genAddr(post->LHS.get());
+    if (!addr)
+      return nullptr;
+    llvm::Type *type = nullptr;
+    if (auto *var = dynamic_cast<const VariableExpr *>(post->LHS.get())) {
+      type = m_ValueElementTypes[var->Name];
+    } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+      type = gep->getResultElementType();
+    } else if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(addr)) {
+      type = alloca->getAllocatedType();
+    }
+    if (!type)
+      return nullptr;
+    llvm::Value *oldVal = m_Builder.CreateLoad(type, addr, "post_old");
+    llvm::Value *newVal;
+    if (post->Op == TokenType::PlusPlus)
+      newVal = m_Builder.CreateAdd(oldVal, llvm::ConstantInt::get(type, 1),
+                                   "postinc_new");
+    else
+      newVal = m_Builder.CreateSub(oldVal, llvm::ConstantInt::get(type, 1),
+                                   "postdec_new");
+    m_Builder.CreateStore(newVal, addr);
+    return oldVal;
   }
   if (auto *call = dynamic_cast<const CallExpr *>(expr)) {
     llvm::Function *callee = m_Module->getFunction(call->Callee);
@@ -282,35 +410,65 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     std::vector<llvm::Value *> argsV;
     for (size_t i = 0; i < call->Args.size(); ++i) {
       bool isMut = false;
-      if (funcDecl && i < funcDecl->Args.size())
+      bool isRef = false;
+      if (funcDecl && i < funcDecl->Args.size()) {
         isMut = funcDecl->Args[i].IsMutable;
-      else if (extDecl && i < extDecl->Args.size())
+        isRef = funcDecl->Args[i].IsReference;
+      } else if (extDecl && i < extDecl->Args.size()) {
         isMut = extDecl->Args[i].IsMutable;
-
-      if (isMut) {
-        llvm::Value *addr = genAddr(call->Args[i].get());
-        if (!addr)
-          return nullptr;
-        argsV.push_back(addr);
-      } else {
-        llvm::Value *val = genExpr(call->Args[i].get());
-        if (!val)
-          return nullptr;
-
-        // Auto cast to i64 if needed for variadic or simple calls
-        if (callee->isVarArg() &&
-            i >= callee->getFunctionType()->getNumParams()) {
-          if (val->getType()->isIntegerTy())
-            val = m_Builder.CreateIntCast(
-                val, llvm::Type::getInt64Ty(m_Context), true);
-        } else if (i < callee->getFunctionType()->getNumParams()) {
-          llvm::Type *paramType = callee->getFunctionType()->getParamType(i);
-          if (val->getType()->isIntegerTy() && paramType->isIntegerTy())
-            val = m_Builder.CreateIntCast(val, paramType, true);
-        }
-
-        argsV.push_back(val);
+        isRef = extDecl->Args[i].IsReference;
       }
+
+      llvm::Value *val = nullptr;
+      bool shouldPassAddr = isRef;
+      if (funcDecl && i < funcDecl->Args.size()) {
+        llvm::Type *baseT =
+            resolveType(funcDecl->Args[i].Type, funcDecl->Args[i].HasPointer);
+        if (baseT->isStructTy() || baseT->isArrayTy() ||
+            funcDecl->Args[i].IsMutable) {
+          shouldPassAddr = true;
+        }
+      }
+
+      if (shouldPassAddr) {
+        if (dynamic_cast<const AddressOfExpr *>(call->Args[i].get())) {
+          val = genExpr(call->Args[i].get());
+        } else {
+          val = genAddr(call->Args[i].get());
+        }
+      } else {
+        val = genExpr(call->Args[i].get());
+      }
+
+      if (!val) {
+        std::cerr << "CodeGen Error: Failed to generate argument " << i
+                  << " for " << call->Callee << "\n";
+        return nullptr;
+      }
+
+      if (i < callee->getFunctionType()->getNumParams()) {
+        llvm::Type *paramType = callee->getFunctionType()->getParamType(i);
+        if (val->getType() != paramType) {
+          std::string expected, actual;
+          llvm::raw_string_ostream os_exp(expected), os_act(actual);
+          paramType->print(os_exp);
+          val->getType()->print(os_act);
+          error(call, "Type mismatch for argument " + std::to_string(i) +
+                          " in call to " + call->Callee + ". Expected " +
+                          expected + ", got " + actual);
+          return nullptr;
+        }
+      } else if (callee->isVarArg()) {
+        // Varargs promotion
+        if (val->getType()->isIntegerTy()) {
+          if (val->getType()->getIntegerBitWidth() < 32)
+            val = m_Builder.CreateIntCast(
+                val, llvm::Type::getInt32Ty(m_Context), true);
+        } else if (val->getType()->isFloatTy()) {
+          val = m_Builder.CreateFPExt(val, llvm::Type::getDoubleTy(m_Context));
+        }
+      }
+      argsV.push_back(val);
     }
     return m_Builder.CreateCall(callee, argsV);
   }
@@ -318,10 +476,15 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     llvm::Value *v = m_NamedValues[var->Name];
     if (!v)
       return nullptr;
+    llvm::Value *val = v;
     if (llvm::isa<llvm::AllocaInst>(v) || llvm::isa<llvm::GlobalVariable>(v)) {
-      return m_Builder.CreateLoad(m_ValueTypes[var->Name], v, var->Name);
+      val = m_Builder.CreateLoad(m_ValueTypes[var->Name], v, var->Name);
     }
-    return v;
+    if (m_ValueIsReference[var->Name]) {
+      val = m_Builder.CreateLoad(m_ValueElementTypes[var->Name], val,
+                                 var->Name + "_val");
+    }
+    return val;
   }
   if (auto *bin = dynamic_cast<const BinaryExpr *>(expr)) {
     if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" ||
@@ -329,31 +492,44 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       llvm::Value *ptr = genAddr(bin->LHS.get());
       if (!ptr)
         return nullptr;
+
       if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-        if (!varLHS->IsMutable)
+        if (!m_ValueIsMutable[varLHS->Name]) {
+          error(bin, "Cannot mutate immutable variable '" + varLHS->Name + "'");
           return nullptr;
+        }
+        if (!varLHS->IsMutable) {
+          error(bin,
+                "Missing '#' token for mutation of '" + varLHS->Name + "'");
+          return nullptr;
+        }
       }
+
       llvm::Value *rhsVal = genExpr(bin->RHS.get());
       if (!rhsVal)
         return nullptr;
 
       llvm::Type *destType = nullptr;
       if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-        destType = m_ValueTypes[varLHS->Name];
+        if (m_ValueIsReference[varLHS->Name])
+          destType = m_ValueElementTypes[varLHS->Name];
+        else
+          destType = m_ValueTypes[varLHS->Name];
       } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
         destType = gep->getResultElementType();
+      }
+
+      if (!destType) {
+        error(bin, "Could not determine destination type for assignment");
+        return nullptr;
       }
 
       if (bin->Op != "=") {
         // Compound: LHS = LHS op RHS
         llvm::Value *lhsVal = m_Builder.CreateLoad(destType, ptr);
-        // Cast to i64 for calculation if needed
-        if (lhsVal->getType()->isIntegerTy() &&
-            rhsVal->getType()->isIntegerTy()) {
-          lhsVal = m_Builder.CreateIntCast(
-              lhsVal, llvm::Type::getInt64Ty(m_Context), true);
-          rhsVal = m_Builder.CreateIntCast(
-              rhsVal, llvm::Type::getInt64Ty(m_Context), true);
+        if (lhsVal->getType() != rhsVal->getType()) {
+          error(bin, "Type mismatch in compound assignment");
+          return nullptr;
         }
 
         llvm::Value *res = nullptr;
@@ -369,9 +545,10 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
         rhsVal = res;
       }
 
-      if (destType && rhsVal->getType()->isIntegerTy() &&
-          destType->isIntegerTy())
-        rhsVal = m_Builder.CreateIntCast(rhsVal, destType, true);
+      if (destType != rhsVal->getType()) {
+        error(bin, "Type mismatch in assignment");
+        return nullptr;
+      }
 
       m_Builder.CreateStore(rhsVal, ptr);
       return rhsVal;
@@ -382,11 +559,9 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     if (!lhs || !rhs)
       return nullptr;
 
-    if (lhs->getType()->isIntegerTy() && rhs->getType()->isIntegerTy()) {
-      lhs =
-          m_Builder.CreateIntCast(lhs, llvm::Type::getInt64Ty(m_Context), true);
-      rhs =
-          m_Builder.CreateIntCast(rhs, llvm::Type::getInt64Ty(m_Context), true);
+    if (lhs->getType() != rhs->getType()) {
+      error(bin, "Type mismatch in binary expression");
+      return nullptr;
     }
 
     if (bin->Op == "+")
@@ -397,26 +572,14 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       return m_Builder.CreateMul(lhs, rhs, "multmp");
     if (bin->Op == "/")
       return m_Builder.CreateSDiv(lhs, rhs, "divtmp");
-    if (bin->Op == "<") {
-      lhs = m_Builder.CreateICmpSLT(lhs, rhs, "cmptmp");
-      return m_Builder.CreateIntCast(lhs, llvm::Type::getInt64Ty(m_Context),
-                                     true);
-    }
-    if (bin->Op == ">") {
-      lhs = m_Builder.CreateICmpSGT(lhs, rhs, "cmptmp");
-      return m_Builder.CreateIntCast(lhs, llvm::Type::getInt64Ty(m_Context),
-                                     true);
-    }
-    if (bin->Op == "==") {
-      lhs = m_Builder.CreateICmpEQ(lhs, rhs, "eqtmp");
-      return m_Builder.CreateIntCast(lhs, llvm::Type::getInt64Ty(m_Context),
-                                     true);
-    }
-    if (bin->Op == "!=") {
-      lhs = m_Builder.CreateICmpNE(lhs, rhs, "netmp");
-      return m_Builder.CreateIntCast(lhs, llvm::Type::getInt64Ty(m_Context),
-                                     true);
-    }
+    if (bin->Op == "<")
+      return m_Builder.CreateICmpSLT(lhs, rhs, "lt_tmp");
+    if (bin->Op == ">")
+      return m_Builder.CreateICmpSGT(lhs, rhs, "gt_tmp");
+    if (bin->Op == "==")
+      return m_Builder.CreateICmpEQ(lhs, rhs, "eq_tmp");
+    if (bin->Op == "!=")
+      return m_Builder.CreateICmpNE(lhs, rhs, "ne_tmp");
     return nullptr;
   }
   if (auto *cast = dynamic_cast<const CastExpr *>(expr)) {
@@ -455,10 +618,11 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
         continue;
       llvm::Value *fieldAddr = m_Builder.CreateStructGEP(st, alloca, idx);
       llvm::Value *fieldVal = genExpr(f.second.get());
-      if (fieldVal->getType()->isIntegerTy() &&
-          st->getElementType(idx)->isIntegerTy())
-        fieldVal =
-            m_Builder.CreateIntCast(fieldVal, st->getElementType(idx), true);
+      if (fieldVal->getType() != st->getElementType(idx)) {
+        error(init,
+              "Type mismatch for field " + f.first + " in " + init->StructName);
+        return nullptr;
+      }
       m_Builder.CreateStore(fieldVal, fieldAddr);
     }
     return m_Builder.CreateLoad(st, alloca);
@@ -510,7 +674,12 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
 
 llvm::Value *CodeGen::genAddr(const Expr *expr) {
   if (auto *var = dynamic_cast<const VariableExpr *>(expr)) {
-    return m_NamedValues[var->Name];
+    llvm::Value *v = m_NamedValues[var->Name];
+    if (m_ValueIsReference[var->Name] && v && llvm::isa<llvm::AllocaInst>(v)) {
+      return m_Builder.CreateLoad(m_ValueTypes[var->Name], v,
+                                  var->Name + "_ref_addr");
+    }
+    return v;
   }
   if (auto *idxExpr = dynamic_cast<const ArrayIndexExpr *>(expr)) {
     llvm::Value *arrAddr = genAddr(idxExpr->Array.get());
@@ -552,9 +721,11 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
 
     llvm::Type *objType = nullptr;
     if (auto *var = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
-      objType = m_ValueTypes[var->Name];
+      objType = m_ValueElementTypes[var->Name];
     } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
       objType = gep->getResultElementType();
+    } else if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
+      objType = alloca->getAllocatedType();
     }
 
     if (!objType || !objType->isStructTy())
@@ -565,13 +736,25 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
     if (!mem->Member.empty() && isdigit(mem->Member[0])) {
       idx = std::stoi(mem->Member);
     } else {
-      auto &fields = m_StructFieldNames[st->getName().str()];
-      for (size_t i = 0; i < fields.size(); ++i)
-        if (fields[i] == mem->Member) {
-          idx = i;
-          break;
+      std::string structName = st->getName().str();
+      // Handle possible LLVM name suffixes like .0, .1
+      size_t dotPos = structName.find_last_of('.');
+      if (dotPos != std::string::npos && dotPos > 0 &&
+          isdigit(structName[dotPos + 1])) {
+        structName = structName.substr(0, dotPos);
+      }
+
+      if (m_StructFieldNames.count(structName)) {
+        auto &fields = m_StructFieldNames[structName];
+        for (size_t i = 0; i < fields.size(); ++i) {
+          if (fields[i] == mem->Member) {
+            idx = i;
+            break;
+          }
         }
+      }
     }
+
     if (idx == -1)
       return nullptr;
 
@@ -583,9 +766,7 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
 void CodeGen::genExtern(const ExternDecl *ext) {
   std::vector<llvm::Type *> argTypes;
   for (const auto &arg : ext->Args) {
-    llvm::Type *t = resolveType(arg.Type, arg.HasPointer);
-    if (arg.IsMutable)
-      t = llvm::PointerType::getUnqual(t);
+    llvm::Type *t = resolveType(arg.Type, arg.HasPointer || arg.IsReference);
     argTypes.push_back(t);
   }
   llvm::Type *retType = resolveType(ext->ReturnType, false);
@@ -676,6 +857,18 @@ void CodeGen::genStruct(const StructDecl *str) {
   st->setBody(fieldTypes);
   m_StructTypes[str->Name] = st;
   m_StructFieldNames[str->Name] = fieldNames;
+}
+
+void CodeGen::error(const ASTNode *node, const std::string &message) {
+  m_ErrorCount++;
+  if (node && !node->FileName.empty()) {
+    std::cerr << node->FileName << ":" << node->Line << ":" << node->Column
+              << ": error: " << message << "\n";
+  } else if (node) {
+    std::cerr << "error: " << message << " (at line " << node->Line << ")\n";
+  } else {
+    std::cerr << "error: " << message << "\n";
+  }
 }
 
 } // namespace toka

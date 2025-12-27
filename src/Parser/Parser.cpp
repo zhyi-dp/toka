@@ -34,10 +34,14 @@ bool Parser::match(TokenType type) {
 Token Parser::consume(TokenType type, const std::string &message) {
   if (check(type))
     return advance();
-  std::cerr << "Parser Error: " << message << " at " << peek().toString()
-            << "\n";
-  // For now simple error recovery: return EOF or garbage
+  error(peek(), message);
   return peek();
+}
+
+void Parser::error(const Token &tok, const std::string &message) {
+  std::cerr << m_CurrentFile << ":" << tok.Line << ":" << tok.Column
+            << ": error: " << message << "\n";
+  std::exit(1);
 }
 
 std::unique_ptr<Module> Parser::parseModule() {
@@ -89,7 +93,9 @@ std::unique_ptr<StructDecl> Parser::parseStruct() {
   }
   consume(TokenType::RBrace, "Expected '}'");
 
-  return std::make_unique<StructDecl>(name.Text, std::move(fields));
+  auto node = std::make_unique<StructDecl>(name.Text, std::move(fields));
+  node->setLocation(name, m_CurrentFile);
+  return node;
 }
 
 std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
@@ -108,6 +114,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
     do {
       if (check(TokenType::DotDotDot))
         break;
+      bool isRef = match(TokenType::Ampersand);
       bool hasPointer = match(TokenType::Caret);
       Token argName = consume(TokenType::Identifier, "Expected argument name");
       std::string argType = "i64"; // fallback
@@ -122,6 +129,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
       arg.Name = argName.Text;
       arg.Type = argType;
       arg.HasPointer = hasPointer;
+      arg.IsReference = isRef;
       arg.IsMutable = argName.HasWrite;
       arg.IsNullable = argName.HasNull;
       args.push_back(std::move(arg));
@@ -147,50 +155,44 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
 
 std::unique_ptr<VariableDecl> Parser::parseVariableDecl() {
   consume(TokenType::KwLet, "Expected 'let'");
-
+  bool isRef = match(TokenType::Ampersand);
   bool hasPointer = match(TokenType::Caret);
   Token name = consume(TokenType::Identifier, "Expected variable name");
-  bool isMutable = name.HasWrite; // Check attribute token
 
-  // Type annotation : Type
   std::string typeName = "";
   if (match(TokenType::Colon)) {
-    int depth = 0;
-    while ((depth > 0 ||
-            (!check(TokenType::Equal) && !check(TokenType::Semicolon))) &&
-           !check(TokenType::EndOfFile)) {
-      Token t = advance();
-      typeName += t.Text;
-      if (t.Kind == TokenType::LBracket || t.Kind == TokenType::LParen)
-        depth++;
-      else if (t.Kind == TokenType::RBracket || t.Kind == TokenType::RParen)
-        depth--;
+    while (!check(TokenType::Semicolon) && !check(TokenType::Equal) &&
+           !check(TokenType::EndOfFile) && !check(TokenType::Comma) &&
+           !check(TokenType::RParen)) {
+      typeName += advance().Text;
     }
   }
 
-  std::unique_ptr<Expr> init = nullptr;
+  std::unique_ptr<Expr> init;
   if (match(TokenType::Equal)) {
     init = parseExpr();
   }
 
-  consume(TokenType::Semicolon, "Expected ';'");
+  auto node = std::make_unique<VariableDecl>(name.Text, std::move(init));
+  node->setLocation(name, m_CurrentFile);
+  node->HasPointer = hasPointer;
+  node->IsReference = isRef;
+  node->IsMutable = name.HasWrite;
+  node->IsNullable = name.HasNull;
+  node->TypeName = typeName;
 
-  auto decl = std::make_unique<VariableDecl>(name.Text, std::move(init));
-  decl->HasPointer = hasPointer;
-  decl->IsMutable = isMutable;
-  decl->IsNullable = name.HasNull;
-  decl->TypeName = typeName;
-  return decl;
+  consume(TokenType::Semicolon, "Expected ';' after variable declaration");
+  return node;
 }
 
 std::unique_ptr<Stmt> Parser::parseStmt() {
   if (check(TokenType::LBrace))
     return parseBlock();
-  if (match(TokenType::KwIf))
+  if (check(TokenType::KwIf))
     return parseIf();
-  if (match(TokenType::KwWhile))
+  if (check(TokenType::KwWhile))
     return parseWhile();
-  if (match(TokenType::KwReturn))
+  if (check(TokenType::KwReturn))
     return parseReturn();
   if (check(TokenType::KwLet))
     return parseVariableDecl();
@@ -221,12 +223,15 @@ std::unique_ptr<BlockStmt> Parser::parseBlock() {
 }
 
 std::unique_ptr<ReturnStmt> Parser::parseReturn() {
-  std::unique_ptr<Expr> value = nullptr;
+  Token tok = consume(TokenType::KwReturn, "Expected 'return'");
+  std::unique_ptr<Expr> val;
   if (!check(TokenType::Semicolon)) {
-    value = parseExpr();
+    val = parseExpr();
   }
-  consume(TokenType::Semicolon, "Expected ';'");
-  return std::make_unique<ReturnStmt>(std::move(value));
+  consume(TokenType::Semicolon, "Expected ';' after return value");
+  auto node = std::make_unique<ReturnStmt>(std::move(val));
+  node->setLocation(tok, m_CurrentFile);
+  return node;
 }
 
 int Parser::getPrecedence(TokenType type) {
@@ -271,7 +276,10 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
              !check(TokenType::EndOfFile)) {
         typeName += advance().Text;
       }
-      lhs = std::make_unique<CastExpr>(std::move(lhs), typeName);
+      Token tok = previous();
+      auto node = std::make_unique<CastExpr>(std::move(lhs), typeName);
+      node->setLocation(tok, m_CurrentFile);
+      lhs = std::move(node);
       continue;
     }
 
@@ -286,7 +294,10 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
       break;
     }
 
-    lhs = std::make_unique<BinaryExpr>(op.Text, std::move(lhs), std::move(rhs));
+    auto node =
+        std::make_unique<BinaryExpr>(op.Text, std::move(lhs), std::move(rhs));
+    node->setLocation(op, m_CurrentFile);
+    lhs = std::move(node);
   }
 
   return lhs;
@@ -294,17 +305,48 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
 
 std::unique_ptr<Expr> Parser::parsePrimary() {
   std::unique_ptr<Expr> expr = nullptr;
+  if (match(TokenType::Ampersand)) {
+    Token tok = previous();
+    auto sub = parsePrimary();
+    auto node = std::make_unique<AddressOfExpr>(std::move(sub));
+    node->setLocation(tok, m_CurrentFile);
+    return node;
+  }
+  if (match(TokenType::Bang) || match(TokenType::Minus) ||
+      match(TokenType::PlusPlus) || match(TokenType::MinusMinus)) {
+    Token tok = previous();
+    TokenType op = tok.Kind;
+    auto sub = parsePrimary();
+    auto node = std::make_unique<UnaryExpr>(op, std::move(sub));
+    node->setLocation(tok, m_CurrentFile);
+    return node;
+  }
 
   if (match(TokenType::Integer)) {
-    expr = std::make_unique<NumberExpr>(std::stoll(previous().Text));
+    Token tok = previous();
+    auto node = std::make_unique<NumberExpr>(std::stoll(tok.Text));
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
   } else if (match(TokenType::Float)) {
-    expr = std::make_unique<FloatExpr>(std::stod(previous().Text));
+    Token tok = previous();
+    auto node = std::make_unique<FloatExpr>(std::stod(tok.Text));
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
   } else if (match(TokenType::KwTrue)) {
-    expr = std::make_unique<BoolExpr>(true);
+    Token tok = previous();
+    auto node = std::make_unique<BoolExpr>(true);
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
   } else if (match(TokenType::KwFalse)) {
-    expr = std::make_unique<BoolExpr>(false);
+    Token tok = previous();
+    auto node = std::make_unique<BoolExpr>(false);
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
   } else if (match(TokenType::String)) {
-    expr = std::make_unique<StringExpr>(previous().Text);
+    Token tok = previous();
+    auto node = std::make_unique<StringExpr>(tok.Text);
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
   } else if (match(TokenType::LBracket)) {
     // Array literal [1, 2, 3]
     std::vector<std::unique_ptr<Expr>> elements;
@@ -315,7 +357,9 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     }
     consume(TokenType::RBracket, "Expected ']' after array elements");
     expr = std::make_unique<ArrayExpr>(std::move(elements));
-  } else if (match(TokenType::LParen)) {
+  } else if (check(TokenType::LParen)) {
+    Token tok = peek();
+    consume(TokenType::LParen, "Expected '('");
     // Grouping or Tuple
     std::vector<std::unique_ptr<Expr>> elements;
     bool isTuple = false;
@@ -331,7 +375,9 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     }
     consume(TokenType::RParen, "Expected ')'");
     if (isTuple || elements.empty()) {
-      expr = std::make_unique<TupleExpr>(std::move(elements));
+      auto node = std::make_unique<TupleExpr>(std::move(elements));
+      node->setLocation(tok, m_CurrentFile);
+      expr = std::move(node);
     } else {
       expr = std::move(elements[0]);
     }
@@ -352,6 +398,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         }
         consume(TokenType::RBrace, "Expected '}'");
         expr = std::make_unique<InitStructExpr>(name.Text, std::move(fields));
+        expr->setLocation(name, m_CurrentFile);
       } else if (match(TokenType::LParen)) {
         // Function Call
         std::vector<std::unique_ptr<Expr>> args;
@@ -361,9 +408,12 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
           } while (match(TokenType::Comma));
         }
         consume(TokenType::RParen, "Expected ')' after arguments");
-        expr = std::make_unique<CallExpr>(name.Text, std::move(args));
+        auto node = std::make_unique<CallExpr>(name.Text, std::move(args));
+        node->setLocation(name, m_CurrentFile);
+        expr = std::move(node);
       } else {
         auto var = std::make_unique<VariableExpr>(name.Text);
+        var->setLocation(name, m_CurrentFile);
         var->HasPointer = hasPointer;
         var->IsMutable = name.HasWrite;
         var->IsNullable = name.HasNull;
@@ -375,18 +425,26 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   // Suffixes: .member, [index], etc.
   while (expr) {
     if (match(TokenType::Dot)) {
+      Token dotTok = previous();
       if (match(TokenType::Identifier) || match(TokenType::Integer)) {
-        expr = std::make_unique<MemberExpr>(std::move(expr), previous().Text);
+        auto node =
+            std::make_unique<MemberExpr>(std::move(expr), previous().Text);
+        node->setLocation(dotTok, m_CurrentFile);
+        expr = std::move(node);
       } else {
-        std::cerr << "Parser Error: Expected member name or index after '.' at "
-                  << peek().Text << "\n";
-        std::exit(1);
+        error(peek(), "Expected member name or index after '.'");
       }
     } else if (match(TokenType::LBracket)) {
       std::unique_ptr<Expr> index = parseExpr();
       consume(TokenType::RBracket, "Expected ']' after index");
       expr =
           std::make_unique<ArrayIndexExpr>(std::move(expr), std::move(index));
+    } else if (match(TokenType::PlusPlus)) {
+      expr =
+          std::make_unique<PostfixExpr>(TokenType::PlusPlus, std::move(expr));
+    } else if (match(TokenType::MinusMinus)) {
+      expr =
+          std::make_unique<PostfixExpr>(TokenType::MinusMinus, std::move(expr));
     } else {
       break;
     }
@@ -433,38 +491,44 @@ std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
 
   std::string retType = "void";
   if (match(TokenType::Arrow)) {
-    retType = advance().Text;
+    retType = "";
+    while (!check(TokenType::Semicolon) && !check(TokenType::EndOfFile)) {
+      retType += advance().Text;
+    }
   }
-  consume(TokenType::Semicolon, "Expected ';'");
-  auto decl = std::make_unique<ExternDecl>(name.Text, std::move(args), retType);
-  decl->IsVariadic = isVariadic;
-  return decl;
+  consume(TokenType::Semicolon, "Expected ';' after extern declaration");
+
+  auto node = std::make_unique<ExternDecl>(name.Text, std::move(args), retType);
+  node->setLocation(name, m_CurrentFile);
+  node->IsVariadic = isVariadic;
+  return node;
 }
 
 std::unique_ptr<Stmt> Parser::parseIf() {
-  consume(TokenType::LParen, "Expected '(' after 'if'");
+  Token tok = consume(TokenType::KwIf, "Expected 'if'");
+  consume(TokenType::LParen, "Expected '('");
   auto cond = parseExpr();
-  consume(TokenType::RParen, "Expected ')' after condition");
-
+  consume(TokenType::RParen, "Expected ')'");
   auto thenStmt = parseStmt();
-  std::unique_ptr<Stmt> elseStmt = nullptr;
-
+  std::unique_ptr<Stmt> elseStmt;
   if (match(TokenType::KwElse)) {
     elseStmt = parseStmt();
   }
-
-  return std::make_unique<IfStmt>(std::move(cond), std::move(thenStmt),
-                                  std::move(elseStmt));
+  auto node = std::make_unique<IfStmt>(std::move(cond), std::move(thenStmt),
+                                       std::move(elseStmt));
+  node->setLocation(tok, m_CurrentFile);
+  return node;
 }
 
 std::unique_ptr<Stmt> Parser::parseWhile() {
-  consume(TokenType::LParen, "Expected '(' after 'while'");
+  Token tok = consume(TokenType::KwWhile, "Expected 'while'");
+  consume(TokenType::LParen, "Expected '('");
   auto cond = parseExpr();
-  consume(TokenType::RParen, "Expected ')' after condition");
-
+  consume(TokenType::RParen, "Expected ')'");
   auto body = parseStmt();
-
-  return std::make_unique<WhileStmt>(std::move(cond), std::move(body));
+  auto node = std::make_unique<WhileStmt>(std::move(cond), std::move(body));
+  node->setLocation(tok, m_CurrentFile);
+  return node;
 }
 
 std::unique_ptr<ImportDecl> Parser::parseImport() {
@@ -479,19 +543,22 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl() {
   Token name = consume(TokenType::Identifier, "Expected type alias name");
   consume(TokenType::Equal, "Expected '='");
 
-  std::string typeName = "";
+  std::string targetType = "";
   int depth = 0;
   while ((depth > 0 || !check(TokenType::Semicolon)) &&
          !check(TokenType::EndOfFile)) {
     Token t = advance();
-    typeName += t.Text;
+    targetType += t.Text;
     if (t.Kind == TokenType::LBracket || t.Kind == TokenType::LParen)
       depth++;
     else if (t.Kind == TokenType::RBracket || t.Kind == TokenType::RParen)
       depth--;
   }
-  consume(TokenType::Semicolon, "Expected ';'");
-  return std::make_unique<TypeAliasDecl>(name.Text, typeName);
+  match(TokenType::Semicolon);
+
+  auto node = std::make_unique<TypeAliasDecl>(name.Text, targetType);
+  node->setLocation(name, m_CurrentFile);
+  return node;
 }
 
 } // namespace toka

@@ -18,9 +18,12 @@ public:
   }
 
   void generate(const Module &ast);
+  bool hasErrors() const { return m_ErrorCount > 0; }
   void print(llvm::raw_ostream &os);
 
 private:
+  int m_ErrorCount = 0;
+  void error(const ASTNode *node, const std::string &message);
   llvm::LLVMContext &m_Context;
   llvm::IRBuilder<> m_Builder;
   std::unique_ptr<llvm::Module> m_Module;
@@ -33,6 +36,8 @@ private:
   std::map<std::string, llvm::StructType *> m_StructTypes;
   std::map<std::string, std::vector<std::string>> m_StructFieldNames;
   std::map<std::string, std::string> m_TypeAliases;
+  std::map<std::string, bool> m_ValueIsReference;
+  std::map<std::string, bool> m_ValueIsMutable;
 
   llvm::Type *resolveType(const std::string &baseType, bool hasPointer);
 

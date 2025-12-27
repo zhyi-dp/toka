@@ -203,6 +203,8 @@ Token Lexer::punctuation() {
     return Token{TokenType::Semicolon, ";", line, col};
   case ':':
     return Token{TokenType::Colon, ":", line, col};
+  case '&':
+    return Token{TokenType::Ampersand, "&", line, col};
   case '|':
     return Token{TokenType::Pipe, "|", line, col};
   case '+':
@@ -210,11 +212,19 @@ Token Lexer::punctuation() {
       advance();
       return Token{TokenType::PlusEqual, "+=", line, col};
     }
+    if (peek() == '+') {
+      advance();
+      return Token{TokenType::PlusPlus, "++", line, col};
+    }
     return Token{TokenType::Plus, "+", line, col};
   case '-':
     if (peek() == '=') {
       advance();
       return Token{TokenType::MinusEqual, "-=", line, col};
+    }
+    if (peek() == '-') {
+      advance();
+      return Token{TokenType::MinusMinus, "--", line, col};
     }
     if (peek() == '>') {
       advance();

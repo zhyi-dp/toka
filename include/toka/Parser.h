@@ -9,7 +9,8 @@ namespace toka {
 
 class Parser {
 public:
-  Parser(const std::vector<Token> &tokens) : m_Tokens(tokens), m_Pos(0) {}
+  Parser(const std::vector<Token> &tokens, const std::string &fileName = "")
+      : m_Tokens(tokens), m_Pos(0), m_CurrentFile(fileName) {}
 
   // Top level
   std::unique_ptr<Module> parseModule();
@@ -17,6 +18,7 @@ public:
 private:
   const std::vector<Token> &m_Tokens;
   size_t m_Pos;
+  std::string m_CurrentFile;
 
   // Helpers
   const Token &peek() const;
@@ -25,6 +27,7 @@ private:
   bool check(TokenType type) const;
   bool match(TokenType type);
   Token consume(TokenType type, const std::string &message);
+  void error(const Token &tok, const std::string &message);
 
   // Recursive Descent Methods
   std::unique_ptr<FunctionDecl> parseFunctionDecl();

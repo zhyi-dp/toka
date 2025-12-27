@@ -92,6 +92,7 @@ enum class TokenType {
   Dependency, // <-
   Pipe,       // |
   DotDotDot,  // ...
+  Ampersand,  // &
 
   // Arithmetic/Logic (Basic set)
   Plus,
@@ -107,7 +108,9 @@ enum class TokenType {
   Bang,
   Neq,
   Less,
-  Greater
+  Greater,
+  PlusPlus,
+  MinusMinus
 };
 
 struct Token {

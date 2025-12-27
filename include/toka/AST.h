@@ -10,8 +10,18 @@ namespace toka {
 
 class ASTNode {
 public:
+  int Line = 0;
+  int Column = 0;
+  std::string FileName;
+
   virtual ~ASTNode() = default;
   virtual std::string toString() const = 0;
+
+  void setLocation(const Token &tok, const std::string &file = "") {
+    Line = tok.Line;
+    Column = tok.Column;
+    FileName = file;
+  }
 };
 
 class Expr : public ASTNode {};
@@ -78,6 +88,28 @@ public:
   }
 };
 
+class UnaryExpr : public Expr {
+public:
+  TokenType Op;
+  std::unique_ptr<Expr> RHS;
+  UnaryExpr(TokenType op, std::unique_ptr<Expr> rhs)
+      : Op(op), RHS(std::move(rhs)) {}
+  std::string toString() const override {
+    return "Unary(" + std::to_string((int)Op) + ", " + RHS->toString() + ")";
+  }
+};
+
+class PostfixExpr : public Expr {
+public:
+  TokenType Op;
+  std::unique_ptr<Expr> LHS;
+  PostfixExpr(TokenType op, std::unique_ptr<Expr> lhs)
+      : Op(op), LHS(std::move(lhs)) {}
+  std::string toString() const override {
+    return "Postfix(" + std::to_string((int)Op) + ", " + LHS->toString() + ")";
+  }
+};
+
 class CastExpr : public Expr {
 public:
   std::unique_ptr<Expr> Expression;
@@ -87,6 +119,13 @@ public:
   std::string toString() const override {
     return "Cast(" + Expression->toString() + " as " + TargetType + ")";
   }
+};
+
+class AddressOfExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Expression;
+  AddressOfExpr(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
+  std::string toString() const override { return "&" + Expression->toString(); }
 };
 
 class MemberExpr : public Expr {
@@ -224,6 +263,7 @@ public:
   std::unique_ptr<Expr> Init;
   std::string TypeName;
   bool HasPointer = false;
+  bool IsReference = false;
   bool IsMutable = false;
   bool IsNullable = false;
 
@@ -274,6 +314,7 @@ public:
     std::string Name;
     std::string Type;
     bool HasPointer = false;
+    bool IsReference = false;
     bool IsMutable = false;
     bool IsNullable = false;
   };
@@ -297,6 +338,7 @@ public:
     std::string Name;
     std::string Type;
     bool HasPointer = false;
+    bool IsReference = false;
     bool IsMutable = false;
     bool IsNullable = false;
   };

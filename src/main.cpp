@@ -30,7 +30,7 @@ void parseSource(const std::string &filename,
       }
     }
     if (!found) {
-      llvm::errs() << "Error: Could not open file " << filename << "\n";
+      std::cerr << filename << ":0:0: error: could not open file\n";
       return;
     }
   }
@@ -44,7 +44,7 @@ void parseSource(const std::string &filename,
   toka::Lexer lexer(code.c_str());
   auto tokens = lexer.tokenize();
 
-  toka::Parser parser(tokens);
+  toka::Parser parser(tokens, filename);
   auto module = parser.parseModule();
 
   // Recursively parse imports
@@ -78,6 +78,10 @@ int main(int argc, char **argv) {
 
   for (const auto &ast : astModules) {
     codegen.generate(*ast);
+  }
+
+  if (codegen.hasErrors()) {
+    return 1;
   }
 
   codegen.print(llvm::outs());

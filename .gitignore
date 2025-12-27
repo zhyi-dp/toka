@@ -1,4 +1,7 @@
 toka.md
+*.ll
+*.lli
+
 # Prerequisites
 *.d
 
