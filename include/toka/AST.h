@@ -59,6 +59,7 @@ public:
   std::string Name;
   bool HasPointer = false;
   bool IsUnique = false;
+  bool IsShared = false;
   bool IsMutable = false;
   bool IsNullable = false;
 
@@ -277,6 +278,7 @@ public:
   std::string TypeName;
   bool HasPointer = false;
   bool IsUnique = false;
+  bool IsShared = false;
   bool IsReference = false;
   bool IsMutable = false;
   bool IsNullable = false;
@@ -329,6 +331,7 @@ public:
     std::string Type;
     bool HasPointer = false;
     bool IsUnique = false;
+    bool IsShared = false;
     bool IsReference = false;
     bool IsMutable = false;
     bool IsNullable = false;

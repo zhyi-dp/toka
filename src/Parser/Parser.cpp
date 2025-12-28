@@ -117,11 +117,15 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
       bool isRef = match(TokenType::Ampersand);
       bool hasPointer = false;
       bool isUnique = false;
+      bool isShared = false;
       if (match(TokenType::Caret)) {
         hasPointer = true;
         isUnique = true;
       } else if (match(TokenType::Star)) {
         hasPointer = true;
+      } else if (match(TokenType::Tilde)) {
+        hasPointer = true;
+        isShared = true;
       }
       Token argName = consume(TokenType::Identifier, "Expected argument name");
       std::string argType = "i64"; // fallback
@@ -165,11 +169,20 @@ std::unique_ptr<VariableDecl> Parser::parseVariableDecl() {
   bool isRef = match(TokenType::Ampersand);
   bool hasPointer = false;
   bool isUnique = false;
+  bool isShared = false;
   if (match(TokenType::Caret)) {
     hasPointer = true;
     isUnique = true;
   } else if (match(TokenType::Star)) {
     hasPointer = true;
+  } else if (match(TokenType::Tilde)) {
+    hasPointer = true; // Use HasPointer for shared too? No, Shared is a struct.
+    // If HasPointer=true, CodeGen treats it as T*.
+    // If Shared, CodeGen treats as {T*, i32*}.
+    // But `HasPointer` usually triggers "dereference" logic.
+    // Let's set HasPointer=true for now, but we must override CodeGen behavior
+    // if IsShared.
+    isShared = true;
   }
   Token name = consume(TokenType::Identifier, "Expected variable name");
 
@@ -191,6 +204,7 @@ std::unique_ptr<VariableDecl> Parser::parseVariableDecl() {
   node->setLocation(name, m_CurrentFile);
   node->HasPointer = hasPointer;
   node->IsUnique = isUnique;
+  node->IsShared = isShared;
   node->IsReference = isRef;
   node->IsMutable = name.HasWrite;
   node->IsNullable = name.HasNull;
@@ -425,11 +439,15 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   } else {
     bool hasPointer = false;
     bool isUnique = false;
+    bool isShared = false;
     if (match(TokenType::Caret)) {
       hasPointer = true;
       isUnique = true;
     } else if (match(TokenType::Star)) {
       hasPointer = true;
+    } else if (match(TokenType::Tilde)) {
+      hasPointer = true;
+      isShared = true;
     }
     if (match(TokenType::Identifier)) {
       Token name = previous();
@@ -464,6 +482,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         var->setLocation(name, m_CurrentFile);
         var->HasPointer = hasPointer;
         var->IsUnique = isUnique;
+        var->IsShared = isShared;
         var->IsMutable = name.HasWrite;
         var->IsNullable = name.HasNull;
         expr = std::move(var);

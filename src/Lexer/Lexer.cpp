@@ -205,6 +205,8 @@ Token Lexer::punctuation() {
     return Token{TokenType::Colon, ":", line, col};
   case '&':
     return Token{TokenType::Ampersand, "&", line, col};
+  case '~':
+    return Token{TokenType::Tilde, "~", line, col};
   case '|':
     return Token{TokenType::Pipe, "|", line, col};
   case '+':

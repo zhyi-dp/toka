@@ -1,7 +1,8 @@
 toka.md
 *.ll
 *.lli
-
+*.log
+build/
 # Prerequisites
 *.d
 

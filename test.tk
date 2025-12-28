@@ -113,6 +113,19 @@ fn main() {
         printf("[%03d]Moved Heap Point: q.x=%d\n", logi#++, q.x);
     }
 
+    {
+        printf("Testing Shared Semantics...\n");
+        let ~s1# = new Point{x = 1000, y = 2000, z = 0};
+        let ~s2 = ~s1; // Shared Copy (ref++)
+        s1#.x = 3000;
+        printf("[%03d]Shared s1.x=3000\n", logi#++);
+        if (s2.x == 3000) {
+            printf("[%03d]Shared s2.x sees change (3000)\n", logi#++);
+        } else {
+            printf("FAIL: s2.x not updated\n");
+        }
+    }
+
     return;
 }
 

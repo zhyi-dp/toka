@@ -5,10 +5,21 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include <iostream>
 #include <map>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace toka {
+class ASTNode;
+class Module;
+class Stmt;
+class Expr;
+class FunctionDecl;
+class ExternDecl;
+class VariableDecl;
+class StructDecl;
 
 class CodeGen {
 public:
@@ -39,11 +50,14 @@ private:
   std::map<std::string, bool> m_ValueIsReference;
   std::map<std::string, bool> m_ValueIsMutable;
   std::map<std::string, bool> m_ValueIsUnique; // Tracks ^Type for variables
+  std::map<std::string, bool> m_ValueIsShared; // Tracks ~Type for variables
+  std::map<llvm::Type *, std::string> m_TypeToName;
 
   struct VariableScopeInfo {
     std::string Name;
     llvm::Value *Alloca;
     bool IsUniquePointer; // ^Type
+    bool IsShared;        // ~Type
   };
   std::vector<std::vector<VariableScopeInfo>> m_ScopeStack;
 

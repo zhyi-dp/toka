@@ -118,26 +118,30 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
         resolveType(func->Args[idx].Type,
                     func->Args[idx].HasPointer || func->Args[idx].IsReference);
     bool isCaptured =
-        (t->isStructTy() || t->isArrayTy() || func->Args[idx].IsMutable) &&
-        !func->Args[idx].IsReference && !func->Args[idx].HasPointer;
+        (t->isStructTy() || t->isArrayTy() || func->Args[idx].IsMutable);
+    bool isPointerOrRef = func->Args[idx].IsReference ||
+                          func->Args[idx].HasPointer ||
+                          func->Args[idx].IsUnique || func->Args[idx].IsShared;
 
-    if (func->Args[idx].IsReference || isCaptured) {
-      // Passed as a pointer (explicit ref or captured)
+    if (isPointerOrRef || isCaptured) {
+      // Passed as a pointer (explicit ref, pointer, or captured struct/array)
       m_NamedValues[func->Args[idx].Name] = &arg;
-      m_ValueIsReference[func->Args[idx].Name] = true;
+      m_ValueIsReference[func->Args[idx].Name] = func->Args[idx].IsReference;
     } else {
-      // Pass by value, create local alloca
+      // Primitive pass by value
       llvm::AllocaInst *alloca =
           m_Builder.CreateAlloca(baseType, nullptr, func->Args[idx].Name);
       m_Builder.CreateStore(&arg, alloca);
       m_NamedValues[func->Args[idx].Name] = alloca;
       m_ValueIsReference[func->Args[idx].Name] = false;
-      m_ValueIsUnique[func->Args[idx].Name] = func->Args[idx].IsUnique;
-      m_ScopeStack.back().push_back(
-          {func->Args[idx].Name, alloca, func->Args[idx].IsUnique});
+      m_ScopeStack.back().push_back({func->Args[idx].Name, alloca,
+                                     func->Args[idx].IsUnique,
+                                     func->Args[idx].IsShared});
     }
     m_ValueTypes[func->Args[idx].Name] = baseType;
     m_ValueIsMutable[func->Args[idx].Name] = func->Args[idx].IsMutable;
+    m_ValueIsUnique[func->Args[idx].Name] = func->Args[idx].IsUnique;
+    m_ValueIsShared[func->Args[idx].Name] = func->Args[idx].IsShared;
 
     // Set Element Type for indexing or member access
     if (targetType->isArrayTy()) {
@@ -182,6 +186,49 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
           m_Builder.CreateCall(freeFunc, casted);
           m_Builder.CreateBr(contBB);
 
+          m_Builder.SetInsertPoint(contBB);
+        } else if (it->IsShared && it->Alloca) {
+          // Shared Cleanup
+          llvm::Value *shVal = m_Builder.CreateLoad(
+              llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType(),
+              it->Alloca);
+          llvm::Value *refPtr =
+              m_Builder.CreateExtractValue(shVal, 1, "ref_ptr");
+          llvm::Value *count = m_Builder.CreateLoad(
+              llvm::Type::getInt32Ty(m_Context), refPtr, "ref_count");
+          llvm::Value *dec = m_Builder.CreateSub(
+              count,
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+          m_Builder.CreateStore(dec, refPtr);
+
+          llvm::BasicBlock *curBB = m_Builder.GetInsertBlock();
+          llvm::Function *func = curBB->getParent();
+          llvm::BasicBlock *freeBB =
+              llvm::BasicBlock::Create(m_Context, "sh_free", func);
+          llvm::BasicBlock *contBB =
+              llvm::BasicBlock::Create(m_Context, "sh_cont", func);
+
+          llvm::Value *isZero = m_Builder.CreateICmpEQ(
+              dec,
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+          m_Builder.CreateCondBr(isZero, freeBB, contBB);
+
+          m_Builder.SetInsertPoint(freeBB);
+          // Free Data
+          llvm::Value *dataPtr =
+              m_Builder.CreateExtractValue(shVal, 0, "data_ptr");
+          llvm::Value *castData = m_Builder.CreateBitCast(
+              dataPtr,
+              llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+          m_Builder.CreateCall(freeFunc, castData);
+
+          // Free RefCount
+          llvm::Value *castRef = m_Builder.CreateBitCast(
+              refPtr,
+              llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+          m_Builder.CreateCall(freeFunc, castRef);
+
+          m_Builder.CreateBr(contBB);
           m_Builder.SetInsertPoint(contBB);
         }
       }
@@ -243,6 +290,49 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
             m_Builder.CreateBr(contBB);
 
             m_Builder.SetInsertPoint(contBB);
+          } else if (it->IsShared && it->Alloca) {
+            // Shared Cleanup
+            llvm::Value *shVal = m_Builder.CreateLoad(
+                llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType(),
+                it->Alloca);
+            llvm::Value *refPtr =
+                m_Builder.CreateExtractValue(shVal, 1, "ref_ptr");
+            llvm::Value *count = m_Builder.CreateLoad(
+                llvm::Type::getInt32Ty(m_Context), refPtr, "ref_count");
+            llvm::Value *dec = m_Builder.CreateSub(
+                count,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+            m_Builder.CreateStore(dec, refPtr);
+
+            llvm::BasicBlock *curBB = m_Builder.GetInsertBlock();
+            llvm::Function *func = curBB->getParent();
+            llvm::BasicBlock *freeBB =
+                llvm::BasicBlock::Create(m_Context, "sh_free", func);
+            llvm::BasicBlock *contBB =
+                llvm::BasicBlock::Create(m_Context, "sh_cont", func);
+
+            llvm::Value *isZero = m_Builder.CreateICmpEQ(
+                dec,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+            m_Builder.CreateCondBr(isZero, freeBB, contBB);
+
+            m_Builder.SetInsertPoint(freeBB);
+            // Free Data
+            llvm::Value *dataPtr =
+                m_Builder.CreateExtractValue(shVal, 0, "data_ptr");
+            llvm::Value *castData = m_Builder.CreateBitCast(
+                dataPtr,
+                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+            m_Builder.CreateCall(freeFunc, castData);
+
+            // Free RefCount
+            llvm::Value *castRef = m_Builder.CreateBitCast(
+                refPtr,
+                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+            m_Builder.CreateCall(freeFunc, castRef);
+
+            m_Builder.CreateBr(contBB);
+            m_Builder.SetInsertPoint(contBB);
           }
         }
       }
@@ -255,42 +345,40 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     llvm::Value *initVal = nullptr;
     if (var->Init) {
       initVal = genExpr(var->Init.get());
-      if (var->IsUnique) {
-        if (auto *varExpr =
-                dynamic_cast<const VariableExpr *>(var->Init.get())) {
-          if (m_ValueIsUnique[varExpr->Name]) {
-            llvm::Value *srcVal = m_NamedValues[varExpr->Name];
-            if (srcVal && llvm::isa<llvm::AllocaInst>(srcVal)) {
-              m_Builder.CreateStore(
-                  llvm::Constant::getNullValue(
-                      llvm::cast<llvm::AllocaInst>(srcVal)->getAllocatedType()),
-                  srcVal);
-            }
-          }
-        }
-      }
+      if (!initVal)
+        return nullptr;
     }
 
     llvm::Type *type = nullptr;
-    llvm::Type *elemTy = nullptr;
     if (!var->TypeName.empty()) {
       type = resolveType(var->TypeName, var->HasPointer || var->IsReference);
+    } else if (initVal) {
+      type = initVal->getType();
+    }
+
+    llvm::Type *elemTy = nullptr;
+    if (!var->TypeName.empty()) {
       elemTy = resolveType(var->TypeName, false);
       if (var->TypeName == "str")
         elemTy = llvm::Type::getInt8Ty(m_Context);
     } else if (initVal) {
-      type = initVal->getType();
-      if (var->IsReference) {
-        if (auto *addrOf =
-                dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
-          if (auto *vExpr = dynamic_cast<const VariableExpr *>(
-                  addrOf->Expression.get())) {
-            llvm::Type *targetType = m_ValueTypes[vExpr->Name];
-            if (targetType->isArrayTy())
-              elemTy = targetType->getArrayElementType();
-            else
-              elemTy = targetType;
-          }
+      if (auto *ne = dynamic_cast<const NewExpr *>(var->Init.get())) {
+        elemTy = resolveType(ne->Type, false);
+      } else if (auto *ve =
+                     dynamic_cast<const VariableExpr *>(var->Init.get())) {
+        elemTy = m_ValueElementTypes[ve->Name];
+      } else if (auto *ae =
+                     dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
+        if (auto *ve =
+                dynamic_cast<const VariableExpr *>(ae->Expression.get())) {
+          elemTy = m_ValueTypes[ve->Name];
+        }
+      } else if (var->IsShared && type && type->isStructTy() &&
+                 type->getStructNumElements() == 2) {
+        // Fallback: Try to get from first element of existing shared
+        llvm::Type *ptrTy = type->getStructElementType(0);
+        if (ptrTy->isPointerTy()) {
+          // Opaque pointer fallback, usually handled by VariableExpr above
         }
       }
       if (!elemTy) {
@@ -299,18 +387,63 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
         else if (type->isPointerTy())
           elemTy = llvm::Type::getInt8Ty(m_Context);
         else
-          elemTy = type; // Store struct type or basic type
+          elemTy = type;
       }
-    } else {
-      type = llvm::Type::getInt64Ty(m_Context);
-    }
-
-    if (var->IsReference && type && !type->isPointerTy()) {
-      type = llvm::PointerType::getUnqual(type);
     }
 
     if (!type) {
-      type = llvm::Type::getInt64Ty(m_Context);
+      error(var, "Cannot infer type for variable '" + var->Name + "'");
+      return nullptr;
+    }
+
+    if (var->Init && initVal) {
+      // Move Semantics for Unique
+      if (var->IsUnique) {
+        if (auto *ve = dynamic_cast<const VariableExpr *>(var->Init.get())) {
+          if (m_ValueIsUnique[ve->Name]) {
+            llvm::Value *s = m_NamedValues[ve->Name];
+            if (s && llvm::isa<llvm::AllocaInst>(s))
+              m_Builder.CreateStore(
+                  llvm::Constant::getNullValue(
+                      llvm::cast<llvm::AllocaInst>(s)->getAllocatedType()),
+                  s);
+          }
+        }
+      } else if (var->IsShared) {
+        // Shared Semantics: Incref or Promote
+        if (initVal->getType()->isStructTy() &&
+            initVal->getType()->getStructNumElements() == 2) {
+          llvm::Value *ref = m_Builder.CreateExtractValue(initVal, 1);
+          llvm::Value *c = m_Builder.CreateLoad(
+              llvm::Type::getInt32Ty(m_Context), ref, "ref_count");
+          llvm::Value *inc = m_Builder.CreateAdd(
+              c, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+          m_Builder.CreateStore(inc, ref);
+        } else if (initVal->getType()->isPointerTy()) {
+          llvm::Function *mallocFn = m_Module->getFunction("malloc");
+          if (mallocFn) {
+            llvm::Value *size =
+                llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 4);
+            llvm::Value *refPtr = m_Builder.CreateCall(mallocFn, size);
+            refPtr = m_Builder.CreateBitCast(
+                refPtr, llvm::PointerType::getUnqual(
+                            llvm::Type::getInt32Ty(m_Context)));
+            m_Builder.CreateStore(
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1),
+                refPtr);
+            llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
+            llvm::Type *refTy =
+                llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+            llvm::StructType *st =
+                llvm::StructType::get(m_Context, {ptrTy, refTy});
+            llvm::Value *u = llvm::UndefValue::get(st);
+            llvm::Value *ci = m_Builder.CreateBitCast(initVal, ptrTy);
+            initVal = m_Builder.CreateInsertValue(
+                m_Builder.CreateInsertValue(u, ci, 0), refPtr, 1);
+            type = st;
+          }
+        }
+      }
     }
 
     llvm::AllocaInst *alloca = m_Builder.CreateAlloca(type, nullptr, var->Name);
@@ -320,28 +453,18 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     m_ValueIsReference[var->Name] = var->IsReference;
     m_ValueIsMutable[var->Name] = var->IsMutable;
     m_ValueIsUnique[var->Name] = var->IsUnique;
+    m_ValueIsShared[var->Name] = var->IsShared;
 
     if (!m_ScopeStack.empty()) {
-      m_ScopeStack.back().push_back({var->Name, alloca, var->IsUnique});
+      m_ScopeStack.back().push_back(
+          {var->Name, alloca, var->IsUnique, var->IsShared});
     }
 
-    if (var->Init) { // Keep verification logic
-      if (initVal) {
-        if (initVal->getType() != type) {
-          std::string expected, actual;
-          llvm::raw_string_ostream os_exp(expected), os_act(actual);
-          type->print(os_exp);
-          initVal->getType()->print(os_act);
-          error(var, "Type mismatch in declaration of " + var->Name +
-                         ". Expected " + expected + ", got " + actual);
-          return nullptr;
-        }
-        m_Builder.CreateStore(initVal, alloca);
-      }
+    if (var->Init && initVal) {
+      if (initVal->getType() != type)
+        initVal = m_Builder.CreateBitCast(initVal, type);
+      m_Builder.CreateStore(initVal, alloca);
     }
-    // The following two lines were duplicates in the original code and are
-    // removed. m_NamedValues[var->Name] = alloca; m_ValueTypes[var->Name] =
-    // type;
     return nullptr;
   } else if (auto *ifs = dynamic_cast<const IfStmt *>(stmt)) {
     llvm::Value *cond = genExpr(ifs->Condition.get());
@@ -349,26 +472,21 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
       return nullptr;
     cond = m_Builder.CreateICmpNE(
         cond, llvm::ConstantInt::get(cond->getType(), 0), "ifcond");
-
     llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *thenBB = llvm::BasicBlock::Create(m_Context, "then", f);
     llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(m_Context, "else");
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(m_Context, "ifcont");
-
     m_Builder.CreateCondBr(cond, thenBB, elseBB);
-
     m_Builder.SetInsertPoint(thenBB);
     genStmt(ifs->Then.get());
     if (!thenBB->getTerminator())
       m_Builder.CreateBr(mergeBB);
-
     elseBB->insertInto(f);
     m_Builder.SetInsertPoint(elseBB);
     if (ifs->Else)
       genStmt(ifs->Else.get());
     if (!elseBB->getTerminator())
       m_Builder.CreateBr(mergeBB);
-
     mergeBB->insertInto(f);
     m_Builder.SetInsertPoint(mergeBB);
     return nullptr;
@@ -379,7 +497,6 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(m_Context, "whileloop");
     llvm::BasicBlock *afterBB =
         llvm::BasicBlock::Create(m_Context, "whileafter");
-
     m_Builder.CreateBr(condBB);
     m_Builder.SetInsertPoint(condBB);
     llvm::Value *cond = genExpr(ws->Condition.get());
@@ -388,13 +505,11 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     cond = m_Builder.CreateICmpNE(
         cond, llvm::ConstantInt::get(cond->getType(), 0), "whilecond");
     m_Builder.CreateCondBr(cond, loopBB, afterBB);
-
     loopBB->insertInto(f);
     m_Builder.SetInsertPoint(loopBB);
     genStmt(ws->Body.get());
     if (!loopBB->getTerminator())
       m_Builder.CreateBr(condBB);
-
     afterBB->insertInto(f);
     m_Builder.SetInsertPoint(afterBB);
     return nullptr;
@@ -402,34 +517,64 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     m_ScopeStack.push_back({});
     for (const auto &s : bs->Statements)
       genStmt(s.get());
-
-    // RAII Cleanup
     auto &scope = m_ScopeStack.back();
     if (!m_Builder.GetInsertBlock()->getTerminator()) {
       for (auto it = scope.rbegin(); it != scope.rend(); ++it) {
         if (it->IsUniquePointer && it->Alloca) {
+          llvm::Value *val = m_Builder.CreateLoad(
+              llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType(),
+              it->Alloca);
           llvm::Function *freeFunc = m_Module->getFunction("free");
           if (freeFunc) {
-            llvm::Value *val = m_Builder.CreateLoad(
-                llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType(),
-                it->Alloca);
-            llvm::BasicBlock *curBB = m_Builder.GetInsertBlock();
-            llvm::Function *func = curBB->getParent();
+            llvm::BasicBlock *currBB = m_Builder.GetInsertBlock();
+            llvm::Function *func = currBB->getParent();
             llvm::BasicBlock *freeBB =
                 llvm::BasicBlock::Create(m_Context, "free_block", func);
             llvm::BasicBlock *contBB =
                 llvm::BasicBlock::Create(m_Context, "free_cont", func);
-
-            llvm::Value *notNull = m_Builder.CreateIsNotNull(val, "not_null");
+            llvm::Value *notNull = m_Builder.CreateIsNotNull(val);
             m_Builder.CreateCondBr(notNull, freeBB, contBB);
-
             m_Builder.SetInsertPoint(freeBB);
-            llvm::Value *casted = m_Builder.CreateBitCast(
-                val,
-                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
-            m_Builder.CreateCall(freeFunc, casted);
+            m_Builder.CreateCall(
+                freeFunc, m_Builder.CreateBitCast(
+                              val, llvm::PointerType::getUnqual(
+                                       llvm::Type::getInt8Ty(m_Context))));
             m_Builder.CreateBr(contBB);
-
+            m_Builder.SetInsertPoint(contBB);
+          }
+        } else if (it->IsShared && it->Alloca) {
+          llvm::Value *sh = m_Builder.CreateLoad(
+              llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType(),
+              it->Alloca);
+          llvm::Value *ref = m_Builder.CreateExtractValue(sh, 1);
+          llvm::Value *c = m_Builder.CreateLoad(
+              llvm::Type::getInt32Ty(m_Context), ref, "ref_count");
+          llvm::Value *dec = m_Builder.CreateSub(
+              c, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+          m_Builder.CreateStore(dec, ref);
+          llvm::Function *freeFunc = m_Module->getFunction("free");
+          if (freeFunc) {
+            llvm::BasicBlock *currBB = m_Builder.GetInsertBlock();
+            llvm::Function *func = currBB->getParent();
+            llvm::BasicBlock *freeBB =
+                llvm::BasicBlock::Create(m_Context, "sh_free", func);
+            llvm::BasicBlock *contBB =
+                llvm::BasicBlock::Create(m_Context, "sh_cont", func);
+            llvm::Value *isZero = m_Builder.CreateICmpEQ(
+                dec,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+            m_Builder.CreateCondBr(isZero, freeBB, contBB);
+            m_Builder.SetInsertPoint(freeBB);
+            m_Builder.CreateCall(
+                freeFunc,
+                m_Builder.CreateBitCast(m_Builder.CreateExtractValue(sh, 0),
+                                        llvm::PointerType::getUnqual(
+                                            llvm::Type::getInt8Ty(m_Context))));
+            m_Builder.CreateCall(
+                freeFunc, m_Builder.CreateBitCast(
+                              ref, llvm::PointerType::getUnqual(
+                                       llvm::Type::getInt8Ty(m_Context))));
+            m_Builder.CreateBr(contBB);
             m_Builder.SetInsertPoint(contBB);
           }
         }
@@ -720,14 +865,69 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
                 }
               }
             }
+          } else if (m_ValueIsShared[varLHS->Name]) {
+            // Shared Assignment
+            // 1. Inc RHS
+            if (rhsVal->getType()->isStructTy()) {
+              llvm::Value *newRefPtr =
+                  m_Builder.CreateExtractValue(rhsVal, 1, "new_ref_ptr");
+              llvm::Value *count = m_Builder.CreateLoad(
+                  llvm::Type::getInt32Ty(m_Context), newRefPtr, "new_count");
+              llvm::Value *inc = m_Builder.CreateAdd(
+                  count,
+                  llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+              m_Builder.CreateStore(inc, newRefPtr);
+            }
+
+            // 2. Dec LHS
+            llvm::Value *oldVal = m_Builder.CreateLoad(destType, ptr);
+            llvm::Value *oldRefPtr =
+                m_Builder.CreateExtractValue(oldVal, 1, "old_ref_ptr");
+            llvm::Value *oldCount = m_Builder.CreateLoad(
+                llvm::Type::getInt32Ty(m_Context), oldRefPtr, "old_count");
+            llvm::Value *dec = m_Builder.CreateSub(
+                oldCount,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+            m_Builder.CreateStore(dec, oldRefPtr);
+
+            llvm::Function *freeFunc = m_Module->getFunction("free");
+            if (freeFunc) {
+              llvm::BasicBlock *curBB = m_Builder.GetInsertBlock();
+              llvm::Function *func = curBB->getParent();
+              llvm::BasicBlock *freeBB =
+                  llvm::BasicBlock::Create(m_Context, "assign_sh_free", func);
+              llvm::BasicBlock *contBB =
+                  llvm::BasicBlock::Create(m_Context, "assign_sh_cont", func);
+
+              llvm::Value *isZero = m_Builder.CreateICmpEQ(
+                  dec,
+                  llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+              m_Builder.CreateCondBr(isZero, freeBB, contBB);
+
+              m_Builder.SetInsertPoint(freeBB);
+              // Free Old Data & Ref
+              llvm::Value *oldData =
+                  m_Builder.CreateExtractValue(oldVal, 0, "old_data");
+              llvm::Value *castData = m_Builder.CreateBitCast(
+                  oldData, llvm::PointerType::getUnqual(
+                               llvm::Type::getInt8Ty(m_Context)));
+              m_Builder.CreateCall(freeFunc, castData);
+              llvm::Value *castRef = m_Builder.CreateBitCast(
+                  oldRefPtr, llvm::PointerType::getUnqual(
+                                 llvm::Type::getInt8Ty(m_Context)));
+              m_Builder.CreateCall(freeFunc, castRef);
+
+              m_Builder.CreateBr(contBB);
+              m_Builder.SetInsertPoint(contBB);
+            }
           }
         }
       }
-
       m_Builder.CreateStore(rhsVal, ptr);
       return rhsVal;
     }
 
+    // Standard Arithmetic and Comparisons
     llvm::Value *lhs = genExpr(bin->LHS.get());
     llvm::Value *rhs = genExpr(bin->RHS.get());
     if (!lhs || !rhs)
@@ -776,8 +976,8 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     // Call malloc
     llvm::Function *mallocFn = m_Module->getFunction("malloc");
     if (!mallocFn) {
-      error(newExpr,
-            "malloc function not found (missing import 'core/memory'?)");
+      error(newExpr, "malloc function not found (missing import "
+                     "'core/memory'?)");
       return nullptr;
     }
 
@@ -842,10 +1042,73 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     llvm::Value *addr = genAddr(mem);
     if (!addr)
       return nullptr;
+    // We need the element type to perform a Load.
+    // Manually resolve the struct and field type to be robust.
+    llvm::Type *objType = nullptr;
+    if (auto *objVar = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
+      objType = m_ValueElementTypes[objVar->Name];
+    } else if (auto *objMem =
+                   dynamic_cast<const MemberExpr *>(mem->Object.get())) {
+      // For a.b.c, we need to resolve recursively or catch it from
+      // GEP
+      if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+        return m_Builder.CreateLoad(gep->getResultElementType(), addr,
+                                    mem->Member);
+      }
+    }
+
+    llvm::StructType *st = nullptr;
+    if (objType && objType->isStructTy()) {
+      st = llvm::cast<llvm::StructType>(objType);
+    } else {
+      // Try to find struct by field name
+      for (const auto &pair : m_StructFieldNames) {
+        for (const auto &f : pair.second) {
+          if (f == mem->Member) {
+            st = m_StructTypes[pair.first];
+            break;
+          }
+        }
+        if (st)
+          break;
+      }
+    }
+
+    if (st) {
+      int idx = -1;
+      std::string stName = m_TypeToName[st];
+      if (stName.empty()) {
+        // Fallback to name search
+        for (const auto &pair : m_StructTypes) {
+          if (pair.second == st) {
+            stName = pair.first;
+            break;
+          }
+        }
+      }
+
+      if (!stName.empty()) {
+        auto &fields = m_StructFieldNames[stName];
+        for (size_t i = 0; i < fields.size(); ++i) {
+          if (fields[i] == mem->Member) {
+            idx = (int)i;
+            break;
+          }
+        }
+      }
+
+      if (idx != -1) {
+        llvm::Type *fieldType = st->getElementType(idx);
+        return m_Builder.CreateLoad(fieldType, addr, mem->Member);
+      }
+    }
+
+    // Fallback to fragile GEP cast if struct resolution failed
     if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
       return m_Builder.CreateLoad(gep->getResultElementType(), addr,
                                   mem->Member);
     }
+
     return nullptr;
   }
   if (auto *init = dynamic_cast<const InitStructExpr *>(expr)) {
@@ -898,6 +1161,24 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       types.push_back(v->getType());
     }
     llvm::StructType *st = llvm::StructType::get(m_Context, types);
+    // Register tuple
+    std::string typeStr = "(";
+    for (size_t i = 0; i < types.size(); ++i) {
+      if (i > 0)
+        typeStr += ",";
+      std::string s;
+      llvm::raw_string_ostream os(s);
+      types[i]->print(os);
+      typeStr += os.str();
+    }
+    typeStr += ")";
+    m_TypeToName[st] = typeStr;
+    std::vector<std::string> fields;
+    for (size_t i = 0; i < types.size(); ++i)
+      fields.push_back(std::to_string(i));
+    m_StructFieldNames[typeStr] = fields;
+    m_StructTypes[typeStr] = st;
+
     llvm::Value *alloca = m_Builder.CreateAlloca(st, nullptr, "tupleliteral");
     for (size_t i = 0; i < vals.size(); ++i) {
       llvm::Value *ptr = m_Builder.CreateStructGEP(st, alloca, i);
@@ -958,6 +1239,21 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
   }
   if (auto *mem = dynamic_cast<const MemberExpr *>(expr)) {
     llvm::Value *objAddr = genAddr(mem->Object.get());
+
+    if (objAddr) {
+      if (auto *var = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
+        if (m_ValueIsShared[var->Name]) {
+          if (llvm::isa<llvm::AllocaInst>(objAddr)) {
+            llvm::Value *structVal = m_Builder.CreateLoad(
+                llvm::cast<llvm::AllocaInst>(objAddr)->getAllocatedType(),
+                objAddr, "shared_vars_load");
+            objAddr =
+                m_Builder.CreateExtractValue(structVal, 0, "shared_data_ptr");
+          }
+        }
+      }
+    }
+
     if (!objAddr) {
       llvm::Value *objVal = genExpr(mem->Object.get());
       if (!objVal)
@@ -980,28 +1276,29 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
       } else if (allocTy->isPointerTy()) {
         // It's a pointer variable (Struct**), load to get Struct*
         objAddr = m_Builder.CreateLoad(allocTy, objAddr, "deref");
-        // We don't know the struct type from opaque ptr, will find by field
+        // We don't know the struct type from opaque ptr, will find
+        // by field
         objType = nullptr;
       }
     } else if (objAddr->getType()->isPointerTy()) {
-      // Result of a GEP or Load, likely Struct* (if typed) or ptr (opaque)
-      // Assume it is the address of the struct.
-      // We can't verify type easily.
+      // Result of a GEP or Load, likely Struct* (if typed) or ptr
+      // (opaque) Assume it is the address of the struct. We can't
+      // verify type easily.
     }
 
+    int idx = -1;
     llvm::StructType *st = nullptr;
     if (objType && objType->isStructTy()) {
       st = llvm::cast<llvm::StructType>(objType);
     } else {
       // Try to find struct by field name
       std::string foundStruct;
-      int foundIdx = -1;
       for (const auto &pair : m_StructFieldNames) {
         const auto &fields = pair.second;
-        for (int i = 0; i < fields.size(); ++i) {
+        for (int i = 0; i < (int)fields.size(); ++i) {
           if (fields[i] == mem->Member) {
             foundStruct = pair.first;
-            foundIdx = i;
+            idx = i;
             break;
           }
         }
@@ -1016,17 +1313,29 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
     if (!st)
       return nullptr;
 
-    // Recalculate index from st
-    int idx = -1;
-    if (isdigit(mem->Member[0])) {
-      idx = std::stoi(mem->Member);
-    } else {
-      auto &fields = m_StructFieldNames[st->getName().str()];
-      for (int i = 0; i < fields.size(); ++i) {
-        if (fields[i] == mem->Member) {
-          idx = i;
-          break;
+    if (idx == -1) {
+      // Recalculate index from st using our map
+      std::string stName = m_TypeToName[st];
+      if (stName.empty()) {
+        for (const auto &pair : m_StructTypes) {
+          if (pair.second == st) {
+            stName = pair.first;
+            break;
+          }
         }
+      }
+      if (!stName.empty()) {
+        auto &fields = m_StructFieldNames[stName];
+        for (int i = 0; i < (int)fields.size(); ++i) {
+          if (fields[i] == mem->Member) {
+            idx = i;
+            break;
+          }
+        }
+      } else {
+        std::string objName = "unknown";
+        if (auto *var = dynamic_cast<const VariableExpr *>(mem->Object.get()))
+          objName = var->Name;
       }
     }
 
@@ -1061,7 +1370,17 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
     return resolveType(m_TypeAliases[baseType], hasPointer);
   }
 
-  // Handle raw pointer types (e.g. *i32, *void) AND managed pointers (^Type)
+  // Handle Shared Pointers (~Type): { T*, i32* }
+  if (baseType.size() > 1 && baseType[0] == '~') {
+    llvm::Type *elemTy = resolveType(baseType.substr(1), false);
+    llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
+    llvm::Type *refCountTy =
+        llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+    return llvm::StructType::get(m_Context, {ptrTy, refCountTy});
+  }
+
+  // Handle raw pointer types (e.g. *i32, *void) AND managed
+  // pointers (^Type)
   if (baseType.size() > 1 && (baseType[0] == '*' || baseType[0] == '^')) {
     return llvm::PointerType::getUnqual(resolveType(baseType.substr(1), false));
   }
@@ -1081,7 +1400,8 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
     // Tuple: (T1, T2, ...)
     std::vector<llvm::Type *> elemTypes;
     std::string content = baseType.substr(1, baseType.size() - 2);
-    // Very simple split by comma, not perfect for nested but works for now
+    // Very simple split by comma, not perfect for nested but works
+    // for now
     size_t start = 0;
     int depth = 0;
     for (size_t i = 0; i < content.size(); ++i) {
@@ -1090,14 +1410,41 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
       else if (content[i] == ')' || content[i] == ']')
         depth--;
       else if (content[i] == ',' && depth == 0) {
-        elemTypes.push_back(
-            resolveType(content.substr(start, i - start), false));
+        std::string elemStr = content.substr(start, i - start);
+        // Trim
+        elemStr.erase(0, elemStr.find_first_not_of(" \t"));
+        elemStr.erase(elemStr.find_last_not_of(" \t") + 1);
+        elemTypes.push_back(resolveType(elemStr, false));
         start = i + 1;
       }
     }
-    if (start < content.size())
-      elemTypes.push_back(resolveType(content.substr(start), false));
+    if (start < content.size()) {
+      std::string elemStr = content.substr(start);
+      elemStr.erase(0, elemStr.find_first_not_of(" \t"));
+      elemStr.erase(elemStr.find_last_not_of(" \t") + 1);
+      elemTypes.push_back(resolveType(elemStr, false));
+    }
     type = llvm::StructType::get(m_Context, elemTypes);
+
+    // Generate canonical baseType for registration (no spaces)
+    std::string canonical = "(";
+    for (size_t i = 0; i < elemTypes.size(); ++i) {
+      if (i > 0)
+        canonical += ",";
+      std::string s;
+      llvm::raw_string_ostream os(s);
+      elemTypes[i]->print(os);
+      canonical += os.str();
+    }
+    canonical += ")";
+
+    // Register tuple fields
+    m_TypeToName[type] = canonical;
+    std::vector<std::string> fields;
+    for (size_t i = 0; i < elemTypes.size(); ++i)
+      fields.push_back(std::to_string(i));
+    m_StructFieldNames[canonical] = fields;
+    m_StructTypes[canonical] = llvm::cast<llvm::StructType>(type);
   } else if (baseType == "bool")
     type = llvm::Type::getInt1Ty(m_Context);
   else if (baseType == "i8" || baseType == "u8" || baseType == "char")
@@ -1136,6 +1483,7 @@ void CodeGen::genStruct(const StructDecl *str) {
   llvm::StructType *st = llvm::StructType::create(m_Context, str->Name);
   st->setBody(fieldTypes);
   m_StructTypes[str->Name] = st;
+  m_TypeToName[st] = str->Name;
   m_StructFieldNames[str->Name] = fieldNames;
 }
 

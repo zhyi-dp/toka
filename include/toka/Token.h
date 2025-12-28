@@ -110,7 +110,8 @@ enum class TokenType {
   Less,
   Greater,
   PlusPlus,
-  MinusMinus
+  MinusMinus,
+  Tilde // ~
 };
 
 struct Token {
