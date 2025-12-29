@@ -77,6 +77,15 @@ public:
   std::string toString() const override { return "String(\"" + Value + "\")"; }
 };
 
+class DereferenceExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Expression;
+  DereferenceExpr(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
+  std::string toString() const override {
+    return std::string("Dereference(") + Expression->toString() + ")";
+  }
+};
+
 class BinaryExpr : public Expr {
 public:
   std::string Op;
@@ -134,10 +143,12 @@ class MemberExpr : public Expr {
 public:
   std::unique_ptr<Expr> Object;
   std::string Member;
-  MemberExpr(std::unique_ptr<Expr> obj, const std::string &member)
-      : Object(std::move(obj)), Member(member) {}
+  bool IsArrow;
+  MemberExpr(std::unique_ptr<Expr> obj, const std::string &member,
+             bool isArrow = false)
+      : Object(std::move(obj)), Member(member), IsArrow(isArrow) {}
   std::string toString() const override {
-    return Object->toString() + "." + Member;
+    return Object->toString() + (IsArrow ? "->" : ".") + Member;
   }
 };
 
@@ -244,6 +255,13 @@ public:
   std::unique_ptr<Expr> Expression;
   ExprStmt(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
   std::string toString() const override { return "ExprStmt"; }
+};
+
+class DeleteStmt : public Stmt {
+public:
+  std::unique_ptr<Expr> Expression;
+  DeleteStmt(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
+  std::string toString() const override { return "Delete"; }
 };
 
 class IfStmt : public Stmt {

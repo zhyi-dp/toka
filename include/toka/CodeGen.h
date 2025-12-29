@@ -50,8 +50,9 @@ private:
   std::map<std::string, bool> m_ValueIsReference;
   std::map<std::string, bool> m_ValueIsMutable;
   std::map<std::string, bool> m_ValueIsNullable;
-  std::map<std::string, bool> m_ValueIsUnique; // Tracks ^Type for variables
-  std::map<std::string, bool> m_ValueIsShared; // Tracks ~Type for variables
+  std::map<std::string, bool> m_ValueIsUnique;     // Tracks ^Type for variables
+  std::map<std::string, bool> m_ValueIsShared;     // Tracks ~Type for variables
+  std::map<std::string, bool> m_ValueIsRawPointer; // Tracks *Type for variables
   std::map<llvm::Type *, std::string> m_TypeToName;
 
   struct VariableScopeInfo {

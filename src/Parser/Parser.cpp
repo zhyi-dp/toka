@@ -131,12 +131,10 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
       bool isUnique = false;
       bool isShared = false;
       if (match(TokenType::Caret)) {
-        hasPointer = true;
         isUnique = true;
       } else if (match(TokenType::Star)) {
         hasPointer = true;
       } else if (match(TokenType::Tilde)) {
-        hasPointer = true;
         isShared = true;
       }
       Token argName = consume(TokenType::Identifier, "Expected argument name");
@@ -183,12 +181,10 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl() {
   bool isUnique = false;
   bool isShared = false;
   if (match(TokenType::Caret)) {
-    hasPointer = true;
     isUnique = true;
   } else if (match(TokenType::Star)) {
     hasPointer = true;
   } else if (match(TokenType::Tilde)) {
-    hasPointer = true;
     isShared = true;
   }
 
@@ -254,6 +250,8 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     return parseReturn();
   if (check(TokenType::KwLet))
     return parseVariableDecl();
+  if (check(TokenType::KwDelete))
+    return parseDeleteStmt();
 
   // ExprStmt
   auto expr = parseExpr();
@@ -370,8 +368,16 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     node->setLocation(tok, m_CurrentFile);
     return node;
   }
+  if (match(TokenType::Star)) {
+    Token tok = previous();
+    auto sub = parsePrimary();
+    auto node = std::make_unique<DereferenceExpr>(std::move(sub));
+    node->setLocation(tok, m_CurrentFile);
+    return node;
+  }
   if (match(TokenType::Bang) || match(TokenType::Minus) ||
-      match(TokenType::PlusPlus) || match(TokenType::MinusMinus)) {
+      match(TokenType::PlusPlus) || match(TokenType::MinusMinus) ||
+      match(TokenType::Caret) || match(TokenType::Tilde)) {
     Token tok = previous();
     TokenType op = tok.Kind;
     auto sub = parsePrimary();
@@ -465,58 +471,43 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     } else {
       expr = std::move(elements[0]);
     }
-  } else {
-    bool hasPointer = false;
-    bool isUnique = false;
-    bool isShared = false;
-    if (match(TokenType::Caret)) {
-      hasPointer = true;
-      isUnique = true;
-    } else if (match(TokenType::Star)) {
-      hasPointer = true;
-    } else if (match(TokenType::Tilde)) {
-      hasPointer = true;
-      isShared = true;
-    }
-    if (match(TokenType::Identifier)) {
-      Token name = previous();
-      if (check(TokenType::LBrace)) {
-        // Struct Init
-        advance();
-        std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
-        while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
-          Token fieldName =
-              consume(TokenType::Identifier, "Expected field name");
-          consume(TokenType::Equal, "Expected '=' after field name");
-          fields.push_back({fieldName.Text, parseExpr()});
-          match(TokenType::Comma);
-        }
-        consume(TokenType::RBrace, "Expected '}'");
-        expr = std::make_unique<InitStructExpr>(name.Text, std::move(fields));
-        expr->setLocation(name, m_CurrentFile);
-      } else if (match(TokenType::LParen)) {
-        // Function Call
-        std::vector<std::unique_ptr<Expr>> args;
-        if (!check(TokenType::RParen)) {
-          do {
-            args.push_back(parseExpr());
-          } while (match(TokenType::Comma));
-        }
-        consume(TokenType::RParen, "Expected ')' after arguments");
-        auto node = std::make_unique<CallExpr>(name.Text, std::move(args));
-        node->setLocation(name, m_CurrentFile);
-        expr = std::move(node);
-      } else {
-        auto var = std::make_unique<VariableExpr>(name.Text);
-        var->setLocation(name, m_CurrentFile);
-        var->HasPointer = hasPointer;
-        var->IsUnique = isUnique;
-        var->IsShared = isShared;
-        var->IsMutable = name.HasWrite;
-        var->IsNullable = name.HasNull;
-        expr = std::move(var);
+  } else if (match(TokenType::Identifier)) {
+    Token name = previous();
+    if (check(TokenType::LBrace)) {
+      // Struct Init
+      advance();
+      std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
+      while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+        Token fieldName = consume(TokenType::Identifier, "Expected field name");
+        consume(TokenType::Equal, "Expected '=' after field name");
+        fields.push_back({fieldName.Text, parseExpr()});
+        match(TokenType::Comma);
       }
+      consume(TokenType::RBrace, "Expected '}'");
+      expr = std::make_unique<InitStructExpr>(name.Text, std::move(fields));
+      expr->setLocation(name, m_CurrentFile);
+    } else if (match(TokenType::LParen)) {
+      // Function Call
+      std::vector<std::unique_ptr<Expr>> args;
+      if (!check(TokenType::RParen)) {
+        do {
+          args.push_back(parseExpr());
+        } while (match(TokenType::Comma));
+      }
+      consume(TokenType::RParen, "Expected ')' after arguments");
+      auto node = std::make_unique<CallExpr>(name.Text, std::move(args));
+      node->setLocation(name, m_CurrentFile);
+      expr = std::move(node);
+    } else {
+      auto var = std::make_unique<VariableExpr>(name.Text);
+      var->setLocation(name, m_CurrentFile);
+      var->IsMutable = name.HasWrite;
+      var->IsNullable = name.HasNull;
+      expr = std::move(var);
     }
+  } else {
+    error(peek(), "Expected expression");
+    return nullptr;
   }
 
   // Suffixes: .member, [index], etc.
@@ -530,6 +521,16 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         expr = std::move(node);
       } else {
         error(peek(), "Expected member name or index after '.'");
+      }
+    } else if (match(TokenType::Arrow)) {
+      Token arrowTok = previous();
+      if (match(TokenType::Identifier) || match(TokenType::Integer)) {
+        auto node = std::make_unique<MemberExpr>(std::move(expr),
+                                                 previous().Text, true);
+        node->setLocation(arrowTok, m_CurrentFile);
+        expr = std::move(node);
+      } else {
+        error(peek(), "Expected member name or index after '->'");
       }
     } else if (match(TokenType::LBracket)) {
       std::unique_ptr<Expr> index = parseExpr();
@@ -655,6 +656,15 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl() {
 
   auto node = std::make_unique<TypeAliasDecl>(name.Text, targetType);
   node->setLocation(name, m_CurrentFile);
+  return node;
+}
+
+std::unique_ptr<Stmt> Parser::parseDeleteStmt() {
+  Token kw = consume(TokenType::KwDelete, "Expected 'del' or 'delete'");
+  auto expr = parseExpr();
+  consume(TokenType::Semicolon, "Expected ';' after delete statement");
+  auto node = std::make_unique<DeleteStmt>(std::move(expr));
+  node->setLocation(kw, m_CurrentFile);
   return node;
 }
 

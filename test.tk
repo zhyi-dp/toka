@@ -27,7 +27,7 @@ fn addtox_useref(&point#: Point, v: i32) {
     point#.x += v;
 }
 
-fn main() {
+fn main() -> i32 {
     let p# = Point { x = 1, y = 2, z = 111 };
     let i# = 0;
     let logi# = 0;
@@ -111,6 +111,13 @@ fn main() {
     printf("[%03d]Prefix ++: d is %d\n", logi#++, ++d#);
     printf("[%03d]Prefix --: d is %d\n", logi#++, --d#);
 
+    {
+        printf("Testing Raw pointer...\n");
+        let *ptr = new Point{x=999, y=111, z=0};
+        printf("[%03d]Raw Heap Point: ptr.x=%d, address=%p\n", logi#++, ptr.x, *ptr);
+        del *ptr;
+    }
+
     // Heap Allocation Test
     let ^heapNode = new Point{x = 777, y = 888, z = 0};
     printf("[%03d]Heap Point is (%d, %d)\n", logi#++, heapNode.x, heapNode.y);
@@ -135,7 +142,8 @@ fn main() {
         }
     }
 
-    return;
+    printf("main() done\n");
+    return 0;
 }
 
 

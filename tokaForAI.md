@@ -143,6 +143,27 @@ Toka separates **storage binding** (`let`) from **memory properties** (Tokens).
     - **Postfix (`x++`)**: Returns the value **before** the operation.
     - **Prefix (`++x`)**: Returns the value **after** the operation.
 
+### 4.4 Toka Morphology (Point-Value Duality)
+Toka uses a unique "morphology" system to manage pointers and handles without verbose dereferencing symbols.
+
+- **Variable Name as Object**: In a scope where a pointer or reference is declared (e.g., `let *ptr = ...`), the name `ptr` refers directly to the **dereferenced object**.
+    - `ptr.x` is valid and operates on the object's field.
+    - `ptr` used in a context expecting a value will perform an auto-dereference load.
+- **Morphology Symbol as Identity/Handle**: To access the **identity** (memory address, ownership handle, or reference count structure), use the definition's morphology symbol as a prefix.
+    - `*ptr`: Represents the **raw pointer value** (the address). `printf("%p", *ptr)` prints the address.
+    - `^ptr`: Represents the **unique ownership handle**. `let ^q = ^p` moves the handle.
+    - `~ptr`: Represents the **shared ownership handle** (the control block + data pointer).
+- **Modification of Identity (Reseating)**:
+    - `*ptr = new_address`: Changes where the pointer points (reseats the pointer identity).
+- **Explicit Pointer Access (`->`)**:
+    - While `ptr.x` is the standard, Toka supports `->` for member access via an identity.
+    - `(*ptr)->x`: Accesses the member `x` through the raw pointer value. Note that `ptr->x` is invalid because `ptr` is the object itself, not a pointer.
+
+### 4.5 Memory Deallocation
+- **Explicit (`del`)**: Used to manually free memory associated with a pointer identity.
+    - `del *ptr`: Frees the memory pointed to by the raw pointer identity.
+- **RAII**: `^` and `~` handles automatically free memory when their last handle identity goes out of scope.
+
 ## 5. Concurrency Model
 
 ### 5.1 Tasks
@@ -155,7 +176,7 @@ Toka separates **storage binding** (`let`) from **memory properties** (Tokens).
 ### 5.2 Locks & Shared State
 - Shared mutable pointers (`^#T#`) MUST specify a lock strategy in declaration.
 - **Lock Types**:
-    - `mut` (Mutex), `rw` (Read-Write), `spin` (Spinlock), `atomic`, `nolock` (Unsafe).
+    - `mutex` (Mutex), `rwlock` (Read-Write), `spinlock` (Spinlock), `atomic`, `nolock` (Unsafe).
 - **Usage**:
     - Lock acquisition is **implicit** via the `#` token scope or `oncelock{}` blocks.
 ### 5.3 Absolute Type Safety

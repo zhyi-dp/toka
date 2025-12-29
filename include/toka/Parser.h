@@ -43,6 +43,7 @@ private:
   std::unique_ptr<Stmt> parseIf();
   std::unique_ptr<Stmt> parseWhile();
   std::unique_ptr<BlockStmt> parseBlock();
+  std::unique_ptr<Stmt> parseDeleteStmt();
   std::unique_ptr<ReturnStmt> parseReturn();
 
   std::unique_ptr<Expr> parseExpr(int minPrec = 0);
