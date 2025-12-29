@@ -1,0 +1,27 @@
+extern fn printf(fmt: *i8, ...) -> i32;
+
+struct Rect {
+    width: i32,
+    height: i32
+}
+
+impl Rect {
+    fn area(self) -> i32 {
+        return self.width * self.height;
+    }
+    
+    fn perimeter(self) -> i32 {
+        return (self.width + self.height) * 2;
+    }
+}
+
+fn main() {
+    let r = Rect { width = 10, height = 20 };
+    
+    // Test method call
+    let a = r.area();
+    printf("Area: %d\n", a);
+    
+    let p = r.perimeter();
+    printf("Perimeter: %d\n", p);
+}

@@ -44,9 +44,30 @@ void CodeGen::generate(const Module &ast) {
     m_Functions[func->Name] = func.get();
   }
 
+  // Generate Impls
+  for (const auto &impl : ast.Impls) {
+    genImpl(impl.get());
+    if (hasErrors())
+      return;
+  }
+
   // Generate Functions (body phase)
   for (const auto &func : ast.Functions) {
     genFunction(func.get());
+    if (hasErrors())
+      return;
+  }
+
+  // Generate Impls
+  for (const auto &impl : ast.Impls) {
+    genImpl(impl.get());
+    if (hasErrors())
+      return;
+  }
+
+  // Generate Impls
+  for (const auto &impl : ast.Impls) {
+    genImpl(impl.get());
     if (hasErrors())
       return;
   }
@@ -82,14 +103,16 @@ void CodeGen::genGlobal(const Stmt *stmt) {
   }
 }
 
-llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
+llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
+                                     const std::string &overrideName) {
+  std::string funcName = overrideName.empty() ? func->Name : overrideName;
   m_NamedValues.clear();
   m_ValueTypes.clear();
   m_ValueElementTypes.clear();
   m_ValueIsReference.clear();
   m_ValueIsMutable.clear();
 
-  llvm::Function *f = m_Module->getFunction(func->Name);
+  llvm::Function *f = m_Module->getFunction(funcName);
 
   if (!f) {
     std::vector<llvm::Type *> argTypes;
@@ -107,7 +130,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
     llvm::Type *retType = resolveType(func->ReturnType, false);
 
     llvm::FunctionType *ft = llvm::FunctionType::get(retType, argTypes, false);
-    f = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, func->Name,
+    f = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, funcName,
                                m_Module.get());
   }
 
@@ -146,6 +169,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
         m_Builder.CreateAlloca(allocaType, nullptr, func->Args[idx].Name);
     m_Builder.CreateStore(&arg, alloca);
     m_NamedValues[func->Args[idx].Name] = alloca;
+    m_ValueTypes[func->Args[idx].Name] = allocaType;
+    m_ValueElementTypes[func->Args[idx].Name] = targetType;
     m_ValueIsReference[func->Args[idx].Name] =
         func->Args[idx].IsReference || isCaptured;
     m_ValueIsRawPointer[func->Args[idx].Name] =
@@ -762,6 +787,30 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     m_Builder.CreateStore(newVal, addr);
     return oldVal;
   }
+  if (auto *newExpr = dynamic_cast<const NewExpr *>(expr)) {
+    llvm::Type *ty = resolveType(newExpr->Type, false);
+    if (!ty) {
+      error(newExpr, "Unknown type in new expression");
+      return nullptr;
+    }
+    llvm::Value *mallocCall = llvm::CallInst::CreateMalloc(
+        m_Builder.GetInsertBlock(), llvm::Type::getInt64Ty(m_Context), ty,
+        llvm::ConstantExpr::getSizeOf(ty), nullptr, nullptr, "");
+    m_Builder.Insert(mallocCall);
+    if (newExpr->Initializer) {
+      // For now ignore initializer logic for malloc or handle struct init
+      // We assume InitStructExpr is handled separately but if we have new
+      // Struct { ... } We need to store it to malloc'd memory
+      llvm::Value *initVal = genExpr(newExpr->Initializer.get());
+      m_Builder.CreateStore(initVal, mallocCall);
+    }
+    return mallocCall;
+  }
+
+  if (auto *mc = dynamic_cast<const MethodCallExpr *>(expr)) {
+    return genMethodCall(mc);
+  }
+
   if (auto *call = dynamic_cast<const CallExpr *>(expr)) {
     llvm::Function *callee = m_Module->getFunction(call->Callee);
     if (!callee) {
@@ -1861,4 +1910,88 @@ llvm::Value *toka::CodeGen::genMatch(const toka::MatchStmt *stmt) {
 
   m_Builder.SetInsertPoint(mergeBB);
   return nullptr;
+}
+
+void toka::CodeGen::genImpl(const toka::ImplDecl *decl) {
+  // Methods
+  for (const auto &method : decl->Methods) {
+    std::string mangledName = decl->TypeName + "_" + method->Name;
+    genFunction(method.get(), mangledName);
+  }
+}
+
+llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
+  llvm::Value *objVal = genExpr(expr->Object.get());
+  if (!objVal)
+    return nullptr;
+
+  llvm::Type *ty = objVal->getType();
+  llvm::Type *structTy = nullptr;
+
+  if (ty->isStructTy()) {
+    structTy = ty;
+  } else {
+    // Try to identify if it is a pointer to struct
+    // 1. Check if it's Alloca
+    if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(objVal)) {
+      if (ai->getAllocatedType()->isStructTy())
+        structTy = ai->getAllocatedType();
+    }
+    // 2. Check GEP
+    else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objVal)) {
+      if (gep->getResultElementType()->isStructTy())
+        structTy = gep->getResultElementType();
+    }
+
+    // 3. VariableExpr lookup
+    if (!structTy) {
+      if (auto *ve = dynamic_cast<const VariableExpr *>(expr->Object.get())) {
+        if (m_ValueElementTypes.count(ve->Name)) {
+          structTy = m_ValueElementTypes[ve->Name];
+        }
+      }
+    }
+  }
+
+  // Fallback: Check if it is a NewExpr
+  if (!structTy) {
+    if (auto *ne = dynamic_cast<const NewExpr *>(expr->Object.get())) {
+      structTy = resolveType(ne->Type, false);
+    }
+  }
+
+  std::string typeName;
+  if (structTy && m_TypeToName.count(structTy)) {
+    typeName = m_TypeToName[structTy];
+  }
+
+  if (typeName.empty()) {
+    error(expr, "Cannot determine type for method call '" + expr->Method + "'");
+    return nullptr;
+  }
+
+  std::string funcName = typeName + "_" + expr->Method;
+  llvm::Function *callee = m_Module->getFunction(funcName);
+  if (!callee) {
+    error(expr, "Method '" + expr->Method + "' not found for type '" +
+                    typeName + "' (Mangled: " + funcName + ")");
+    return nullptr;
+  }
+
+  std::vector<llvm::Value *> args;
+  // Pass self (Pointer)
+  if (ty->isStructTy()) {
+    // Value -> Stack -> Pointer
+    llvm::Value *tmp = m_Builder.CreateAlloca(ty);
+    m_Builder.CreateStore(objVal, tmp);
+    args.push_back(tmp);
+  } else {
+    args.push_back(objVal);
+  }
+
+  for (const auto &arg : expr->Args) {
+    args.push_back(genExpr(arg.get()));
+  }
+
+  return m_Builder.CreateCall(callee, args);
 }

@@ -20,6 +20,8 @@ class FunctionDecl;
 class ExternDecl;
 class VariableDecl;
 class StructDecl;
+class ImplDecl;
+class MethodCallExpr;
 
 class CodeGen {
 public:
@@ -69,12 +71,15 @@ private:
   llvm::Value *genExpr(const Expr *expr);
   llvm::Value *genAddr(const Expr *expr);
   llvm::Value *genStmt(const Stmt *stmt);
-  llvm::Function *genFunction(const FunctionDecl *func);
+  llvm::Function *genFunction(const FunctionDecl *func,
+                              const std::string &overrideName = "");
   void genGlobal(const Stmt *stmt);
   void genExtern(const ExternDecl *ext);
   void genStruct(const StructDecl *str);
   void genOption(const OptionDecl *opt);
+  void genImpl(const ImplDecl *impl);
   llvm::Value *genMatch(const MatchStmt *stmt);
+  llvm::Value *genMethodCall(const MethodCallExpr *expr);
 };
 
 } // namespace toka

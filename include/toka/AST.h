@@ -220,6 +220,19 @@ public:
   std::string toString() const override { return "Call(" + Callee + ")"; }
 };
 
+class MethodCallExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Object;
+  std::string Method;
+  std::vector<std::unique_ptr<Expr>> Args;
+
+  MethodCallExpr(std::unique_ptr<Expr> obj, const std::string &method,
+                 std::vector<std::unique_ptr<Expr>> args)
+      : Object(std::move(obj)), Method(method), Args(std::move(args)) {}
+
+  std::string toString() const override { return "MethodCall(" + Method + ")"; }
+};
+
 class NewExpr : public Expr {
 public:
   std::string Type;
@@ -454,6 +467,17 @@ public:
   std::string toString() const override { return "Extern(" + Name + ")"; }
 };
 
+class ImplDecl : public ASTNode {
+public:
+  std::string TypeName;
+  std::vector<std::unique_ptr<FunctionDecl>> Methods;
+
+  ImplDecl(const std::string &name,
+           std::vector<std::unique_ptr<FunctionDecl>> methods)
+      : TypeName(name), Methods(std::move(methods)) {}
+  std::string toString() const override { return "Impl(" + TypeName + ")"; }
+};
+
 class Module {
 public:
   std::vector<std::unique_ptr<ImportDecl>> Imports;
@@ -461,6 +485,7 @@ public:
   std::vector<std::unique_ptr<StructDecl>> Structs;
   std::vector<std::unique_ptr<OptionDecl>> Options;
   std::vector<std::unique_ptr<Stmt>> Globals;
+  std::vector<std::unique_ptr<ImplDecl>> Impls;
   std::vector<std::unique_ptr<ExternDecl>> Externs;
   std::vector<std::unique_ptr<FunctionDecl>> Functions;
 };

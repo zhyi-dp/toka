@@ -39,6 +39,7 @@ private:
   std::unique_ptr<TypeAliasDecl> parseTypeAliasDecl();
   std::unique_ptr<StructDecl> parseStruct();
   std::unique_ptr<OptionDecl> parseOptionDecl(); // ADT
+  std::unique_ptr<ImplDecl> parseImpl();
   std::unique_ptr<Stmt> parseMatchStmt();
 
   std::unique_ptr<Stmt> parseStmt();

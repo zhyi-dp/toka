@@ -74,6 +74,8 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->Structs.push_back(parseStruct());
     } else if (check(TokenType::KwOption)) {
       module->Options.push_back(parseOptionDecl());
+    } else if (check(TokenType::KwImpl)) {
+      module->Impls.push_back(parseImpl());
     } else {
       // Error or unknown
       std::cerr << "Unexpected Top Level Token: " << peek().toString() << "\n";
@@ -227,10 +229,23 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
   consume(TokenType::LParen, "Expected '('");
   std::vector<FunctionDecl::Arg> args;
   bool isVariadic = false;
+  bool firstArg = true;
   if (!check(TokenType::RParen)) {
     do {
       if (check(TokenType::DotDotDot))
         break;
+
+      if (firstArg && match(TokenType::KwSelf)) {
+        FunctionDecl::Arg arg;
+        arg.Name = "self";
+        arg.Type = "Self";
+        arg.HasPointer = true;
+        args.push_back(arg);
+        firstArg = false;
+        continue;
+      }
+      firstArg = false;
+
       bool isRef = match(TokenType::Ampersand);
       bool hasPointer = false;
       bool isUnique = false;
@@ -517,6 +532,12 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     Token tok = previous();
     auto node = std::make_unique<StringExpr>(tok.Text);
     node->setLocation(tok, m_CurrentFile);
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
+  } else if (match(TokenType::KwSelf)) {
+    Token tok = previous();
+    auto node = std::make_unique<VariableExpr>("self");
+    node->setLocation(tok, m_CurrentFile);
     expr = std::move(node);
   } else if (match(TokenType::KwNew)) {
     Token kw = previous();
@@ -656,7 +677,28 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   while (expr) {
     if (match(TokenType::Dot)) {
       Token dotTok = previous();
-      if (match(TokenType::Identifier) || match(TokenType::Integer)) {
+      if (match(TokenType::Identifier)) {
+        std::string memberName = previous().Text;
+        // Method Call check
+        if (match(TokenType::LParen)) {
+          std::vector<std::unique_ptr<Expr>> args;
+          if (!check(TokenType::RParen)) {
+            do {
+              args.push_back(parseExpr());
+            } while (match(TokenType::Comma));
+          }
+          consume(TokenType::RParen, "Expected ')' after method arguments");
+          auto node = std::make_unique<MethodCallExpr>(
+              std::move(expr), memberName, std::move(args));
+          node->setLocation(dotTok, m_CurrentFile);
+          expr = std::move(node);
+        } else {
+          // Member Access
+          auto node = std::make_unique<MemberExpr>(std::move(expr), memberName);
+          node->setLocation(dotTok, m_CurrentFile);
+          expr = std::move(node);
+        }
+      } else if (match(TokenType::Integer)) {
         auto node =
             std::make_unique<MemberExpr>(std::move(expr), previous().Text);
         node->setLocation(dotTok, m_CurrentFile);
@@ -808,6 +850,26 @@ std::unique_ptr<Stmt> Parser::parseDeleteStmt() {
   auto node = std::make_unique<DeleteStmt>(std::move(expr));
   node->setLocation(kw, m_CurrentFile);
   return node;
+}
+
+std::unique_ptr<ImplDecl> Parser::parseImpl() {
+  consume(TokenType::KwImpl, "Expected 'impl'");
+  Token typeName =
+      consume(TokenType::Identifier, "Expected type name to implement");
+  consume(TokenType::LBrace, "Expected '{'");
+
+  std::vector<std::unique_ptr<FunctionDecl>> methods;
+  while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+    if (check(TokenType::KwFn)) {
+      methods.push_back(parseFunctionDecl());
+    } else {
+      error(peek(), "Expected method in impl block");
+    }
+  }
+  consume(TokenType::RBrace, "Expected '}'");
+  auto decl = std::make_unique<ImplDecl>(typeName.Text, std::move(methods));
+  decl->setLocation(typeName, m_CurrentFile);
+  return decl;
 }
 
 } // namespace toka
