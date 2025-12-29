@@ -9,6 +9,12 @@ const Token &Parser::peek() const {
   return m_Tokens[m_Pos];
 }
 
+const Token &Parser::peekAt(int offset) const {
+  if (m_Pos + offset >= m_Tokens.size())
+    return m_Tokens.back();
+  return m_Tokens[m_Pos + offset];
+}
+
 const Token &Parser::previous() const { return m_Tokens[m_Pos - 1]; }
 
 Token Parser::advance() {
@@ -21,6 +27,12 @@ bool Parser::check(TokenType type) const {
   if (peek().Kind == TokenType::EndOfFile)
     return false;
   return peek().Kind == type;
+}
+
+bool Parser::checkAt(int offset, TokenType type) const {
+  if (peekAt(offset).Kind == TokenType::EndOfFile)
+    return false;
+  return peekAt(offset).Kind == type;
 }
 
 bool Parser::match(TokenType type) {
@@ -164,7 +176,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
   return decl;
 }
 
-std::unique_ptr<VariableDecl> Parser::parseVariableDecl() {
+std::unique_ptr<Stmt> Parser::parseVariableDecl() {
   consume(TokenType::KwLet, "Expected 'let'");
   bool isRef = match(TokenType::Ampersand);
   bool hasPointer = false;
@@ -176,14 +188,31 @@ std::unique_ptr<VariableDecl> Parser::parseVariableDecl() {
   } else if (match(TokenType::Star)) {
     hasPointer = true;
   } else if (match(TokenType::Tilde)) {
-    hasPointer = true; // Use HasPointer for shared too? No, Shared is a struct.
-    // If HasPointer=true, CodeGen treats it as T*.
-    // If Shared, CodeGen treats as {T*, i32*}.
-    // But `HasPointer` usually triggers "dereference" logic.
-    // Let's set HasPointer=true for now, but we must override CodeGen behavior
-    // if IsShared.
+    hasPointer = true;
     isShared = true;
   }
+
+  // Check for positional destructuring: let Type(v1, v2) = ...
+  if (check(TokenType::Identifier) && checkAt(1, TokenType::LParen)) {
+    Token typeName = advance();
+    consume(TokenType::LParen, "Expected '(' for destructuring");
+    std::vector<DestructuredVar> vars;
+    while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+      Token varName = consume(TokenType::Identifier, "Expected variable name");
+      vars.push_back({varName.Text, varName.HasWrite, varName.HasNull});
+      if (!match(TokenType::Comma))
+        break;
+    }
+    consume(TokenType::RParen, "Expected ')' after destructuring");
+    consume(TokenType::Equal, "Expected '=' for destructuring");
+    auto init = parseExpr();
+    consume(TokenType::Semicolon, "Expected ';' after destructuring");
+    auto node = std::make_unique<DestructuringDecl>(
+        typeName.Text, std::move(vars), std::move(init));
+    node->setLocation(typeName, m_CurrentFile);
+    return node;
+  }
+
   Token name = consume(TokenType::Identifier, "Expected variable name");
 
   std::string typeName = "";

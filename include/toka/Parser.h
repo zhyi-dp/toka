@@ -22,16 +22,18 @@ private:
 
   // Helpers
   const Token &peek() const;
+  const Token &peekAt(int offset) const;
   const Token &previous() const;
   Token advance();
   bool check(TokenType type) const;
+  bool checkAt(int offset, TokenType type) const;
   bool match(TokenType type);
   Token consume(TokenType type, const std::string &message);
   void error(const Token &tok, const std::string &message);
 
   // Recursive Descent Methods
   std::unique_ptr<FunctionDecl> parseFunctionDecl();
-  std::unique_ptr<VariableDecl> parseVariableDecl();
+  std::unique_ptr<Stmt> parseVariableDecl();
   std::unique_ptr<ExternDecl> parseExternDecl();
   std::unique_ptr<ImportDecl> parseImport();
   std::unique_ptr<TypeAliasDecl> parseTypeAliasDecl();

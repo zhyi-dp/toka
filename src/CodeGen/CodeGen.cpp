@@ -47,25 +47,32 @@ void CodeGen::generate(const Module &ast) {
 
 void CodeGen::print(llvm::raw_ostream &os) { m_Module->print(os, nullptr); }
 
-void CodeGen::genGlobal(const VariableDecl *var) {
-  llvm::Type *type = resolveType(var->TypeName, var->HasPointer);
+void CodeGen::genGlobal(const Stmt *stmt) {
+  if (auto *var = dynamic_cast<const VariableDecl *>(stmt)) {
+    llvm::Type *type = resolveType(var->TypeName, var->HasPointer);
 
-  auto *globalVar = new llvm::GlobalVariable(*m_Module, type, false,
-                                             llvm::GlobalValue::ExternalLinkage,
-                                             nullptr, var->Name);
+    auto *globalVar = new llvm::GlobalVariable(
+        *m_Module, type, false, llvm::GlobalValue::ExternalLinkage, nullptr,
+        var->Name);
 
-  if (var->Init) {
-    if (auto *num = dynamic_cast<const NumberExpr *>(var->Init.get())) {
-      globalVar->setInitializer(llvm::ConstantInt::get(type, num->Value));
+    if (var->Init) {
+      if (auto *num = dynamic_cast<const NumberExpr *>(var->Init.get())) {
+        globalVar->setInitializer(llvm::ConstantInt::get(type, num->Value));
+      } else {
+        globalVar->setInitializer(llvm::ConstantInt::get(type, 0));
+      }
     } else {
       globalVar->setInitializer(llvm::ConstantInt::get(type, 0));
     }
-  } else {
-    globalVar->setInitializer(llvm::ConstantInt::get(type, 0));
-  }
 
-  m_NamedValues[var->Name] = globalVar;
-  m_ValueTypes[var->Name] = type;
+    m_NamedValues[var->Name] = globalVar;
+    m_ValueTypes[var->Name] = type;
+  } else {
+    // We could support global destructuring here, but for now just skip or
+    // error
+    error(dynamic_cast<const ASTNode *>(stmt),
+          "Global destructuring not yet supported");
+  }
 }
 
 llvm::Function *CodeGen::genFunction(const FunctionDecl *func) {
@@ -341,6 +348,42 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     if (retVal)
       return m_Builder.CreateRet(retVal);
     return m_Builder.CreateRetVoid();
+  } else if (auto *dest = dynamic_cast<const DestructuringDecl *>(stmt)) {
+    llvm::Value *initVal = genExpr(dest->Init.get());
+    if (!initVal)
+      return nullptr;
+
+    llvm::Type *srcTy = initVal->getType();
+    if (!srcTy->isStructTy()) {
+      error(dest, "Positional destructuring requires a struct or tuple type");
+      return nullptr;
+    }
+
+    auto *st = llvm::cast<llvm::StructType>(srcTy);
+    for (size_t i = 0; i < dest->Variables.size(); ++i) {
+      if (i >= st->getNumElements()) {
+        error(dest, "Too many variables in destructuring");
+        break;
+      }
+
+      const auto &v = dest->Variables[i];
+      llvm::Value *val = m_Builder.CreateExtractValue(initVal, i, v.Name);
+      llvm::Type *ty = val->getType();
+
+      llvm::AllocaInst *alloca = m_Builder.CreateAlloca(ty, nullptr, v.Name);
+      m_Builder.CreateStore(val, alloca);
+
+      m_NamedValues[v.Name] = alloca;
+      m_ValueTypes[v.Name] = ty;
+      m_ValueElementTypes[v.Name] = ty; // fallback for basic types
+      m_ValueIsMutable[v.Name] = v.IsMutable;
+      m_ValueIsNullable[v.Name] = v.IsNullable;
+
+      if (!m_ScopeStack.empty()) {
+        m_ScopeStack.back().push_back({v.Name, alloca, false, false});
+      }
+    }
+    return nullptr;
   } else if (auto *var = dynamic_cast<const VariableDecl *>(stmt)) {
     llvm::Value *initVal = nullptr;
     if (var->Init) {

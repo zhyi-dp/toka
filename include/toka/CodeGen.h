@@ -49,6 +49,7 @@ private:
   std::map<std::string, std::string> m_TypeAliases;
   std::map<std::string, bool> m_ValueIsReference;
   std::map<std::string, bool> m_ValueIsMutable;
+  std::map<std::string, bool> m_ValueIsNullable;
   std::map<std::string, bool> m_ValueIsUnique; // Tracks ^Type for variables
   std::map<std::string, bool> m_ValueIsShared; // Tracks ~Type for variables
   std::map<llvm::Type *, std::string> m_TypeToName;
@@ -67,7 +68,7 @@ private:
   llvm::Value *genAddr(const Expr *expr);
   llvm::Value *genStmt(const Stmt *stmt);
   llvm::Function *genFunction(const FunctionDecl *func);
-  void genGlobal(const VariableDecl *var);
+  void genGlobal(const Stmt *stmt);
   void genExtern(const ExternDecl *ext);
   void genStruct(const StructDecl *str);
 };

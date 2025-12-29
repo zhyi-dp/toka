@@ -28,7 +28,7 @@ fn addtox_useref(&point#: Point, v: i32) {
 }
 
 fn main() {
-    let p# = Point { x = 1, y = 2 };
+    let p# = Point { x = 1, y = 2, z = 111 };
     let i# = 0;
     let logi# = 0;
     while (i < 3) {
@@ -76,6 +76,15 @@ fn main() {
 
     let pt: PointTup = (100, 200);
     processPoint(pt);
+
+    let PointTup(tup0, tup1) = pt;
+    printf("[%03d]tup0 is %d\n", logi#++, tup0);
+    printf("[%03d]tup1 is %d\n", logi#++, tup1);
+
+    let Point(v0, v1, v2) = p;
+    printf("[%03d]v0 is %d\n", logi#++, v0);
+    printf("[%03d]v1 is %d\n", logi#++, v1);
+    printf("[%03d]v2 is %d\n", logi#++, v2);
 
     // Reference tests following safety rules
     let a# = 10;

@@ -271,6 +271,26 @@ public:
   std::string toString() const override { return "While(...)"; }
 };
 
+struct DestructuredVar {
+  std::string Name;
+  bool IsMutable = false;
+  bool IsNullable = false;
+};
+
+class DestructuringDecl : public Stmt {
+public:
+  std::string TypeName;
+  std::vector<DestructuredVar> Variables;
+  std::unique_ptr<Expr> Init;
+
+  DestructuringDecl(const std::string &typeName,
+                    std::vector<DestructuredVar> vars,
+                    std::unique_ptr<Expr> init)
+      : TypeName(typeName), Variables(std::move(vars)), Init(std::move(init)) {}
+
+  std::string toString() const override { return "Destructuring " + TypeName; }
+};
+
 class VariableDecl : public Stmt {
 public:
   std::string Name;
@@ -376,7 +396,7 @@ public:
   std::vector<std::unique_ptr<ImportDecl>> Imports;
   std::vector<std::unique_ptr<TypeAliasDecl>> TypeAliases;
   std::vector<std::unique_ptr<StructDecl>> Structs;
-  std::vector<std::unique_ptr<VariableDecl>> Globals;
+  std::vector<std::unique_ptr<Stmt>> Globals;
   std::vector<std::unique_ptr<ExternDecl>> Externs;
   std::vector<std::unique_ptr<FunctionDecl>> Functions;
 };
