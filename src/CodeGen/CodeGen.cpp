@@ -17,6 +17,13 @@ void CodeGen::generate(const Module &ast) {
       return;
   }
 
+  // Generate Options
+  for (const auto &opt : ast.Options) {
+    genOption(opt.get());
+    if (hasErrors())
+      return;
+  }
+
   // Generate Externs
   for (const auto &ext : ast.Externs) {
     m_Externs[ext->Name] = ext.get();
@@ -649,6 +656,8 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     }
     m_ScopeStack.pop_back();
     return nullptr;
+  } else if (auto *ms = dynamic_cast<const MatchStmt *>(stmt)) {
+    return genMatch(ms);
   } else if (auto *es = dynamic_cast<const ExprStmt *>(stmt)) {
     return genExpr(es->Expression.get());
   }
@@ -755,8 +764,103 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
   }
   if (auto *call = dynamic_cast<const CallExpr *>(expr)) {
     llvm::Function *callee = m_Module->getFunction(call->Callee);
-    if (!callee)
+    if (!callee) {
+      // Check for ADT Constructor (Type::Variant)
+      // Format: OptionName::VariantName
+      std::string callName = call->Callee;
+      size_t delim = callName.find("::");
+      if (delim != std::string::npos) {
+        std::string optName = callName.substr(0, delim);
+        std::string varName = callName.substr(delim + 2);
+
+        if (m_Options.count(optName)) {
+          const OptionDecl *opt = m_Options[optName];
+          int tag = -1;
+          const OptionVariant *targetVar = nullptr;
+          for (int i = 0; i < opt->Variants.size(); ++i) {
+            if (opt->Variants[i].Name == varName) {
+              tag = i;
+              targetVar = &opt->Variants[i];
+              break;
+            }
+          }
+
+          if (tag != -1) {
+            // Generate Option Construction
+            llvm::StructType *st = m_StructTypes[optName];
+            llvm::Value *alloca =
+                m_Builder.CreateAlloca(st, nullptr, "opt_ctor");
+
+            // 1. Store Tag
+            llvm::Value *tagAddr =
+                m_Builder.CreateStructGEP(st, alloca, 0, "tag_addr");
+            m_Builder.CreateStore(
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), tag),
+                tagAddr);
+
+            // 2. Store Payload Fields
+            if (!targetVar->Fields.empty()) {
+              // Get payload array address (index 1)
+              llvm::Value *payloadAddr =
+                  m_Builder.CreateStructGEP(st, alloca, 1, "payload_addr");
+
+              // Bitcast payload addr to first field pointer?
+              // Current simple implementation: assume sequential packing in
+              // payload memory But since payload is [N x i8], we need to cast
+              // it for each field. Actually, we should recalculate offsets
+              // manually or cast payload* to a packed struct of fields? Easiest
+              // is to cast payloadAddr to FieldType* and store.
+
+              // We need to keep track of current offset in the payload
+              llvm::Value *currentPtr = payloadAddr;
+
+              // However, for multiple fields, we need correct offsets.
+              // Let's use DataLayout to compute offsets or just increment
+              // pointer. Better approach: Cast the payload array pointer to a
+              // pointer of a struct representing this variant's fields. But we
+              // don't have that struct type defined. So we just iterate and
+              // pointer cast.
+
+              // NOTE: This assumes standard alignment padding is manually
+              // handled or sufficient? Since we treat payload as opaque bytes,
+              // we should ideally construct a "Variant Type" on the fly and
+              // cast the payload pointer to that.
+
+              std::vector<llvm::Type *> varFieldTypes;
+              for (const auto &f : targetVar->Fields) {
+                varFieldTypes.push_back(
+                    resolveType(f.Type, f.HasPointer || f.IsReference));
+              }
+              llvm::StructType *varStructTy = llvm::StructType::get(
+                  m_Context, varFieldTypes,
+                  false); // Packed? No, use natural alignment
+
+              // Cast payload address to VariantStruct*
+              llvm::Value *varPtr = m_Builder.CreateBitCast(
+                  payloadAddr, llvm::PointerType::getUnqual(varStructTy),
+                  "var_ptr");
+
+              for (size_t i = 0; i < call->Args.size(); ++i) {
+                if (i >= targetVar->Fields.size())
+                  break;
+
+                llvm::Value *argVal = genExpr(call->Args[i].get());
+                if (!argVal)
+                  return nullptr;
+
+                llvm::Value *dstPtr =
+                    m_Builder.CreateStructGEP(varStructTy, varPtr, i);
+                m_Builder.CreateStore(argVal, dstPtr);
+              }
+            }
+
+            return m_Builder.CreateLoad(st, alloca);
+          }
+        }
+      }
+
       return nullptr;
+    }
 
     const FunctionDecl *funcDecl = nullptr;
     if (m_Functions.count(call->Callee))
@@ -1530,6 +1634,8 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
     type = llvm::Type::getVoidTy(m_Context);
   else if (m_StructTypes.count(baseType))
     type = m_StructTypes[baseType];
+  else if (m_Options.count(baseType))
+    type = m_StructTypes[baseType];
   else
     type = llvm::Type::getInt64Ty(m_Context);
 
@@ -1552,6 +1658,46 @@ void CodeGen::genStruct(const StructDecl *str) {
   m_StructFieldNames[str->Name] = fieldNames;
 }
 
+void CodeGen::genOption(const OptionDecl *opt) {
+  uint64_t maxPayloadSize = 0;
+  uint64_t maxAlignment = 1;
+
+  llvm::DataLayout DL(m_Module.get());
+
+  for (const auto &variant : opt->Variants) {
+    uint64_t currentSize = 0;
+    uint64_t currentAlign = 1;
+    for (const auto &field : variant.Fields) {
+      llvm::Type *t =
+          resolveType(field.Type, field.HasPointer || field.IsUnique ||
+                                      field.IsShared || field.IsReference);
+      if (!t)
+        continue;
+      currentSize += DL.getTypeAllocSize(t);
+      currentAlign =
+          std::max(currentAlign, (uint64_t)DL.getABITypeAlign(t).value());
+    }
+    maxPayloadSize = std::max(maxPayloadSize, currentSize);
+    maxAlignment = std::max(maxAlignment, currentAlign);
+  }
+
+  // Tag is i32, 4 bytes
+  std::vector<llvm::Type *> body;
+  body.push_back(llvm::Type::getInt32Ty(m_Context)); // Tag
+  if (maxPayloadSize > 0) {
+    // We use a byte array for the payload to be safe about alignment/size
+    body.push_back(
+        llvm::ArrayType::get(llvm::Type::getInt8Ty(m_Context), maxPayloadSize));
+  }
+
+  llvm::StructType *st = llvm::StructType::create(m_Context, opt->Name);
+  st->setBody(body, /*isPacked=*/false);
+
+  m_StructTypes[opt->Name] = st;
+  m_TypeToName[st] = opt->Name;
+  m_Options[opt->Name] = opt;
+}
+
 void CodeGen::error(const ASTNode *node, const std::string &message) {
   m_ErrorCount++;
   if (node && !node->FileName.empty()) {
@@ -1565,3 +1711,154 @@ void CodeGen::error(const ASTNode *node, const std::string &message) {
 }
 
 } // namespace toka
+
+llvm::Value *toka::CodeGen::genMatch(const toka::MatchStmt *stmt) {
+  if (!stmt->Target)
+    return nullptr;
+
+  llvm::Value *targetVal = genExpr(stmt->Target.get());
+  if (!targetVal)
+    return nullptr;
+
+  std::string optName;
+  llvm::Type *targetType = targetVal->getType();
+
+  // Try to determine option name from type
+  if (targetType->isStructTy()) {
+    if (m_TypeToName.count(targetType)) {
+      optName = m_TypeToName[targetType];
+    }
+  }
+
+  if (optName.empty() || m_Options.find(optName) == m_Options.end()) {
+    // If unresolved, it might be an opaque pointer or similar.
+    // For now, strict check.
+    error(stmt, "Match target is not a resolvable Option type");
+    return nullptr;
+  }
+
+  const OptionDecl *opt = m_Options[optName];
+
+  // 1. Extract Tag (Index 0)
+  llvm::Value *tagVal = m_Builder.CreateExtractValue(targetVal, 0, "tag");
+
+  // 2. Store target to temp alloca for payload addressing
+  llvm::Value *targetAlloca =
+      m_Builder.CreateAlloca(targetType, nullptr, "match_tmp");
+  m_Builder.CreateStore(targetVal, targetAlloca);
+
+  llvm::Function *func = m_Builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock *mergeBB =
+      llvm::BasicBlock::Create(m_Context, "match_merge", func);
+  llvm::BasicBlock *defaultBB =
+      llvm::BasicBlock::Create(m_Context, "match_default", func);
+
+  llvm::SwitchInst *sw =
+      m_Builder.CreateSwitch(tagVal, defaultBB, stmt->Cases.size());
+
+  // Track handled tags to avoid duplicates or logic errors (simplified)
+  bool wildcardHandled = false;
+
+  for (const auto &c : stmt->Cases) {
+    if (c.IsWildcard) {
+      wildcardHandled = true;
+      continue;
+    }
+
+    int tag = -1;
+    const OptionVariant *variant = nullptr;
+    for (size_t i = 0; i < opt->Variants.size(); ++i) {
+      if (opt->Variants[i].Name == c.VariantName) {
+        tag = i;
+        variant = &opt->Variants[i];
+        break;
+      }
+    }
+
+    if (tag == -1) {
+      error(stmt, "Unknown variant " + c.VariantName);
+      continue;
+    }
+
+    llvm::BasicBlock *caseBB =
+        llvm::BasicBlock::Create(m_Context, "case_" + c.VariantName, func);
+    sw->addCase(m_Builder.getInt32(tag), caseBB);
+
+    m_Builder.SetInsertPoint(caseBB);
+    m_ScopeStack.push_back({});
+
+    // Destructuring Bindings
+    if (!c.BindingNames.empty() && variant) {
+      llvm::Value *payloadAddr =
+          m_Builder.CreateStructGEP(targetType, targetAlloca, 1);
+
+      // Recreate Variant Struct Type
+      std::vector<llvm::Type *> fieldTypes;
+      llvm::DataLayout DL(m_Module.get());
+      for (const auto &f : variant->Fields) {
+        fieldTypes.push_back(resolveType(
+            f.Type, f.HasPointer || f.IsUnique || f.IsShared || f.IsReference));
+      }
+
+      if (!fieldTypes.empty()) {
+        llvm::StructType *varSt =
+            llvm::StructType::get(m_Context, fieldTypes, false);
+        // BitCast Payload Addr (i8*) to VariantStruct*
+        llvm::Value *castPtr = m_Builder.CreateBitCast(
+            payloadAddr, llvm::PointerType::getUnqual(varSt));
+
+        for (size_t i = 0; i < c.BindingNames.size() && i < fieldTypes.size();
+             ++i) {
+          // GEP to field
+          llvm::Value *fieldPtr = m_Builder.CreateStructGEP(varSt, castPtr, i);
+          llvm::Value *val =
+              m_Builder.CreateLoad(fieldTypes[i], fieldPtr, c.BindingNames[i]);
+
+          // Local var
+          llvm::Value *alloc =
+              m_Builder.CreateAlloca(fieldTypes[i], nullptr, c.BindingNames[i]);
+          m_Builder.CreateStore(val, alloc);
+
+          m_NamedValues[c.BindingNames[i]] = alloc;
+          m_ValueTypes[c.BindingNames[i]] = fieldTypes[i];
+          m_ValueElementTypes[c.BindingNames[i]] = fieldTypes[i];
+
+          VariableScopeInfo info;
+          info.Name = c.BindingNames[i];
+          info.Alloca = alloc;
+          m_ScopeStack.back().push_back(info);
+        }
+      }
+    }
+
+    genStmt(c.Body.get());
+    m_ScopeStack.pop_back(); // Simple scope pop
+
+    if (!m_Builder.GetInsertBlock()->getTerminator())
+      m_Builder.CreateBr(mergeBB);
+  }
+
+  // Default / Wildcard Logic
+  m_Builder.SetInsertPoint(defaultBB);
+  const MatchCase *wild = nullptr;
+  for (const auto &c : stmt->Cases)
+    if (c.IsWildcard) {
+      wild = &c;
+      break;
+    }
+
+  if (wild) {
+    m_ScopeStack.push_back({});
+    genStmt(wild->Body.get());
+    m_ScopeStack.pop_back();
+    if (!m_Builder.GetInsertBlock()->getTerminator())
+      m_Builder.CreateBr(mergeBB);
+  } else {
+    // If no wildcard, assume it's exhaustive or do nothing?
+    // Jumping to mergeBB if unhandled (silent failure/nop currently)
+    m_Builder.CreateBr(mergeBB);
+  }
+
+  m_Builder.SetInsertPoint(mergeBB);
+  return nullptr;
+}

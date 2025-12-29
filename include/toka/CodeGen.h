@@ -53,6 +53,7 @@ private:
   std::map<std::string, bool> m_ValueIsUnique;     // Tracks ^Type for variables
   std::map<std::string, bool> m_ValueIsShared;     // Tracks ~Type for variables
   std::map<std::string, bool> m_ValueIsRawPointer; // Tracks *Type for variables
+  std::map<std::string, const OptionDecl *> m_Options;
   std::map<llvm::Type *, std::string> m_TypeToName;
 
   struct VariableScopeInfo {
@@ -72,6 +73,8 @@ private:
   void genGlobal(const Stmt *stmt);
   void genExtern(const ExternDecl *ext);
   void genStruct(const StructDecl *str);
+  void genOption(const OptionDecl *opt);
+  llvm::Value *genMatch(const MatchStmt *stmt);
 };
 
 } // namespace toka

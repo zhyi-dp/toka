@@ -1,0 +1,5 @@
+option State {
+    On = (),
+    Off = (),
+    ErrCode = (i32)
+}

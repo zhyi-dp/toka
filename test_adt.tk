@@ -1,0 +1,33 @@
+extern fn printf(fmt: *i8, ...) -> i32;
+
+option State {
+    On = (),
+    Off = (),
+    ErrCode = (i32)
+}
+
+fn main() {
+    let s = State::On();
+    
+    match s {
+        On => {
+            printf("Matched On!\n");
+        }
+        Off => {
+            printf("Matched Off!\n");
+        }
+        _ => {
+            printf("Matched Default/Wildcard!\n");
+        }
+    }
+    
+    let e = State::ErrCode(404);
+    match e {
+        let ErrCode(code) => {
+            printf("Matched ErrCode: %d\n", code);
+        }
+        _ => {
+            printf("Ignored\n");
+        }
+    }
+}

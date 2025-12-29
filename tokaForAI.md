@@ -101,12 +101,55 @@ Toka separates **storage binding** (`let`) from **memory properties** (Tokens).
       age: i32
   }
   ```
+  ```
 - **Trait**:
   ```scala
   trait Run {
       fn run(self) -> void
   }
   ```
+- **Algebraic Data Types (ADTs)**:
+    - **Syntax**:
+      ```scala
+      option Maybe<T, V> {
+          Some = (T, V),        // Named tuple variant
+          None = (),            // Unit variant
+          Data = (value: T, count: V), // Named fields tuple variant
+          OTHER = (),           // Pure tag (Enum-like)
+          type Inner = (T)      // Type alias (internal helper)
+      }
+      ```
+    - **Usage**:
+      - `let opt = Maybe::Some(42, "Hello")`
+      - `use Maybe::*` allows `Some(42, "Hello")`
+    - **Pattern Matching (`match`)**:
+      ```scala
+      match opt {
+          // Destructuring binding
+          let Some(st, sv) => { ... }
+          
+          // Guard clause
+          let Some(st, sv) if sv > 10 => { ... }
+          
+          // Named field destructuring with partial match
+          let Data{ st = .count, .. } => { ... }
+          
+          // Shorthand for named fields
+          Data{ .value, .count } => { ... }
+          
+          // Unit/Tag match
+          None => { ... }
+          
+          // No destructuring (access raw fields via dot)
+          Data as d => { print(d.value) }
+          
+          // Default
+          _ => { ... }
+      }
+      ```
+    - **Control Flow Sugar**:
+      - `if let Some(x, y) = opt { ... }`
+      - `if opt is Some { print(opt.0) }`
 
 ## 4. Memory Model
 

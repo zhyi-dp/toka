@@ -38,6 +38,8 @@ private:
   std::unique_ptr<ImportDecl> parseImport();
   std::unique_ptr<TypeAliasDecl> parseTypeAliasDecl();
   std::unique_ptr<StructDecl> parseStruct();
+  std::unique_ptr<OptionDecl> parseOptionDecl(); // ADT
+  std::unique_ptr<Stmt> parseMatchStmt();
 
   std::unique_ptr<Stmt> parseStmt();
   std::unique_ptr<Stmt> parseIf();

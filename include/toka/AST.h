@@ -289,6 +289,28 @@ public:
   std::string toString() const override { return "While(...)"; }
 };
 
+struct MatchCase {
+  // Pattern info
+  std::string VariantName; // e.g. "Some" or "Data" or "None"
+  std::vector<std::string>
+      BindingNames; // For destructured vars: let Some(a, b) -> ["a", "b"]
+  bool IsWildcard = false; // _ => ...
+
+  std::unique_ptr<Expr> Guard; // if condition
+  std::unique_ptr<Stmt> Body;
+};
+
+class MatchStmt : public Stmt {
+public:
+  std::unique_ptr<Expr> Target; // match target
+  std::vector<MatchCase> Cases;
+
+  MatchStmt(std::unique_ptr<Expr> target, std::vector<MatchCase> cases)
+      : Target(std::move(target)), Cases(std::move(cases)) {}
+
+  std::string toString() const override { return "Match(...)"; }
+};
+
 struct DestructuredVar {
   std::string Name;
   bool IsMutable = false;
@@ -344,6 +366,29 @@ public:
   std::string toString() const override {
     return "TypeAlias(" + Name + " = " + TargetType + ")";
   }
+};
+
+struct VariantField {
+  std::string Name; // Optional name
+  std::string Type;
+  bool HasPointer = false;
+  bool IsUnique = false;
+  bool IsShared = false;
+  bool IsReference = false;
+};
+
+struct OptionVariant {
+  std::string Name;
+  std::vector<VariantField> Fields;
+};
+
+class OptionDecl : public ASTNode {
+public:
+  std::string Name;
+  std::vector<OptionVariant> Variants;
+  OptionDecl(const std::string &name, std::vector<OptionVariant> variants)
+      : Name(name), Variants(std::move(variants)) {}
+  std::string toString() const override { return "Option(" + Name + ")"; }
 };
 
 class StructDecl : public ASTNode {
@@ -414,6 +459,7 @@ public:
   std::vector<std::unique_ptr<ImportDecl>> Imports;
   std::vector<std::unique_ptr<TypeAliasDecl>> TypeAliases;
   std::vector<std::unique_ptr<StructDecl>> Structs;
+  std::vector<std::unique_ptr<OptionDecl>> Options;
   std::vector<std::unique_ptr<Stmt>> Globals;
   std::vector<std::unique_ptr<ExternDecl>> Externs;
   std::vector<std::unique_ptr<FunctionDecl>> Functions;

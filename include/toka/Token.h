@@ -65,6 +65,7 @@ enum class TokenType {
   KwDefer,
   KwMain,
   KwExtern,
+  KwOption,
 
   // Attribute Tokens (When separate, though usually parsed as part of Ident or
   // Type)
@@ -89,6 +90,7 @@ enum class TokenType {
   Colon,      // :
   Semicolon,  // ;
   Arrow,      // ->
+  FatArrow,   // =>
   Dependency, // <-
   Pipe,       // |
   DotDotDot,  // ...

@@ -72,6 +72,8 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->Imports.push_back(parseImport());
     } else if (check(TokenType::KwStruct)) {
       module->Structs.push_back(parseStruct());
+    } else if (check(TokenType::KwOption)) {
+      module->Options.push_back(parseOptionDecl());
     } else {
       // Error or unknown
       std::cerr << "Unexpected Top Level Token: " << peek().toString() << "\n";
@@ -108,6 +110,109 @@ std::unique_ptr<StructDecl> Parser::parseStruct() {
   auto node = std::make_unique<StructDecl>(name.Text, std::move(fields));
   node->setLocation(name, m_CurrentFile);
   return node;
+}
+
+std::unique_ptr<OptionDecl> Parser::parseOptionDecl() {
+  consume(TokenType::KwOption, "Expected 'option'");
+  Token name = consume(TokenType::Identifier, "Expected option name");
+  consume(TokenType::LBrace, "Expected '{' after option name");
+
+  std::vector<OptionVariant> variants;
+  while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+    Token varName = consume(TokenType::Identifier, "Expected variant name");
+    consume(TokenType::Equal, "Expected '=' after variant name");
+    consume(TokenType::LParen, "Expected '(' for variant fields");
+
+    std::vector<VariantField> fields;
+    while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+      VariantField field;
+      if (check(TokenType::Identifier) && checkAt(1, TokenType::Colon)) {
+        field.Name = advance().Text;
+        consume(TokenType::Colon, "Expected ':' after field name");
+      }
+
+      // Handle decorators
+      if (match(TokenType::Star))
+        field.HasPointer = true;
+      else if (match(TokenType::Caret))
+        field.IsUnique = true;
+      else if (match(TokenType::Tilde))
+        field.IsShared = true;
+      else if (match(TokenType::Ampersand))
+        field.IsReference = true;
+
+      field.Type = consume(TokenType::Identifier, "Expected field type").Text;
+      fields.push_back(field);
+
+      if (!check(TokenType::RParen)) {
+        consume(TokenType::Comma, "Expected ',' between fields");
+      }
+    }
+    consume(TokenType::RParen, "Expected ')' after variant fields");
+    variants.push_back({varName.Text, std::move(fields)});
+
+    if (!check(TokenType::RBrace)) {
+      match(TokenType::Comma); // Optional comma between variants
+    }
+  }
+  consume(TokenType::RBrace, "Expected '}' after variants");
+
+  auto decl = std::make_unique<OptionDecl>(name.Text, std::move(variants));
+  decl->setLocation(name, m_CurrentFile);
+  return decl;
+}
+
+std::unique_ptr<Stmt> Parser::parseMatchStmt() {
+  consume(TokenType::KwMatch, "Expected 'match'");
+  auto target = parseExpr();
+  consume(TokenType::LBrace, "Expected '{' after match expression");
+
+  std::vector<MatchCase> cases;
+
+  while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+    MatchCase c;
+
+    if (match(TokenType::KwLet)) {
+      // let Variant(a, b)
+      Token varName = consume(TokenType::Identifier, "Expected variant name");
+      c.VariantName = varName.Text;
+      if (match(TokenType::LParen)) {
+        // Positional binding
+        while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+          c.BindingNames.push_back(
+              consume(TokenType::Identifier, "Expected binding name").Text);
+          if (!check(TokenType::RParen))
+            consume(TokenType::Comma, "Expected ','");
+        }
+        consume(TokenType::RParen, "Expected ')'");
+      }
+    } else if (match(TokenType::KwDefault)) {
+      c.IsWildcard = true;
+    } else if (check(TokenType::Identifier)) {
+      if (peek().Text == "_") {
+        advance();
+        c.IsWildcard = true;
+      } else {
+        c.VariantName = advance().Text;
+      }
+    } else {
+      // Stop if we don't see a pattern start (likely RBrace or error)
+      if (check(TokenType::RBrace))
+        break;
+      error(peek(), "Expected pattern in match case");
+    }
+
+    if (match(TokenType::KwIf)) {
+      c.Guard = parseExpr();
+    }
+
+    consume(TokenType::FatArrow, "Expected '=>'");
+    c.Body = parseStmt();
+    cases.push_back(std::move(c));
+  }
+
+  consume(TokenType::RBrace, "Expected '}'");
+  return std::make_unique<MatchStmt>(std::move(target), std::move(cases));
 }
 
 std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
@@ -244,6 +349,8 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     return parseBlock();
   if (check(TokenType::KwIf))
     return parseIf();
+  if (check(TokenType::KwMatch))
+    return parseMatchStmt();
   if (check(TokenType::KwWhile))
     return parseWhile();
   if (check(TokenType::KwReturn))
@@ -473,7 +580,17 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     }
   } else if (match(TokenType::Identifier)) {
     Token name = previous();
+    bool isStructInit = false;
     if (check(TokenType::LBrace)) {
+      // Disambiguate against match block or other blocks starting with brace
+      if (checkAt(1, TokenType::RBrace))
+        isStructInit = true;
+      else if (checkAt(1, TokenType::Identifier) &&
+               checkAt(2, TokenType::Equal))
+        isStructInit = true;
+    }
+
+    if (isStructInit) {
       // Struct Init
       advance();
       std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
@@ -499,6 +616,31 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       node->setLocation(name, m_CurrentFile);
       expr = std::move(node);
     } else {
+      // Check for Scope Resolution (State::On)
+      if (check(TokenType::Colon) && checkAt(1, TokenType::Colon)) {
+        consume(TokenType::Colon, "");
+        consume(TokenType::Colon, "");
+        Token member =
+            consume(TokenType::Identifier, "Expected member after ::");
+        name.Text += "::" + member.Text;
+
+        if (match(TokenType::LParen)) {
+          // Function Call
+          std::vector<std::unique_ptr<Expr>> args;
+          if (!check(TokenType::RParen)) {
+            do {
+              args.push_back(parseExpr());
+            } while (match(TokenType::Comma));
+          }
+          consume(TokenType::RParen, "Expected ')' after arguments");
+          auto node = std::make_unique<CallExpr>(name.Text, std::move(args));
+          node->setLocation(name, m_CurrentFile);
+          expr = std::move(node);
+          return expr; // Early return as scope resolution usually ends a
+                       // primary
+        }
+      }
+
       auto var = std::make_unique<VariableExpr>(name.Text);
       var->setLocation(name, m_CurrentFile);
       var->IsMutable = name.HasWrite;
