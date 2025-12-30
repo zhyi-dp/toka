@@ -301,7 +301,39 @@ std::string Sema::checkExpr(Expr *E) {
         error(Bin, "assignment type mismatch: cannot assign '" + RHS +
                        "' to '" + LHS + "'");
       }
-      // TODO: Check mutability of LHS
+
+      // Strict Mutability Check
+      Expr *LHSExpr = Bin->LHS.get();
+      bool isMutable = false;
+
+      if (auto *Var = dynamic_cast<VariableExpr *>(LHSExpr)) {
+        SymbolInfo Info;
+        if (CurrentScope->lookup(Var->Name, Info)) {
+          isMutable = Info.IsMutable;
+          if (!isMutable) {
+            error(Var, "cannot assign to immutable variable '" + Var->Name +
+                           "' (missing '#' suffix?)");
+          }
+        }
+      } else if (auto *Memb = dynamic_cast<MemberExpr *>(LHSExpr)) {
+        // Recursive check for struct members: base object must be mutable
+        // e.g. x.y = 1 requires x to be mutable
+        Expr *Base = Memb->Object.get();
+        // Traverse down MemberExpr chain
+        while (auto *SubMemb = dynamic_cast<MemberExpr *>(Base)) {
+          Base = SubMemb->Object.get();
+        }
+        if (auto *Var = dynamic_cast<VariableExpr *>(Base)) {
+          SymbolInfo Info;
+          if (CurrentScope->lookup(Var->Name, Info)) {
+            if (!Info.IsMutable) {
+              error(Memb, "cannot assign to field of immutable variable '" +
+                              Var->Name + "'");
+            }
+          }
+        }
+      }
+
       return LHS;
     }
 
