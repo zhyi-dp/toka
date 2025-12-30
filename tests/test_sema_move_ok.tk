@@ -1,0 +1,9 @@
+struct Rect { w: i32, h: i32 }
+
+fn main() {
+    let ^r1 = new Rect{w=1, h=1};
+    let ^r2 = ^r1; // Move
+    
+    // r2 is valid
+    let x = r2.w; // OK
+}

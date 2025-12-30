@@ -13,6 +13,8 @@ struct SymbolInfo {
   bool IsMutable = false;
   bool IsNullable = false;
   bool IsReference = false;
+  bool IsUnique = false; // Track if it's a Unique pointer
+  bool Moved = false;    // Track if it has been moved
 };
 
 class Scope {
@@ -33,6 +35,17 @@ public:
     }
     if (Parent)
       return Parent->lookup(Name, OutInfo);
+    return false;
+  }
+
+  // Mark a symbol as moved. Returns true if found and updated.
+  bool markMoved(const std::string &Name) {
+    if (Symbols.count(Name)) {
+      Symbols[Name].Moved = true;
+      return true;
+    }
+    if (Parent)
+      return Parent->markMoved(Name);
     return false;
   }
 };

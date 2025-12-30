@@ -154,7 +154,41 @@ void Sema::checkStmt(Stmt *S) {
     Info.Type = Var->TypeName;
     Info.IsMutable = Var->IsMutable;
     Info.IsReference = Var->IsReference;
+    Info.IsUnique = Var->IsUnique;
+
+    // Auto-detect Unique if type is inferred as ^T and not explicitly marked?
+    // In Toka: let ^p = ... (IsUnique true).
+    // let p = ... (if RHS is ^T, p infers ^T but is it Unique handle?)
+    // If I assign unique ptr to non-unique var, it's a move.
+    // Let's rely on Var->IsUnique from parser OR explicit type string starts
+    // with '^'.
+    if (!Info.IsUnique && Info.Type.size() > 0 && Info.Type[0] == '^') {
+      Info.IsUnique = true;
+    }
+
     CurrentScope->define(Var->Name, Info);
+
+    // Move Logic: If initializing from a Unique Variable, move it.
+    if (Var->Init && Info.IsUnique) {
+      Expr *InitExpr = Var->Init.get();
+      // Unwrap unary ^ (Move semantics syntax)
+      if (auto *Unary = dynamic_cast<UnaryExpr *>(InitExpr)) {
+        if (Unary->Op == TokenType::Caret) {
+          InitExpr = Unary->RHS.get();
+        }
+      }
+
+      if (auto *RHSVar = dynamic_cast<VariableExpr *>(InitExpr)) {
+        // Check if source is Unique
+        SymbolInfo SourceInfo;
+        if (CurrentScope->lookup(RHSVar->Name, SourceInfo)) {
+          if (SourceInfo.IsUnique) {
+            // It's a move!
+            CurrentScope->markMoved(RHSVar->Name);
+          }
+        }
+      }
+    }
   } else if (auto *While = dynamic_cast<WhileStmt *>(S)) {
     std::string CondType = checkExpr(While->Condition.get());
     if (CondType != "bool") {
@@ -317,6 +351,9 @@ std::string Sema::checkExpr(Expr *E) {
       error(Var, "use of undeclared identifier '" + Var->Name + "'");
       return "unknown";
     }
+    if (Info.Moved) {
+      error(Var, "use of moved value: '" + Var->Name + "'");
+    }
     return Info.Type;
   } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) {
     std::string LHS = checkExpr(Bin->LHS.get());
@@ -324,17 +361,28 @@ std::string Sema::checkExpr(Expr *E) {
 
     // Assignment
     if (Bin->Op == "=") {
+      // Move Logic: If RHS is Unique Variable, mark it moved.
+      Expr *RHSExpr = Bin->RHS.get();
+      if (auto *Unary = dynamic_cast<UnaryExpr *>(RHSExpr)) {
+        if (Unary->Op == TokenType::Caret)
+          RHSExpr = Unary->RHS.get();
+      }
+
+      if (auto *RHSVar = dynamic_cast<VariableExpr *>(RHSExpr)) {
+        SymbolInfo RHSInfo;
+        if (CurrentScope->lookup(RHSVar->Name, RHSInfo) && RHSInfo.IsUnique) {
+          // Only move if it wasn't already moved (checkExpr handles "Use of
+          // moved value" error, but we must mark it now). Note: checkExpr(RHS)
+          // already passed, so it wasn't moved before this statement.
+          CurrentScope->markMoved(RHSVar->Name);
+        }
+      }
+
       // Logic for Reference Assignment:
       // If LHS is a variable that is a reference, we are assigning to the
       // pointee. LHS type (from checkExpr) returns the type of the symbol. If
       // Symbol.IsReference is true, does checkExpr return T or ^T?
-      // checkExpr(VariableExpr) returns Info.Type.
-      // Parser VariableDecl: "let &b = &a". TypeName inferred.
-      // If inferred from &a (which is ^i32 in my Sema), then b is ^i32.
-      // So LHS is ^i32.
-      // But semantics say "b = 20" means "*b = 20".
-      // We need to know if LHS symbol is a reference.
-
+      // ... (Rest of existing logic)
       bool IsRefAssign = false;
       if (auto *VarLHS = dynamic_cast<VariableExpr *>(Bin->LHS.get())) {
         SymbolInfo Info;
