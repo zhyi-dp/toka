@@ -45,9 +45,9 @@ let ^#p2? = ...;    // 可交换(指向可变)、可空、独占指针
     - [x] **Trait 系统** (接口、默认实现)
 - [ ] **语义分析 (Sema)** *(进行中)*
     - [x] 基础设施脚手架 (Infrastructure Scaffolding)
-    - [ ] **严格的可变性强制检查** (`#` 检查)
-    - [ ] 类型检查 (Type Checking Pass)
-    - [ ] 所有权与借用验证 (Ownership & Borrowing Verification)
+    - [x] **严格的可变性强制检查** (`#` 检查)
+    - [x] 类型检查 (Type Checking Pass)
+    - [x] 所有权与借用验证 (Ownership & Borrowing Verification)
 - [ ] **高级特性**
     - [ ] 泛型 / 模板 (Generics)
     - [ ] 并发 (`Task`, `async`/`await`)

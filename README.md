@@ -45,9 +45,9 @@ We are actively building the compiler self-hosting capabilities.
     - [x] **Trait System** (Interfaces, Default Implementations)
 - [ ] **Semantic Analysis (Sema)** *(In Progress)*
     - [x] Infrastructure Scaffolding
-    - [ ] **Strict Mutability Enforcement** (`#` Check)
-    - [ ] Type Checking Pass
-    - [ ] Ownership & Borrowing Verification
+    - [x] **Strict Mutability Enforcement** (`#` Check)
+    - [x] Type Checking Pass
+    - [x] Ownership & Borrowing Verification (Move Semantics)
 - [ ] **Advanced Features**
     - [ ] Generics / Templates
     - [ ] Concurrency (`Task`, `async`/`await`)
