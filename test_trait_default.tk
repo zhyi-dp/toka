@@ -1,0 +1,28 @@
+extern fn printf(fmt: *i8, ...) -> i32;
+
+trait @Base {
+    fn foo(self) -> i32 {
+        return 100;
+    }
+    
+    fn bar(self) -> i32;
+}
+
+struct Test {
+    val: i32
+}
+
+impl Test@Base {
+    fn bar(self) -> i32 {
+       return self.val + 1;
+    }
+    // foo is using default implementation
+}
+
+fn main() {
+    let t = Test { val = 20 };
+    let f = t.foo();
+    let b = t.bar();
+    printf("Foo: %d\n", f);
+    printf("Bar: %d\n", b);
+}

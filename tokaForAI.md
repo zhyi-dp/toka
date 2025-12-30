@@ -278,3 +278,30 @@ fn main() {
     process(p2)     // Implicit optimization to clean reference
 }
 ```
+
+## 8. Build and Usage
+
+### 8.1 Building the Compiler
+To build the `tokac` compiler:
+
+```bash
+mkdir -p build && cd build
+cmake ..
+make
+```
+
+### 8.2 Running Toka Programs
+The compiler generates LLVM IR (.ll) which can be executed using `lli` (LLVM interpreter):
+
+```bash
+# 1. Compile .tk to .ll
+./build/src/tokac tests/your_file.tk > your_file.ll
+
+# 2. Run with lli
+lli your_file.ll
+```
+
+Or as a one-line command:
+```bash
+./build/src/tokac tests/your_file.tk > tests/your_file.ll && lli tests/your_file.ll
+```

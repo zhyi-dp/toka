@@ -1,6 +1,7 @@
 #include "toka/CodeGen.h"
 #include <cctype>
 #include <iostream>
+#include <set>
 
 namespace toka {
 
@@ -46,30 +47,30 @@ void CodeGen::generate(const Module &ast) {
     m_Functions[func->Name] = func.get();
   }
 
-  // Generate Impls
+  // Generate Impls (Decl Phase)
   for (const auto &impl : ast.Impls) {
-    genImpl(impl.get());
+    genImpl(impl.get(), true);
     if (hasErrors())
       return;
   }
 
-  // Generate Functions (body phase)
+  // Generate Functions (Decl Phase)
   for (const auto &func : ast.Functions) {
-    genFunction(func.get());
+    genFunction(func.get(), "", true);
     if (hasErrors())
       return;
   }
 
-  // Generate Impls
+  // Generate Impls (Body Phase)
   for (const auto &impl : ast.Impls) {
-    genImpl(impl.get());
+    genImpl(impl.get(), false);
     if (hasErrors())
       return;
   }
 
-  // Generate Impls
-  for (const auto &impl : ast.Impls) {
-    genImpl(impl.get());
+  // Generate Functions (Body Phase)
+  for (const auto &func : ast.Functions) {
+    genFunction(func.get(), "", false);
     if (hasErrors())
       return;
   }
@@ -106,7 +107,8 @@ void CodeGen::genGlobal(const Stmt *stmt) {
 }
 
 llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
-                                     const std::string &overrideName) {
+                                     const std::string &overrideName,
+                                     bool declOnly) {
   std::string funcName = overrideName.empty() ? func->Name : overrideName;
   m_NamedValues.clear();
   m_ValueTypes.clear();
@@ -135,6 +137,9 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     f = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, funcName,
                                m_Module.get());
   }
+
+  if (declOnly)
+    return f;
 
   if (!func->Body)
     return f;
@@ -1575,6 +1580,14 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
   if (baseType.empty())
     return nullptr;
 
+  if (baseType == "Self") {
+    if (m_CurrentSelfType.empty()) {
+      // Should not happen if Parser checks context, but for safety in CodeGen
+      return nullptr;
+    }
+    return resolveType(m_CurrentSelfType, hasPointer);
+  }
+
   // Check aliases first
   if (m_TypeAliases.count(baseType)) {
     return resolveType(m_TypeAliases[baseType], hasPointer);
@@ -1904,8 +1917,11 @@ llvm::Value *toka::CodeGen::genMatch(const toka::MatchStmt *stmt) {
   return nullptr;
 }
 
-void toka::CodeGen::genImpl(const toka::ImplDecl *decl) {
-  // Methods
+void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
+  m_CurrentSelfType = decl->TypeName;
+  std::set<std::string> implementedMethods;
+
+  // Methods defined in Impl block
   for (const auto &method : decl->Methods) {
     std::string mangledName;
     if (!decl->TraitName.empty()) {
@@ -1913,8 +1929,41 @@ void toka::CodeGen::genImpl(const toka::ImplDecl *decl) {
     } else {
       mangledName = decl->TypeName + "_" + method->Name;
     }
-    genFunction(method.get(), mangledName);
+    genFunction(method.get(), mangledName, declOnly);
+    implementedMethods.insert(method->Name);
   }
+
+  // Handle Trait Defaults and Missing Methods
+  if (!decl->TraitName.empty() && m_AST) {
+    const TraitDecl *trait = nullptr;
+    for (const auto &t : m_AST->Traits) {
+      if (t->Name == decl->TraitName) {
+        trait = t.get();
+        break;
+      }
+    }
+
+    if (trait) {
+      for (const auto &method : trait->Methods) {
+        if (implementedMethods.count(method->Name))
+          continue;
+
+        if (method->Body) {
+          // Generate default implementation
+          std::string mangledName =
+              decl->TraitName + "_" + decl->TypeName + "_" + method->Name;
+          genFunction(method.get(), mangledName, declOnly);
+        } else {
+          error(decl, "Missing implementation for method '" + method->Name +
+                          "' of trait '" + decl->TraitName + "'");
+        }
+      }
+    } else {
+      error(decl, "Trait '" + decl->TraitName + "' not found");
+    }
+  }
+
+  m_CurrentSelfType = "";
 }
 
 llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {

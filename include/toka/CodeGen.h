@@ -45,6 +45,7 @@ private:
   std::map<std::string, const FunctionDecl *> m_Functions;
   std::map<std::string, const ExternDecl *> m_Externs;
   std::map<std::string, llvm::Value *> m_NamedValues;
+  std::string m_CurrentSelfType;
   std::map<std::string, llvm::Type *> m_ValueTypes;
   std::map<std::string, llvm::Type *> m_ValueElementTypes;
   std::map<std::string, llvm::StructType *> m_StructTypes;
@@ -73,12 +74,13 @@ private:
   llvm::Value *genAddr(const Expr *expr);
   llvm::Value *genStmt(const Stmt *stmt);
   llvm::Function *genFunction(const FunctionDecl *func,
-                              const std::string &overrideName = "");
+                              const std::string &overrideName = "",
+                              bool declOnly = false);
   void genGlobal(const Stmt *stmt);
   void genExtern(const ExternDecl *ext);
   void genStruct(const StructDecl *str);
   void genOption(const OptionDecl *opt);
-  void genImpl(const ImplDecl *impl);
+  void genImpl(const ImplDecl *impl, bool declOnly = false);
   llvm::Value *genMatch(const MatchStmt *stmt);
   llvm::Value *genMethodCall(const MethodCallExpr *expr);
 };
