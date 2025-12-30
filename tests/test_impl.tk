@@ -15,7 +15,7 @@ impl Rect {
     }
 }
 
-fn main() {
+fn main() -> i32 {
     let r = Rect { width = 10, height = 20 };
     
     // Test method call
@@ -24,4 +24,5 @@ fn main() {
     
     let p = r.perimeter();
     printf("Perimeter: %d\n", p);
+    return 0;
 }

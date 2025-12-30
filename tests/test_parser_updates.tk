@@ -2,7 +2,7 @@ extern fn printf(fmt: str, ...) -> i32;
 
 struct Data { v: i32 }
 
-fn main() {
+fn main() -> i32 {
     // Parsing check for Logical Operators
     let t = true;
     let f = false;
@@ -21,31 +21,23 @@ fn main() {
         let ^?p2 = new Data{v=99};
 
         // New syntax: 'is' operator for null check. 
-        // Type is ^Data (Unique Pointer to Data).
-        // Note: p2 itself is ^?Data (Nullable).
         if ^?p2 is ^p2 {
-            // If successful, p2 is treated as non-null inside (Sema enhancement required for full type narrowing,
-            // but Runtime check works with is).
             printf("Nullable pointer is not null (is check)\n");
             printf("p2->v: %d\n", p2.v);
         }
     }
     {
         // Nullable Pointer
-        let ^?p2 : Data = null;
+        let ^?p3# = null;
 
         // New syntax: 'is' operator for null check. 
-        // Type is ^Data (Unique Pointer to Data).
-        // Note: p2 itself is ^?Data (Nullable).
-        if ^?p2 is ^p2 {
-            // If successful, p2 is treated as non-null inside (Sema enhancement required for full type narrowing,
-            // but Runtime check works with is).
+        if ^?p3 is ^p3 {
             printf("Nullable pointer is not null (is check)\n");
-            printf("p2->v: %d\n", p2.v);
         }
         else
         {
             printf("Nullable pointer is null (is check)\n");
         }
     }
+    return 0;
 }

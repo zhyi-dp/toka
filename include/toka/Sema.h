@@ -79,6 +79,7 @@ private:
   std::map<std::string, std::string> TypeAliasMap;
   // TypeName -> {MethodName -> ReturnType}
   std::map<std::string, std::map<std::string, std::string>> MethodMap;
+  std::map<std::string, TraitDecl *> TraitMap;
   std::string CurrentFunctionReturnType;
 
   void error(ASTNode *Node, const std::string &Msg);

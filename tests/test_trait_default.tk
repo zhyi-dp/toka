@@ -19,10 +19,11 @@ impl Test@Base {
     // foo is using default implementation
 }
 
-fn main() {
+fn main() -> i32 {
     let t = Test { val = 20 };
     let f = t.foo();
     let b = t.bar();
     printf("Foo: %d\n", f);
     printf("Bar: %d\n", b);
+    return 0;
 }

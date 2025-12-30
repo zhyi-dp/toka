@@ -65,10 +65,37 @@ void Sema::registerGlobals(Module &M) {
     }
   }
 
+  for (auto &Trait : M.Traits) {
+    if (TraitMap.count(Trait->Name)) {
+      error(Trait.get(), "redefinition of trait '" + Trait->Name + "'");
+    } else {
+      TraitMap[Trait->Name] = Trait.get();
+    }
+  }
+
   for (auto &Impl : M.Impls) {
-    // Both normal impl and trait impl methods are accessible on the type
+    std::set<std::string> implemented;
     for (auto &Method : Impl->Methods) {
       MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
+      implemented.insert(Method->Name);
+    }
+    // Handle Trait Defaults
+    if (!Impl->TraitName.empty()) {
+      if (TraitMap.count(Impl->TraitName)) {
+        TraitDecl *TD = TraitMap[Impl->TraitName];
+        for (auto &Method : TD->Methods) {
+          if (implemented.count(Method->Name))
+            continue;
+          if (Method->Body) {
+            // Trait provides a default implementation
+            MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
+          }
+        }
+      } else {
+        error(Impl.get(), "trait '" + Impl->TraitName +
+                              "' not found for implementation on '" +
+                              Impl->TypeName + "'");
+      }
     }
   }
 }

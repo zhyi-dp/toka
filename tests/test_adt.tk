@@ -6,7 +6,7 @@ option State {
     ErrCode = (i32)
 }
 
-fn main() {
+fn main() -> i32 {
     let s = State::On();
     
     match s {
@@ -30,4 +30,5 @@ fn main() {
             printf("Ignored\n");
         }
     }
+    return 0;
 }

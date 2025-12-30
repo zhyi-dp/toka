@@ -58,4 +58,5 @@ fn main() -> i32 {
     }
 
     let f# = 3.14;
+    return 0;
 }

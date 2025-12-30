@@ -27,10 +27,11 @@ impl Rect@Fly {
     }
 }
 
-fn main() {
+fn main() -> i32 {
     let r = Rect { w = 10, h = 20 };
     let s = r.area();
     printf("Shape Area: %d\n", s);
     let f = r.fly();
     printf("Fly: %d\n", f);
+    return 0;
 }
