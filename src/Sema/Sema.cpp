@@ -189,7 +189,46 @@ void Sema::checkStmt(Stmt *S) {
       error(If->Condition.get(),
             "if condition must be bool, got '" + CondType + "'");
     }
-    checkStmt(If->Then.get());
+
+    // Narrowing logic for 'is' operator
+    std::string refinedVar = "";
+    if (auto *Bin = dynamic_cast<BinaryExpr *>(If->Condition.get())) {
+      if (Bin->Op == "is") {
+        if (auto *UL = dynamic_cast<UnaryExpr *>(Bin->LHS.get())) {
+          if (auto *UR = dynamic_cast<UnaryExpr *>(Bin->RHS.get())) {
+            if (UL->Op == UR->Op && UL->HasNull && !UR->HasNull) {
+              if (auto *VL = dynamic_cast<VariableExpr *>(UL->RHS.get())) {
+                refinedVar = VL->Name;
+              }
+            }
+          }
+        } else if (auto *VL = dynamic_cast<VariableExpr *>(Bin->LHS.get())) {
+          if (auto *VR = dynamic_cast<VariableExpr *>(Bin->RHS.get())) {
+            if (VL->Name == VR->Name && VL->IsNullable && !VR->IsNullable) {
+              refinedVar = VL->Name;
+            }
+          }
+        }
+      }
+    }
+
+    if (!refinedVar.empty()) {
+      SymbolInfo *Info = nullptr;
+      if (CurrentScope->findSymbol(refinedVar, Info)) {
+        enterScope();
+        SymbolInfo Refined = *Info;
+        Refined.IsPointerNullable = false;
+        Refined.IsValueNullable = false;
+        CurrentScope->Symbols[refinedVar] = Refined;
+        checkStmt(If->Then.get());
+        exitScope();
+      } else {
+        checkStmt(If->Then.get());
+      }
+    } else {
+      checkStmt(If->Then.get());
+    }
+
     if (If->Else)
       checkStmt(If->Else.get());
   } else if (auto *Var = dynamic_cast<VariableDecl *>(S)) {
@@ -442,7 +481,7 @@ std::string Sema::checkExpr(Expr *E) {
           else if (Unary->Op == TokenType::Ampersand)
             Morph = "&";
 
-          return Morph + Info->Type;
+          return Morph + (Info->IsPointerNullable ? "?" : "") + Info->Type;
         }
       }
       return (Unary->Op == TokenType::Star
@@ -490,12 +529,14 @@ std::string Sema::checkExpr(Expr *E) {
       error(Var, "cannot access '" + Var->Name +
                      "' while it is mutably borrowed (Rule 406)");
     }
-    return Info.Type;
+    return Info.Type +
+           (Info.IsValueNullable || Info.IsPointerNullable ? "?" : "");
   } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
     return "null";
   } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) {
     if (Bin->Op == "is") {
       checkExpr(Bin->LHS.get());
+      checkExpr(Bin->RHS.get());
       return "bool";
     }
     std::string LHS = checkExpr(Bin->LHS.get());
@@ -746,13 +787,21 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return Init->StructName;
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
-    std::string ObjType = resolveType(checkExpr(Memb->Object.get()));
+    std::string ObjTypeFull = checkExpr(Memb->Object.get());
+    if (!ObjTypeFull.empty() && ObjTypeFull.back() == '?') {
+      error(Memb, "cannot access member of nullable object '" + ObjTypeFull +
+                      "' (Rule 408)");
+    }
+    std::string ObjType = resolveType(ObjTypeFull);
 
-    // Auto-dereference if it's a pointer/ref
+    // Auto-dereference if it's a pointer/ref (strips ^, &, *, ~)
     if (ObjType.size() > 1 && (ObjType[0] == '^' || ObjType[0] == '&' ||
                                ObjType[0] == '*' || ObjType[0] == '~')) {
       ObjType = ObjType.substr(1);
     }
+    // Suffix checks if it stayed? substr(1) might leave '?' if it was '^?Point'
+    if (!ObjType.empty() && ObjType[0] == '?')
+      ObjType = ObjType.substr(1);
 
     if (StructMap.count(ObjType)) {
       StructDecl *SD = StructMap[ObjType];
@@ -818,10 +867,14 @@ std::string Sema::checkExpr(Expr *E) {
 }
 
 std::string Sema::resolveType(const std::string &Type) {
-  if (TypeAliasMap.count(Type)) {
-    return resolveType(TypeAliasMap[Type]);
+  std::string base = Type;
+  if (!base.empty() && base.back() == '?')
+    base.pop_back();
+
+  if (TypeAliasMap.count(base)) {
+    return resolveType(TypeAliasMap[base]);
   }
-  return Type;
+  return base;
 }
 
 bool Sema::isTypeCompatible(const std::string &Target,
