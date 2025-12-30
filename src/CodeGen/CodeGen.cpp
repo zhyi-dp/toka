@@ -746,23 +746,10 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     return llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), bl->Value);
   }
   if (dynamic_cast<const NullExpr *>(expr)) {
-    // Return a null pointer. Since LLVM 15+ uses opaque pointers, a single
-    // "ptr" type handles all. If using older LLVM, we might need i8* null. Toka
-    // uses opaque pointers where possible? Step 272 view shows
-    // m_Builder.CreateIsNotNull. Let's assume PointerType::get(m_Context, 0) is
-    // valid.
     return llvm::ConstantPointerNull::get(llvm::PointerType::get(m_Context, 0));
-  }
-  if (auto *deref = dynamic_cast<const DereferenceExpr *>(expr)) {
-    // Toka Morphology: *expr returns the handle/pointer identity (the
-    // address)
-    return genAddr(deref->Expression.get());
   }
   if (auto *str = dynamic_cast<const StringExpr *>(expr)) {
     return m_Builder.CreateGlobalStringPtr(str->Value);
-  }
-  if (auto *addrOf = dynamic_cast<const AddressOfExpr *>(expr)) {
-    return genAddr(addrOf->Expression.get());
   }
   if (auto *unary = dynamic_cast<const UnaryExpr *>(expr)) {
     if (unary->Op == TokenType::PlusPlus ||
@@ -791,20 +778,18 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       m_Builder.CreateStore(newVal, addr);
       return newVal;
     }
-    llvm::Value *rhs = genExpr(unary->RHS.get());
-    if (!rhs)
-      return nullptr;
-    if (unary->Op == TokenType::Bang) {
-      return m_Builder.CreateNot(rhs, "nottmp");
-    } else if (unary->Op == TokenType::Minus) {
-      if (rhs->getType()->isFloatingPointTy())
-        return m_Builder.CreateFNeg(rhs, "negtmp");
-      return m_Builder.CreateNeg(rhs, "negtmp");
-    } else if (unary->Op == TokenType::Caret || unary->Op == TokenType::Tilde ||
-               unary->Op == TokenType::Star) {
+
+    // Morphology symbols: *p, ^p, ~p, &p
+    if (unary->Op == TokenType::Star || unary->Op == TokenType::Caret ||
+        unary->Op == TokenType::Tilde || unary->Op == TokenType::Ampersand) {
       if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
         llvm::Value *alloca = m_NamedValues[v->Name];
         if (alloca) {
+          // If asking for address-of (&), return the alloca itself
+          if (unary->Op == TokenType::Ampersand) {
+            return alloca;
+          }
+
           llvm::Value *handle = m_Builder.CreateLoad(
               m_ValueTypes[v->Name], alloca, v->Name + "_handle");
           // If the variable is Shared/Unique and we ask for Star (*), extract
@@ -817,7 +802,22 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
           return handle;
         }
       }
-      return rhs;
+      // Fallback: genAddr if it's & or *
+      if (unary->Op == TokenType::Ampersand || unary->Op == TokenType::Star)
+        return genAddr(unary->RHS.get());
+
+      return genExpr(unary->RHS.get());
+    }
+
+    llvm::Value *rhs = genExpr(unary->RHS.get());
+    if (!rhs)
+      return nullptr;
+    if (unary->Op == TokenType::Bang) {
+      return m_Builder.CreateNot(rhs, "nottmp");
+    } else if (unary->Op == TokenType::Minus) {
+      if (rhs->getType()->isFloatingPointTy())
+        return m_Builder.CreateFNeg(rhs, "negtmp");
+      return m_Builder.CreateNeg(rhs, "negtmp");
     }
     return nullptr;
   }
@@ -1621,12 +1621,14 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
       return alloca;
     }
   }
-  if (auto *deref = dynamic_cast<const DereferenceExpr *>(expr)) {
-    // Toka Morphology: *ptr is the pointer storage
-    if (auto *v = dynamic_cast<const VariableExpr *>(deref->Expression.get())) {
-      return m_NamedValues[v->Name];
+  if (auto *unary = dynamic_cast<const UnaryExpr *>(expr)) {
+    if (unary->Op == TokenType::Star) {
+      // Toka Morphology: *ptr is the pointer storage identity
+      if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+        return m_NamedValues[v->Name];
+      }
     }
-    return genAddr(deref->Expression.get());
+    return genAddr(unary->RHS.get());
   }
   if (auto *idxExpr = dynamic_cast<const ArrayIndexExpr *>(expr)) {
     llvm::Value *arrAddr = genAddr(idxExpr->Array.get());

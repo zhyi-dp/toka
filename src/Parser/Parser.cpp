@@ -519,23 +519,10 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
 
 std::unique_ptr<Expr> Parser::parsePrimary() {
   std::unique_ptr<Expr> expr = nullptr;
-  if (match(TokenType::Ampersand)) {
-    Token tok = previous();
-    auto sub = parsePrimary();
-    auto node = std::make_unique<AddressOfExpr>(std::move(sub));
-    node->setLocation(tok, m_CurrentFile);
-    return node;
-  }
-  if (match(TokenType::Star)) {
-    Token tok = previous();
-    auto sub = parsePrimary();
-    auto node = std::make_unique<DereferenceExpr>(std::move(sub));
-    node->setLocation(tok, m_CurrentFile);
-    return node;
-  }
   if (match(TokenType::Bang) || match(TokenType::Minus) ||
       match(TokenType::PlusPlus) || match(TokenType::MinusMinus) ||
-      match(TokenType::Caret) || match(TokenType::Tilde)) {
+      match(TokenType::Caret) || match(TokenType::Tilde) ||
+      match(TokenType::Star) || match(TokenType::Ampersand)) {
     Token tok = previous();
     TokenType op = tok.Kind;
     auto sub = parsePrimary();
@@ -543,8 +530,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     node->HasNull = tok.HasNull;
     node->IsRebindable = tok.IsSwappablePtr;
     node->IsValueMutable = tok.HasWrite;
-    node->IsValueNullable =
-        tok.HasNull; // Assuming identifier flags also mapped here if needed
+    node->IsValueNullable = tok.HasNull;
     node->setLocation(tok, m_CurrentFile);
     return node;
   }

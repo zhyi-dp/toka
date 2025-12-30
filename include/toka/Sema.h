@@ -9,12 +9,22 @@
 namespace toka {
 
 struct SymbolInfo {
-  std::string Type;
-  bool IsMutable = false;
-  bool IsNullable = false;
-  bool IsReference = false;
-  bool IsUnique = false; // Track if it's a Unique pointer
-  bool Moved = false;    // Track if it has been moved
+  std::string Type;       // Soul Type (e.g., "Point")
+  std::string Morphology; // "", "^", "~", "*", "&"
+
+  // Dual-Location Attributes
+  bool IsRebindable = false;      // # on ^, ~, *
+  bool IsValueMutable = false;    // # on identifier
+  bool IsPointerNullable = false; // ? on ^, ~, *
+  bool IsValueNullable = false;   // ? on identifier
+
+  bool Moved = false;
+
+  // Legacy/Helpers
+  bool IsMutable() const { return IsValueMutable; }
+  bool IsReference() const { return Morphology == "&"; }
+  bool IsUnique() const { return Morphology == "^"; }
+  bool IsShared() const { return Morphology == "~"; }
 };
 
 class Scope {

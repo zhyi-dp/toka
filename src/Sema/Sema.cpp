@@ -81,9 +81,17 @@ void Sema::checkFunction(FunctionDecl *Fn) {
   for (auto &Arg : Fn->Args) {
     SymbolInfo Info;
     Info.Type = Arg.Type;
-    Info.IsMutable = Arg.IsMutable;
-    Info.IsNullable = Arg.IsNullable;
-    Info.IsReference = Arg.IsReference;
+    Info.IsValueMutable = Arg.IsMutable;
+    Info.IsValueNullable = Arg.IsNullable;
+    if (Arg.IsReference)
+      Info.Morphology = "&";
+    else if (Arg.IsUnique)
+      Info.Morphology = "^";
+    else if (Arg.IsShared)
+      Info.Morphology = "~";
+    else if (Arg.HasPointer)
+      Info.Morphology = "*";
+
     CurrentScope->define(Arg.Name, Info);
   }
 
@@ -152,38 +160,50 @@ void Sema::checkStmt(Stmt *S) {
 
     SymbolInfo Info;
     Info.Type = Var->TypeName;
-    Info.IsMutable = Var->IsMutable;
-    Info.IsReference = Var->IsReference;
-    Info.IsUnique = Var->IsUnique;
+    Info.IsValueMutable = Var->IsValueMutable;
+    Info.IsValueNullable = Var->IsValueNullable;
+    Info.IsRebindable = Var->IsRebindable;
+    Info.IsPointerNullable = Var->IsPointerNullable;
 
-    // Auto-detect Unique if type is inferred as ^T and not explicitly marked?
-    // In Toka: let ^p = ... (IsUnique true).
-    // let p = ... (if RHS is ^T, p infers ^T but is it Unique handle?)
-    // If I assign unique ptr to non-unique var, it's a move.
-    // Let's rely on Var->IsUnique from parser OR explicit type string starts
-    // with '^'.
-    if (!Info.IsUnique && Info.Type.size() > 0 && Info.Type[0] == '^') {
-      Info.IsUnique = true;
+    if (Var->HasPointer)
+      Info.Morphology = "*";
+    else if (Var->IsUnique)
+      Info.Morphology = "^";
+    else if (Var->IsShared)
+      Info.Morphology = "~";
+    else if (Var->IsReference)
+      Info.Morphology = "&";
+    else
+      Info.Morphology = "";
+
+    // Legacy fallback: If IsMutable is set but IsValueMutable isn't
+    if (Var->IsMutable && !Info.IsValueMutable)
+      Info.IsValueMutable = true;
+
+    // Type cleanup: If type is "^T", we often store "T" in Info.Type and "^" in
+    // Morphology
+    if (Info.Type.size() > 1 && (Info.Type[0] == '^' || Info.Type[0] == '~' ||
+                                 Info.Type[0] == '*' || Info.Type[0] == '&')) {
+      if (Info.Morphology.empty()) {
+        Info.Morphology = std::string(1, Info.Type[0]);
+      }
+      Info.Type = Info.Type.substr(1);
     }
 
     CurrentScope->define(Var->Name, Info);
 
     // Move Logic: If initializing from a Unique Variable, move it.
-    if (Var->Init && Info.IsUnique) {
+    if (Var->Init && Info.IsUnique()) {
       Expr *InitExpr = Var->Init.get();
-      // Unwrap unary ^ (Move semantics syntax)
+      // Unwrap unary ^ or ~ or * if it matches
       if (auto *Unary = dynamic_cast<UnaryExpr *>(InitExpr)) {
-        if (Unary->Op == TokenType::Caret) {
-          InitExpr = Unary->RHS.get();
-        }
+        InitExpr = Unary->RHS.get();
       }
 
       if (auto *RHSVar = dynamic_cast<VariableExpr *>(InitExpr)) {
-        // Check if source is Unique
         SymbolInfo SourceInfo;
         if (CurrentScope->lookup(RHSVar->Name, SourceInfo)) {
-          if (SourceInfo.IsUnique) {
-            // It's a move!
+          if (SourceInfo.IsUnique()) {
             CurrentScope->markMoved(RHSVar->Name);
           }
         }
@@ -219,33 +239,27 @@ void Sema::checkStmt(Stmt *S) {
       for (size_t i = 0; i < Limit; ++i) {
         SymbolInfo Info;
         Info.Type = SD->Fields[i].Type;
-        Info.IsMutable = Destruct->Variables[i].IsMutable;
-        Info.IsReference = false; // Destructuring variables are values, not
-                                  // references themselves
+        Info.IsValueMutable = Destruct->Variables[i].IsMutable;
+        Info.IsValueNullable = Destruct->Variables[i].IsNullable;
+        Info.Morphology = "";
         CurrentScope->define(Destruct->Variables[i].Name, Info);
       }
     } else if (TypeAliasMap.count(DeclType)) {
-      // If alias to Tuple (i32, i32)
-      // parsing string "(i32, i32)" is hard here.
-      // For now, just define them as "unknown" or "i32" as a fallback.
       for (const auto &Var : Destruct->Variables) {
         SymbolInfo Info;
         Info.Type = "i32"; // Fallback
-        Info.IsMutable = Var.IsMutable;
-        Info.IsNullable = Var.IsNullable;
-        Info.IsReference = false; // Destructuring variables are values, not
-                                  // references themselves
+        Info.IsValueMutable = Var.IsMutable;
+        Info.IsValueNullable = Var.IsNullable;
+        Info.Morphology = "";
         CurrentScope->define(Var.Name, Info);
       }
     } else {
-      // Fallback for unknown types or non-struct/alias destructuring
       for (const auto &Var : Destruct->Variables) {
         SymbolInfo Info;
         Info.Type = "unknown"; // Fallback
-        Info.IsMutable = Var.IsMutable;
-        Info.IsNullable = Var.IsNullable;
-        Info.IsReference = false; // Destructuring variables are values, not
-                                  // references themselves
+        Info.IsValueMutable = Var.IsMutable;
+        Info.IsValueNullable = Var.IsNullable;
+        Info.Morphology = "";
         CurrentScope->define(Var.Name, Info);
       }
     }
@@ -299,40 +313,53 @@ std::string Sema::checkExpr(Expr *E) {
       }
       return "bool";
     } else if (Unary->Op == TokenType::Minus) { // -
-      // Numeric types
       if (rhsInfo != "i32" && rhsInfo != "i64" && rhsInfo != "f32" &&
           rhsInfo != "f64") {
         error(Unary, "operand of '-' must be numeric, got '" + rhsInfo + "'");
       }
       return rhsInfo;
-    } else if (Unary->Op ==
-               TokenType::Tilde) { // ~ (bitwise not? or Shared handle?)
-      // If expression context, likely bitwise not if numeric.
-      // But Toka syntax uses ~ for Shared ptr.
-      // Lexer: Tilde.
-      // If numeric -> bitwise not.
-      if (rhsInfo == "i32" || rhsInfo == "i64")
-        return rhsInfo;
-      // If pointer?
-      // Let's assume bitwise for now.
-      error(Unary, "invalid operand for '~': '" + rhsInfo + "'");
-      return "unknown";
+    } else if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
+               Unary->Op == TokenType::Tilde ||
+               Unary->Op == TokenType::Ampersand) {
+      // Morphology Symbols: *p, ^p, ~p, &p
+      // In Toka morphology, if p is a variable, these symbols access the
+      // Identity.
+      if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
+        SymbolInfo Info;
+        if (CurrentScope->lookup(Var->Name, Info)) {
+          std::string Morph = "";
+          if (Unary->Op == TokenType::Star)
+            Morph = "*";
+          else if (Unary->Op == TokenType::Caret)
+            Morph = "^";
+          else if (Unary->Op == TokenType::Tilde)
+            Morph = "~";
+          else if (Unary->Op == TokenType::Ampersand)
+            Morph = "&";
+
+          return Morph + Info.Type;
+        }
+      }
+      // If it's not a variable, it might be a dereference or handle creation.
+      return (Unary->Op == TokenType::Star
+                  ? "*"
+                  : (Unary->Op == TokenType::Caret
+                         ? "^"
+                         : (Unary->Op == TokenType::Tilde ? "~" : "&"))) +
+             rhsInfo;
     }
     // Handle ++ -- (Prefix)
     if (Unary->Op == TokenType::PlusPlus ||
         Unary->Op == TokenType::MinusMinus) {
-      if (rhsInfo != "i32" && rhsInfo != "i64") { // Only ints for now?
+      if (rhsInfo != "i32" && rhsInfo != "i64") {
         error(Unary, "operand of increment/decrement must be integer, got '" +
                          rhsInfo + "'");
       }
-      // Check mutability?
-      // Is RHS an LValue?
-      // We should check if RHS is mutable variable.
-      // Simplified check:
       if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
         SymbolInfo Info;
-        if (CurrentScope->lookup(Var->Name, Info) && !Info.IsMutable) {
-          error(Unary, "cannot modify immutable variable '" + Var->Name + "'");
+        if (CurrentScope->lookup(Var->Name, Info) && !Info.IsValueMutable) {
+          error(Unary, "cannot modify immutable variable '" + Var->Name +
+                           "' (# suffix required)");
         }
       }
       return rhsInfo;
@@ -378,7 +405,7 @@ std::string Sema::checkExpr(Expr *E) {
 
       if (auto *RHSVar = dynamic_cast<VariableExpr *>(RHSExpr)) {
         SymbolInfo RHSInfo;
-        if (CurrentScope->lookup(RHSVar->Name, RHSInfo) && RHSInfo.IsUnique) {
+        if (CurrentScope->lookup(RHSVar->Name, RHSInfo) && RHSInfo.IsUnique()) {
           // Only move if it wasn't already moved (checkExpr handles "Use of
           // moved value" error, but we must mark it now). Note: checkExpr(RHS)
           // already passed, so it wasn't moved before this statement.
@@ -395,7 +422,7 @@ std::string Sema::checkExpr(Expr *E) {
       if (auto *VarLHS = dynamic_cast<VariableExpr *>(Bin->LHS.get())) {
         SymbolInfo Info;
         if (CurrentScope->lookup(VarLHS->Name, Info)) {
-          if (Info.IsReference) {
+          if (Info.IsReference()) {
             // It's a reference variable.
             // We expect RHS to match the Pointee type.
             // Type is likely "^i32". Pointee is "i32".
@@ -420,36 +447,31 @@ std::string Sema::checkExpr(Expr *E) {
 
       // Strict Mutability Check
       Expr *LHSExpr = Bin->LHS.get();
-      bool isMutable = false;
-
       if (auto *Var = dynamic_cast<VariableExpr *>(LHSExpr)) {
         SymbolInfo Info;
         if (CurrentScope->lookup(Var->Name, Info)) {
-          isMutable = Info.IsMutable;
-          if (!isMutable) {
-            error(Var, "cannot assign to immutable variable '" + Var->Name +
-                           "' (missing '#' suffix?)");
+          if (!Info.IsValueMutable && !Info.IsRebindable) {
+            // For a simple assignment p = q, it requires IsRebindable if p is a
+            // pointer, or IsValueMutable if p is a value.
+            error(Var,
+                  "cannot assign to '" + Var->Name + "' without # permission");
           }
         }
       } else if (auto *Memb = dynamic_cast<MemberExpr *>(LHSExpr)) {
-        // Recursive check for struct members: base object must be mutable
-        // e.g. x.y = 1 requires x to be mutable
         Expr *Base = Memb->Object.get();
-        // Traverse down MemberExpr chain
         while (auto *SubMemb = dynamic_cast<MemberExpr *>(Base)) {
           Base = SubMemb->Object.get();
         }
         if (auto *Var = dynamic_cast<VariableExpr *>(Base)) {
           SymbolInfo Info;
           if (CurrentScope->lookup(Var->Name, Info)) {
-            if (!Info.IsMutable) {
+            if (!Info.IsValueMutable) {
               error(Memb, "cannot assign to field of immutable variable '" +
-                              Var->Name + "'");
+                              Var->Name + "' (# required)");
             }
           }
         }
       }
-
       return LHS;
     }
 
@@ -509,7 +531,8 @@ std::string Sema::checkExpr(Expr *E) {
           // IsReference is true.
 
           if (Fn->Args[i].IsReference) {
-            if (ArgType == "^" + Fn->Args[i].Type) {
+            if (ArgType == "&" + Fn->Args[i].Type ||
+                ArgType == "^" + Fn->Args[i].Type) {
               // Compatible!
               continue;
             }
@@ -608,6 +631,12 @@ std::string Sema::checkExpr(Expr *E) {
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
     std::string ObjType = resolveType(checkExpr(Memb->Object.get()));
 
+    // Auto-dereference if it's a pointer/ref
+    if (ObjType.size() > 1 && (ObjType[0] == '^' || ObjType[0] == '&' ||
+                               ObjType[0] == '*' || ObjType[0] == '~')) {
+      ObjType = ObjType.substr(1);
+    }
+
     if (StructMap.count(ObjType)) {
       StructDecl *SD = StructMap[ObjType];
       for (const auto &Field : SD->Fields) {
@@ -631,9 +660,15 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return "unknown";
   } else if (auto *Post = dynamic_cast<PostfixExpr *>(E)) {
-    return checkExpr(Post->LHS.get());
-  } else if (auto *Unary = dynamic_cast<UnaryExpr *>(E)) {
-    return checkExpr(Unary->RHS.get());
+    std::string lhsInfo = checkExpr(Post->LHS.get());
+    if (auto *Var = dynamic_cast<VariableExpr *>(Post->LHS.get())) {
+      SymbolInfo Info;
+      if (CurrentScope->lookup(Var->Name, Info) && !Info.IsValueMutable) {
+        error(Post, "cannot modify immutable variable '" + Var->Name +
+                        "' (# suffix required)");
+      }
+    }
+    return lhsInfo;
   } else if (auto *Arr = dynamic_cast<ArrayIndexExpr *>(E)) {
     // Array type usually [Type; Size] or just Type (if treated as slice/ptr).
     // currently explicit array types are not well defined in my AST string
@@ -681,19 +716,20 @@ bool Sema::isTypeCompatible(const std::string &Target,
     return true;
   if (T == "unknown" || S == "unknown")
     return true;
+
+  // String literal conversion
+  if (S == "str" && (T == "*i8" || T == "^i8" || T == "str"))
+    return true;
+
   if (S == "null") {
     // Allow assigning null to pointers (start with ^ or *)
-    if (T.size() > 0 && (T[0] == '^' || T[0] == '*'))
-      return true;
-    // Also allow assigning null to Structs (Variable might be pointer)
-    if (StructMap.count(T))
+    if (T.size() > 0 && (T[0] == '^' || T[0] == '*' || T[0] == '~'))
       return true;
   }
 
-  // Allow Reference to non-Reference compatibility if strict mode allows?
-  // Toka Spec: Strict compatibility. No implicit conversions.
-  // But maybe integer literal fallback? We haven't implemented literal types
-  // yet.
+  // Basic Tuple/Struct weak check: if both look like tuples, allow for now
+  if (T.size() > 0 && T[0] == '(' && S.size() > 0 && S[0] == '(')
+    return true;
 
   return false;
 }

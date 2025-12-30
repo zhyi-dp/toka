@@ -350,6 +350,9 @@ fn main() {
 }
 ```
 
+### 7.4 Implementation Notes: Unified Morphology
+In the implementation of `Parser` and `Sema`, symbols like `*`, `^`, `~`, `&` are all unified as `UnaryExpr` nodes. This allows for a consistent handling of Toka's morphology system. `Sema` distinguishes between them using the operator kind and the `SymbolInfo` structure, ensuring that `*p` (Identity) and `&p` (Reference) are correctly resolved.
+
 ## 8. Build and Usage
 
 ### 8.1 Building the Compiler
