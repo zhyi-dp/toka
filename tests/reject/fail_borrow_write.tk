@@ -1,0 +1,9 @@
+import "core/io";
+
+fn main() -> i32 {
+    let x# = 10;
+    let &y = &x;
+    x# = 20; // Error: x is borrowed by y (immutable borrow still blocks owner write)
+    printf("y is %d\n", y);
+    return 0;
+}

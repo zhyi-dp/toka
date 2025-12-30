@@ -1,0 +1,8 @@
+import "core/io";
+
+fn main() -> i32 {
+    let x# = 10;
+    let &y# = &x#;
+    printf("x is %d\n", x); // Error: x is mutably borrowed by y
+    return 0;
+}

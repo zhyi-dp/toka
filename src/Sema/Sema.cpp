@@ -26,8 +26,34 @@ void Sema::enterScope() { CurrentScope = new Scope(CurrentScope); }
 
 void Sema::exitScope() {
   Scope *Old = CurrentScope;
+  // Cleanup borrows
+  for (auto const &[refName, borrowInfo] : Old->ActiveBorrows) {
+    std::string sourceName = borrowInfo.first;
+    bool isMutable = borrowInfo.second;
+    SymbolInfo *sourcePtr = nullptr;
+    if (CurrentScope->Parent &&
+        CurrentScope->Parent->findSymbol(sourceName, sourcePtr)) {
+      if (isMutable)
+        sourcePtr->IsMutablyBorrowed = false;
+      else
+        sourcePtr->ImmutableBorrowCount--;
+    }
+  }
   CurrentScope = CurrentScope->Parent;
   delete Old;
+}
+void Sema::clearStmtBorrows() {
+  for (auto const &borrow : m_CurrentStmtBorrows) {
+    SymbolInfo *info = nullptr;
+    if (CurrentScope->findSymbol(borrow.first, info)) {
+      if (borrow.second)
+        info->IsMutablyBorrowed = false;
+      else
+        info->ImmutableBorrowCount--;
+    }
+  }
+  m_CurrentStmtBorrows.clear();
+  m_LastBorrowSource = "";
 }
 
 void Sema::registerGlobals(Module &M) {
@@ -147,6 +173,7 @@ void Sema::checkStmt(Stmt *S) {
     if (Ret->ReturnValue) {
       ExprType = checkExpr(Ret->ReturnValue.get());
     }
+    clearStmtBorrows();
 
     if (!isTypeCompatible(CurrentFunctionReturnType, ExprType)) {
       error(Ret, "return type mismatch: expected '" +
@@ -154,8 +181,10 @@ void Sema::checkStmt(Stmt *S) {
     }
   } else if (auto *ExprS = dynamic_cast<ExprStmt *>(S)) {
     checkExpr(ExprS->Expression.get());
+    clearStmtBorrows();
   } else if (auto *If = dynamic_cast<IfStmt *>(S)) {
     std::string CondType = checkExpr(If->Condition.get());
+    clearStmtBorrows();
     if (CondType != "bool") {
       error(If->Condition.get(),
             "if condition must be bool, got '" + CondType + "'");
@@ -187,8 +216,8 @@ void Sema::checkStmt(Stmt *S) {
 
     SymbolInfo Info;
     Info.Type = Var->TypeName;
-    Info.IsValueMutable = Var->IsValueMutable;
-    Info.IsValueNullable = Var->IsValueNullable;
+    Info.IsValueMutable = Var->IsValueMutable || Var->IsMutable;
+    Info.IsValueNullable = Var->IsValueNullable || Var->IsNullable;
     Info.IsRebindable = Var->IsRebindable;
     Info.IsPointerNullable = Var->IsPointerNullable;
 
@@ -206,6 +235,8 @@ void Sema::checkStmt(Stmt *S) {
     // Legacy fallback: If IsMutable is set but IsValueMutable isn't
     if (Var->IsMutable && !Info.IsValueMutable)
       Info.IsValueMutable = true;
+    if (Var->IsNullable && !Info.IsValueNullable)
+      Info.IsValueNullable = true;
 
     // Type cleanup: If type is "^T", we often store "T" in Info.Type and "^" in
     // Morphology
@@ -216,6 +247,20 @@ void Sema::checkStmt(Stmt *S) {
       }
       Info.Type = Info.Type.substr(1);
     }
+
+    // Borrow tracking link
+    if (Info.Morphology == "&" && !m_LastBorrowSource.empty()) {
+      Info.BorrowedFrom = m_LastBorrowSource;
+      // Remove from temporary borrows since it's now persistent
+      for (auto it = m_CurrentStmtBorrows.begin();
+           it != m_CurrentStmtBorrows.end(); ++it) {
+        if (it->first == m_LastBorrowSource) {
+          m_CurrentStmtBorrows.erase(it);
+          break;
+        }
+      }
+    }
+    m_LastBorrowSource = ""; // Clear for next var
 
     CurrentScope->define(Var->Name, Info);
 
@@ -228,16 +273,23 @@ void Sema::checkStmt(Stmt *S) {
       }
 
       if (auto *RHSVar = dynamic_cast<VariableExpr *>(InitExpr)) {
-        SymbolInfo SourceInfo;
-        if (CurrentScope->lookup(RHSVar->Name, SourceInfo)) {
-          if (SourceInfo.IsUnique()) {
+        SymbolInfo *SourceInfoPtr = nullptr;
+        if (CurrentScope->findSymbol(RHSVar->Name, SourceInfoPtr)) {
+          if (SourceInfoPtr->IsUnique()) {
+            if (SourceInfoPtr->IsMutablyBorrowed ||
+                SourceInfoPtr->ImmutableBorrowCount > 0) {
+              error(Var,
+                    "cannot move '" + RHSVar->Name + "' while it is borrowed");
+            }
             CurrentScope->markMoved(RHSVar->Name);
           }
         }
       }
     }
+    clearStmtBorrows();
   } else if (auto *While = dynamic_cast<WhileStmt *>(S)) {
     std::string CondType = checkExpr(While->Condition.get());
+    clearStmtBorrows();
     if (CondType != "bool") {
       error(While->Condition.get(),
             "while condition must be bool, got '" + CondType + "'");
@@ -348,12 +400,38 @@ std::string Sema::checkExpr(Expr *E) {
     } else if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
                Unary->Op == TokenType::Tilde ||
                Unary->Op == TokenType::Ampersand) {
-      // Morphology Symbols: *p, ^p, ~p, &p
-      // In Toka morphology, if p is a variable, these symbols access the
-      // Identity.
       if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
-        SymbolInfo Info;
-        if (CurrentScope->lookup(Var->Name, Info)) {
+        SymbolInfo *Info = nullptr;
+        if (CurrentScope->findSymbol(Var->Name, Info)) {
+          if (Unary->Op == TokenType::Ampersand) {
+            // Borrowing logic
+            bool wantMutable = Var->IsMutable;
+            if (wantMutable) {
+              if (!Info->IsValueMutable) {
+                error(Unary, "cannot mutably borrow immutable variable '" +
+                                 Var->Name + "' (# required)");
+              }
+              if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+                error(Unary, "cannot mutably borrow '" + Var->Name +
+                                 "' because it is already borrowed");
+              }
+              Info->IsMutablyBorrowed = true;
+            } else {
+              if (Info->IsMutablyBorrowed) {
+                error(Unary, "cannot borrow '" + Var->Name +
+                                 "' because it is mutably borrowed");
+              }
+              Info->ImmutableBorrowCount++;
+            }
+            m_LastBorrowSource = Var->Name;
+            m_CurrentStmtBorrows.push_back({Var->Name, wantMutable});
+          } else if (Unary->Op == TokenType::Caret) {
+            // Move check
+            if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+              error(Unary,
+                    "cannot move '" + Var->Name + "' while it is borrowed");
+            }
+          }
           std::string Morph = "";
           if (Unary->Op == TokenType::Star)
             Morph = "*";
@@ -364,10 +442,9 @@ std::string Sema::checkExpr(Expr *E) {
           else if (Unary->Op == TokenType::Ampersand)
             Morph = "&";
 
-          return Morph + Info.Type;
+          return Morph + Info->Type;
         }
       }
-      // If it's not a variable, it might be a dereference or handle creation.
       return (Unary->Op == TokenType::Star
                   ? "*"
                   : (Unary->Op == TokenType::Caret
@@ -383,21 +460,22 @@ std::string Sema::checkExpr(Expr *E) {
                          rhsInfo + "'");
       }
       if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
-        SymbolInfo Info;
-        if (CurrentScope->lookup(Var->Name, Info) && !Info.IsValueMutable) {
-          error(Unary, "cannot modify immutable variable '" + Var->Name +
-                           "' (# suffix required)");
+        SymbolInfo *Info = nullptr;
+        if (CurrentScope->findSymbol(Var->Name, Info)) {
+          if (!Info->IsValueMutable) {
+            error(Unary, "cannot modify immutable variable '" + Var->Name +
+                             "' (# suffix required)");
+          }
+          if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+            error(Unary,
+                  "cannot modify '" + Var->Name + "' while it is borrowed");
+          }
         }
       }
       return rhsInfo;
     }
     return rhsInfo;
   } else if (auto *Str = dynamic_cast<StringExpr *>(E)) {
-    // AST says 'char' for 'extern fn printf(^s: char ...)', suggesting char
-    // pointer. Let's call it "str" for now to match 'let s = "Hello"' but
-    // 'char' in declaration. Actually in `io.tk`, it says `^s: char`. which is
-    // pointer to char. String literas are usually `^char` or `str`. Let's stick
-    // to "str" and allow conversion or alias.
     return "str";
   } else if (auto *Var = dynamic_cast<VariableExpr *>(E)) {
     SymbolInfo Info;
@@ -408,14 +486,16 @@ std::string Sema::checkExpr(Expr *E) {
     if (Info.Moved) {
       error(Var, "use of moved value: '" + Var->Name + "'");
     }
+    if (Info.IsMutablyBorrowed) {
+      error(Var, "cannot access '" + Var->Name +
+                     "' while it is mutably borrowed (Rule 406)");
+    }
     return Info.Type;
   } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
     return "null";
   } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) {
     if (Bin->Op == "is") {
       checkExpr(Bin->LHS.get());
-      // We skip checkExpr(RHS) because RHS is a Type (e.g. ^Type) which would
-      // fail regular expr lookup
       return "bool";
     }
     std::string LHS = checkExpr(Bin->LHS.get());
@@ -431,11 +511,14 @@ std::string Sema::checkExpr(Expr *E) {
       }
 
       if (auto *RHSVar = dynamic_cast<VariableExpr *>(RHSExpr)) {
-        SymbolInfo RHSInfo;
-        if (CurrentScope->lookup(RHSVar->Name, RHSInfo) && RHSInfo.IsUnique()) {
-          // Only move if it wasn't already moved (checkExpr handles "Use of
-          // moved value" error, but we must mark it now). Note: checkExpr(RHS)
-          // already passed, so it wasn't moved before this statement.
+        SymbolInfo *RHSInfoPtr = nullptr;
+        if (CurrentScope->findSymbol(RHSVar->Name, RHSInfoPtr) &&
+            RHSInfoPtr->IsUnique()) {
+          if (RHSInfoPtr->IsMutablyBorrowed ||
+              RHSInfoPtr->ImmutableBorrowCount > 0) {
+            error(Bin,
+                  "cannot move '" + RHSVar->Name + "' while it is borrowed");
+          }
           CurrentScope->markMoved(RHSVar->Name);
         }
       }
@@ -459,7 +542,8 @@ std::string Sema::checkExpr(Expr *E) {
                 error(Bin, "assignment type mismatch (ref): cannot assign '" +
                                RHS + "' to '" + Pointee + "'");
               }
-              return Pointee; // Assignment result type? usually void or value.
+              return Pointee; // Assignment result type? usually void or
+                              // value.
             }
             IsRefAssign = true;
           }
@@ -475,13 +559,19 @@ std::string Sema::checkExpr(Expr *E) {
       // Strict Mutability Check
       Expr *LHSExpr = Bin->LHS.get();
       if (auto *Var = dynamic_cast<VariableExpr *>(LHSExpr)) {
-        SymbolInfo Info;
-        if (CurrentScope->lookup(Var->Name, Info)) {
-          if (!Info.IsValueMutable && !Info.IsRebindable) {
-            // For a simple assignment p = q, it requires IsRebindable if p is a
-            // pointer, or IsValueMutable if p is a value.
+        SymbolInfo *InfoPtr = nullptr;
+        if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {
+          if (InfoPtr->IsMutablyBorrowed || InfoPtr->ImmutableBorrowCount > 0) {
+            error(Bin,
+                  "cannot modify '" + Var->Name + "' while it is borrowed");
+          }
+          if (!InfoPtr->IsValueMutable && !InfoPtr->IsRebindable) {
             error(Var,
                   "cannot assign to '" + Var->Name + "' without # permission");
+          }
+          if (!Var->IsMutable) {
+            error(Var, "cannot modify variable '" + Var->Name +
+                           "' without # suffix");
           }
         }
       } else if (auto *Memb = dynamic_cast<MemberExpr *>(LHSExpr)) {
@@ -551,11 +641,10 @@ std::string Sema::checkExpr(Expr *E) {
         if (i < Fn->Args.size()) {
           // Check Reference compatibility:
           // If Param is Reference (IsReference=true in AST), it expects
-          // pointer/address? AST `FunctionDecl::Arg` has `IsReference`. Parser:
-          // `fn foo(&p: Point)`. `&` sets IsReference. Type is "Point".
-          // `checkExpr(&val)` returns "^Point".
-          // So we need to accept "^Point" if Expected is "Point" AND
-          // IsReference is true.
+          // pointer/address? AST `FunctionDecl::Arg` has `IsReference`.
+          // Parser: `fn foo(&p: Point)`. `&` sets IsReference. Type is
+          // "Point". `checkExpr(&val)` returns "^Point". So we need to accept
+          // "^Point" if Expected is "Point" AND IsReference is true.
 
           if (Fn->Args[i].IsReference) {
             if (ArgType == "&" + Fn->Args[i].Type ||
@@ -563,8 +652,8 @@ std::string Sema::checkExpr(Expr *E) {
               // Compatible!
               continue;
             }
-            // Also if ArgType == Type? (implicit address take? No Toka usually
-            // explicit)
+            // Also if ArgType == Type? (implicit address take? No Toka
+            // usually explicit)
           }
 
           if (!isTypeCompatible(Fn->Args[i].Type, ArgType)) {
@@ -615,7 +704,8 @@ std::string Sema::checkExpr(Expr *E) {
     return "unknown";
   } else if (auto *New = dynamic_cast<NewExpr *>(E)) {
     // Return the Type being created.
-    // Validating the Initializer matches the Type is good (e.g. InitStructExpr)
+    // Validating the Initializer matches the Type is good (e.g.
+    // InitStructExpr)
     if (New->Initializer) {
       std::string InitType = checkExpr(New->Initializer.get());
       if (!isTypeCompatible(New->Type, InitType) && InitType != "unknown") {
@@ -626,8 +716,8 @@ std::string Sema::checkExpr(Expr *E) {
                        "', got '" + InitType + "'");
       }
     }
-    // 'new' usually returns a pointer or the type itself depending on context.
-    // AST just says Type. The variable decl usually says ^Type.
+    // 'new' usually returns a pointer or the type itself depending on
+    // context. AST just says Type. The variable decl usually says ^Type.
     return New->Type;
   } else if (auto *Met = dynamic_cast<MethodCallExpr *>(E)) {
     std::string ObjType = resolveType(checkExpr(Met->Object.get()));
@@ -675,12 +765,12 @@ std::string Sema::checkExpr(Expr *E) {
                       Memb->Member + "'");
     } else if (ObjType == "tuple" || ObjType.find("(") == 0) {
       // Tuple access: .0, .1
-      // If we knew the tuple type string, e.g. "(i32, str)", we could parse it.
-      // For now, accept integer members on anything resembling a tuple.
+      // If we knew the tuple type string, e.g. "(i32, str)", we could parse
+      // it. For now, accept integer members on anything resembling a tuple.
       // And return "unknown" or "i32" fallback?
       // test.tk uses .0 which is i32, .1 which is string/i32.
-      // Let's return "unknown" to suppress error but allow it to pass checks if
-      // we are lenient.
+      // Let's return "unknown" to suppress error but allow it to pass checks
+      // if we are lenient.
       return "unknown";
     } else if (ObjType != "unknown") {
       error(Memb, "member access on non-struct type '" + ObjType + "'");

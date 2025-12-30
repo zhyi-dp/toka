@@ -1,0 +1,7 @@
+struct Point { x: i32 }
+fn main() -> i32 {
+    let p# = Point { x = 10 };
+    let &y# = &p#;
+    let val = p.x; // Error: p is mutably borrowed by y
+    return 0;
+}

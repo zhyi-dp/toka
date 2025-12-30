@@ -20,6 +20,12 @@ struct SymbolInfo {
 
   bool Moved = false;
 
+  // Borrow Tracking
+  int ImmutableBorrowCount = 0;
+  bool IsMutablyBorrowed = false;
+  std::string BorrowedFrom =
+      ""; // If this is a reference, name of the source variable
+
   // Legacy/Helpers
   bool IsMutable() const { return IsValueMutable; }
   bool IsReference() const { return Morphology == "&"; }
@@ -32,30 +38,47 @@ public:
   Scope *Parent = nullptr;
   std::map<std::string, SymbolInfo> Symbols;
 
+  // Track which variables in THIS scope level are references borrowing from
+  // elsewhere Map: ReferenceName -> {SourceVarName, IsMutable}
+  std::map<std::string, std::pair<std::string, bool>> ActiveBorrows;
+
   Scope(Scope *P = nullptr) : Parent(P) {}
 
   void define(const std::string &Name, const SymbolInfo &Info) {
     Symbols[Name] = Info;
+    if (!Info.BorrowedFrom.empty()) {
+      ActiveBorrows[Name] = {Info.BorrowedFrom,
+                             Info.Morphology == "&" && Info.IsValueMutable};
+    }
   }
 
-  bool lookup(const std::string &Name, SymbolInfo &OutInfo) {
+  // Find symbol and its owning scope
+  bool findSymbol(const std::string &Name, SymbolInfo *&OutInfo) {
     if (Symbols.count(Name)) {
-      OutInfo = Symbols[Name];
+      OutInfo = &Symbols[Name];
       return true;
     }
     if (Parent)
-      return Parent->lookup(Name, OutInfo);
+      return Parent->findSymbol(Name, OutInfo);
+    return false;
+  }
+
+  bool lookup(const std::string &Name, SymbolInfo &OutInfo) {
+    SymbolInfo *ptr = nullptr;
+    if (findSymbol(Name, ptr)) {
+      OutInfo = *ptr;
+      return true;
+    }
     return false;
   }
 
   // Mark a symbol as moved. Returns true if found and updated.
   bool markMoved(const std::string &Name) {
-    if (Symbols.count(Name)) {
-      Symbols[Name].Moved = true;
+    SymbolInfo *ptr = nullptr;
+    if (findSymbol(Name, ptr)) {
+      ptr->Moved = true;
       return true;
     }
-    if (Parent)
-      return Parent->markMoved(Name);
     return false;
   }
 };
@@ -81,12 +104,16 @@ private:
   std::map<std::string, std::map<std::string, std::string>> MethodMap;
   std::map<std::string, TraitDecl *> TraitMap;
   std::string CurrentFunctionReturnType;
+  std::string m_LastBorrowSource;
+  // {VarName, IsMutable}
+  std::vector<std::pair<std::string, bool>> m_CurrentStmtBorrows;
 
   void error(ASTNode *Node, const std::string &Msg);
 
   // Scope management
   void enterScope();
   void exitScope();
+  void clearStmtBorrows();
 
   // Passes
   void registerGlobals(Module &M);
