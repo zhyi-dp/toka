@@ -151,6 +151,19 @@ Toka separates **storage binding** (`let`) from **memory properties** (Tokens).
       - `if let Some(x, y) = opt { ... }`
       - `if opt is Some { print(opt.0) }`
 
+### 3.4 Traits & Implementation
+- **Definition**: Trait names are prefixed with `@` in definitions and usage.
+  ```scala
+  trait @Shape {
+      fn area(self) -> i32
+  }
+  ```
+- **Implementation**:
+  - **Inherent Methods**: `impl Type { ... }`
+  - **Trait Implementation**: `impl Type@Trait { ... }`
+  - **Multiple Traits**: `impl Type@{Trait1, Trait2} { ... }` (Planned)
+  - **Default/Delete**: Methods can be marked `= default` or `= delete` (Planned).
+
 ## 4. Memory Model
 
 ### 4.1 Ownership & Move Semantics

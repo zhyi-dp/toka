@@ -68,14 +68,20 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->TypeAliases.push_back(parseTypeAliasDecl());
     } else if (check(TokenType::KwExtern)) {
       module->Externs.push_back(parseExternDecl());
-    } else if (check(TokenType::KwImport)) {
-      module->Imports.push_back(parseImport());
+    } else if (check(TokenType::KwImpl)) {
+      module->Impls.push_back(parseImpl());
+    } else if (check(TokenType::KwTrait)) {
+      module->Traits.push_back(parseTrait());
     } else if (check(TokenType::KwStruct)) {
       module->Structs.push_back(parseStruct());
     } else if (check(TokenType::KwOption)) {
       module->Options.push_back(parseOptionDecl());
-    } else if (check(TokenType::KwImpl)) {
-      module->Impls.push_back(parseImpl());
+    } else if (match(TokenType::Identifier) &&
+               peek().Text ==
+                   "=") { // This condition seems to be for a different struct
+                          // syntax, but parseStruct() expects KwStruct. Keeping
+                          // it as per instruction, but it might cause issues.
+      module->Structs.push_back(parseStruct());
     } else {
       // Error or unknown
       std::cerr << "Unexpected Top Level Token: " << peek().toString() << "\n";
@@ -287,7 +293,12 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
     retType = advance().Text;
   }
 
-  std::unique_ptr<BlockStmt> body = parseBlock();
+  std::unique_ptr<BlockStmt> body = nullptr;
+  if (check(TokenType::LBrace)) {
+    body = parseBlock();
+  } else {
+    match(TokenType::Semicolon);
+  }
   auto decl =
       std::make_unique<FunctionDecl>(name.Text, args, std::move(body), retType);
   decl->IsVariadic = isVariadic;
@@ -854,8 +865,27 @@ std::unique_ptr<Stmt> Parser::parseDeleteStmt() {
 
 std::unique_ptr<ImplDecl> Parser::parseImpl() {
   consume(TokenType::KwImpl, "Expected 'impl'");
-  Token typeName =
-      consume(TokenType::Identifier, "Expected type name to implement");
+  Token firstIdent = consume(TokenType::Identifier, "Expected identifier");
+
+  std::string traitName;
+  std::string typeName;
+
+  if (match(TokenType::At)) {
+    // impl Type@Trait
+    typeName = firstIdent.Text;
+    Token traitToken =
+        consume(TokenType::Identifier, "Expected trait name after '@'");
+    traitName = traitToken.Text;
+  } else if (match(TokenType::KwFor)) {
+    // impl Trait for Type
+    traitName = firstIdent.Text;
+    typeName =
+        consume(TokenType::Identifier, "Expected type name after 'for'").Text;
+  } else {
+    // impl Type
+    typeName = firstIdent.Text;
+  }
+
   consume(TokenType::LBrace, "Expected '{'");
 
   std::vector<std::unique_ptr<FunctionDecl>> methods;
@@ -867,9 +897,30 @@ std::unique_ptr<ImplDecl> Parser::parseImpl() {
     }
   }
   consume(TokenType::RBrace, "Expected '}'");
-  auto decl = std::make_unique<ImplDecl>(typeName.Text, std::move(methods));
-  decl->setLocation(typeName, m_CurrentFile);
+  auto decl =
+      std::make_unique<ImplDecl>(typeName, std::move(methods), traitName);
+  decl->setLocation(firstIdent, m_CurrentFile);
   return decl;
+}
+
+std::unique_ptr<TraitDecl> Parser::parseTrait() {
+  consume(TokenType::KwTrait, "Expected 'trait'");
+  if (match(TokenType::At)) {
+    // Optional @ prefix
+  }
+  Token name = consume(TokenType::Identifier, "Expected trait name");
+  consume(TokenType::LBrace, "Expected '{'");
+
+  std::vector<std::unique_ptr<FunctionDecl>> methods;
+  while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+    if (check(TokenType::KwFn)) {
+      methods.push_back(parseFunctionDecl());
+    } else {
+      error(peek(), "Expected method prototype in trait");
+    }
+  }
+  consume(TokenType::RBrace, "Expected '}'");
+  return std::make_unique<TraitDecl>(name.Text, std::move(methods));
 }
 
 } // namespace toka

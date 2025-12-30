@@ -470,12 +470,28 @@ public:
 class ImplDecl : public ASTNode {
 public:
   std::string TypeName;
+  std::string TraitName;
   std::vector<std::unique_ptr<FunctionDecl>> Methods;
 
   ImplDecl(const std::string &name,
-           std::vector<std::unique_ptr<FunctionDecl>> methods)
-      : TypeName(name), Methods(std::move(methods)) {}
-  std::string toString() const override { return "Impl(" + TypeName + ")"; }
+           std::vector<std::unique_ptr<FunctionDecl>> methods,
+           const std::string &traitName = "")
+      : TypeName(name), Methods(std::move(methods)), TraitName(traitName) {}
+  std::string toString() const override {
+    return "Impl(" + (TraitName.empty() ? "" : TraitName + " for ") + TypeName +
+           ")";
+  }
+};
+
+class TraitDecl : public ASTNode {
+public:
+  std::string Name;
+  std::vector<std::unique_ptr<FunctionDecl>> Methods;
+
+  TraitDecl(const std::string &name,
+            std::vector<std::unique_ptr<FunctionDecl>> methods)
+      : Name(name), Methods(std::move(methods)) {}
+  std::string toString() const override { return "Trait(" + Name + ")"; }
 };
 
 class Module {
@@ -486,6 +502,7 @@ public:
   std::vector<std::unique_ptr<OptionDecl>> Options;
   std::vector<std::unique_ptr<Stmt>> Globals;
   std::vector<std::unique_ptr<ImplDecl>> Impls;
+  std::vector<std::unique_ptr<TraitDecl>> Traits;
   std::vector<std::unique_ptr<ExternDecl>> Externs;
   std::vector<std::unique_ptr<FunctionDecl>> Functions;
 };

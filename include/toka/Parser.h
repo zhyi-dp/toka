@@ -40,6 +40,7 @@ private:
   std::unique_ptr<StructDecl> parseStruct();
   std::unique_ptr<OptionDecl> parseOptionDecl(); // ADT
   std::unique_ptr<ImplDecl> parseImpl();
+  std::unique_ptr<TraitDecl> parseTrait();
   std::unique_ptr<Stmt> parseMatchStmt();
 
   std::unique_ptr<Stmt> parseStmt();

@@ -5,6 +5,8 @@
 namespace toka {
 
 void CodeGen::generate(const Module &ast) {
+  m_AST = &ast;
+  m_Module = std::make_unique<llvm::Module>("toka_module", m_Context);
   // Generate Type Aliases
   for (const auto &alias : ast.TypeAliases) {
     m_TypeAliases[alias->Name] = alias->TargetType;
@@ -859,16 +861,6 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
               // it for each field. Actually, we should recalculate offsets
               // manually or cast payload* to a packed struct of fields? Easiest
               // is to cast payloadAddr to FieldType* and store.
-
-              // We need to keep track of current offset in the payload
-              llvm::Value *currentPtr = payloadAddr;
-
-              // However, for multiple fields, we need correct offsets.
-              // Let's use DataLayout to compute offsets or just increment
-              // pointer. Better approach: Cast the payload array pointer to a
-              // pointer of a struct representing this variant's fields. But we
-              // don't have that struct type defined. So we just iterate and
-              // pointer cast.
 
               // NOTE: This assumes standard alignment padding is manually
               // handled or sufficient? Since we treat payload as opaque bytes,
@@ -1915,7 +1907,12 @@ llvm::Value *toka::CodeGen::genMatch(const toka::MatchStmt *stmt) {
 void toka::CodeGen::genImpl(const toka::ImplDecl *decl) {
   // Methods
   for (const auto &method : decl->Methods) {
-    std::string mangledName = decl->TypeName + "_" + method->Name;
+    std::string mangledName;
+    if (!decl->TraitName.empty()) {
+      mangledName = decl->TraitName + "_" + decl->TypeName + "_" + method->Name;
+    } else {
+      mangledName = decl->TypeName + "_" + method->Name;
+    }
     genFunction(method.get(), mangledName);
   }
 }
@@ -1972,6 +1969,17 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
 
   std::string funcName = typeName + "_" + expr->Method;
   llvm::Function *callee = m_Module->getFunction(funcName);
+
+  // Check Traits if inherent not found
+  if (!callee && m_AST) {
+    for (const auto &trait : m_AST->Traits) {
+      std::string traitFunc = trait->Name + "_" + typeName + "_" + expr->Method;
+      callee = m_Module->getFunction(traitFunc);
+      if (callee)
+        break;
+    }
+  }
+
   if (!callee) {
     error(expr, "Method '" + expr->Method + "' not found for type '" +
                     typeName + "' (Mangled: " + funcName + ")");

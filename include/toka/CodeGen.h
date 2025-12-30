@@ -40,6 +40,7 @@ private:
   llvm::LLVMContext &m_Context;
   llvm::IRBuilder<> m_Builder;
   std::unique_ptr<llvm::Module> m_Module;
+  const Module *m_AST = nullptr;
 
   std::map<std::string, const FunctionDecl *> m_Functions;
   std::map<std::string, const ExternDecl *> m_Externs;
