@@ -98,7 +98,7 @@ option State {
 }
 
 fn main() {
-    let r = Rect { w: 10, h: 20 };
+    let r = Rect { w = 10, h = 20 };
     let a = r.area();
     
     let s = State::Stopped(404);

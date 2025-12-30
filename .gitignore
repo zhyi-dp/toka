@@ -5,6 +5,7 @@ toka.md
 build/
 # Prerequisites
 *.d
+*_bin
 
 # Compiled Object files
 *.slo

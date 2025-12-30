@@ -1,6 +1,7 @@
 #include "toka/CodeGen.h"
 #include "toka/Lexer.h"
 #include "toka/Parser.h"
+#include "toka/Sema.h"
 #include "llvm/Support/raw_ostream.h"
 #include <fstream>
 #include <iostream>
@@ -71,7 +72,16 @@ int main(int argc, char **argv) {
   if (astModules.empty())
     return 1;
 
-  llvm::errs() << "Parse Successful. Merging and Generating IR...\n";
+  llvm::errs() << "Parse Successful. Running Semantic Analysis...\n";
+
+  toka::Sema sema;
+  for (const auto &ast : astModules) {
+    if (!sema.checkModule(*ast)) {
+      return 1;
+    }
+  }
+
+  llvm::errs() << "Sema Successful. Merging and Generating IR...\n";
 
   llvm::LLVMContext context;
   toka::CodeGen codegen(context, argv[1]);

@@ -1,4 +1,4 @@
-add_executable(tokac main.cpp Lexer/Lexer.cpp Parser/Parser.cpp CodeGen/CodeGen.cpp)
+add_executable(tokac main.cpp Lexer/Lexer.cpp Parser/Parser.cpp CodeGen/CodeGen.cpp Sema/Sema.cpp)
 
 # Link against LLVM libraries
 llvm_map_components_to_libnames(llvm_libs Support Core)

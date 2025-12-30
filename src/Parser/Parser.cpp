@@ -60,7 +60,9 @@ std::unique_ptr<Module> Parser::parseModule() {
   auto module = std::make_unique<Module>();
 
   while (peek().Kind != TokenType::EndOfFile) {
-    if (check(TokenType::KwFn)) {
+    if (check(TokenType::KwImport)) {
+      module->Imports.push_back(parseImport());
+    } else if (check(TokenType::KwFn)) {
       module->Functions.push_back(parseFunctionDecl());
     } else if (check(TokenType::KwLet)) {
       module->Globals.push_back(parseVariableDecl());

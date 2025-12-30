@@ -249,9 +249,20 @@ Toka uses a unique "morphology" system to manage pointers and handles without ve
     - **Mutability Check**: Enforce that any LHS of assignment or `&mut` self method call has `#` token.
     - **Trait Check**: `impl` blocks must satisfy trait contracts (warn on `delete`).
     - **Thread Safety**: Verify that any `Token` marked shared variable has a Lock strategy.
+    - **Smart Pointer Ownership**:
+        - **Unique (`^`)**: Enforce **Move Semantics**. Assignment `let ^q = ^p` implies move; `p` effectively becomes invalid (though currently implemented as runtime nulling, Sema should eventually track this).
+        - **Shared (`~`)**: Enforce type compatibility. Shared pointers can only be initialized from other Shared pointers (copy/incref) or fresh allocations (`new`).
+    - **Type Inference**: Correctly propagate `IsUnique`/`IsShared` attributes during type inference (e.g., `let ~x = ...`).
 3.  **CodeGen**:
     - "Immutable Pass-by-Value" -> "Pass-by-Reference" optimization.
     - **Type Aliases**: Resolution must be recursive via a compiler-wide mapping.
+    - **Struct vs Pointer Type Resolution**: When resolving types for `Unique` (`^`) or `Shared` (`~`) variables, `resolveType` MUST be called with explicit flags (`IsUnique` or `IsShared`) to return the correct **pointer/handle type** instead of the underlying **Soul struct type**. Failure to do this leads to LLVM IR type mismatches (allocating struct instead of pointer) and crashes during cleanup (e.g., `CreateIsNotNull` on a struct).
+    - **Smart Pointer Layout**:
+        - **Unique (`^`)**: Implemented as a raw LLVM pointer (`ptr`). Cleanup uses `free` on non-null pointers.
+        - **Shared (`~`)**: Implemented as a struct `{ ptr, ptr }` containing the data pointer and a reference count pointer.
+    - **Scope Cleanup**: `BlockStmt` must generate cleanup code for all stack-allocated variables.
+        - **Shared**: Decrement ref-count; release both data and ref-count memory if zero.
+        - **Unique**: Check for null; `free` if not null.
     - **In-place Initialization**: If a complex type (Struct/Tuple) is initialized with a slightly different type (e.g., different sized integers), CodeGen must perform **Member-wise conversion** (creating temporaries and casting each field) rather than a simple bit-cast to ensure data integrity.
     - Auto-generation of `drop` glue at scope end.
     - `async/await` state machine generation.
