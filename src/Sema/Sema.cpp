@@ -229,21 +229,81 @@ std::string Sema::checkExpr(Expr *E) {
   } else if (auto *Bool = dynamic_cast<BoolExpr *>(E)) {
     return "bool";
   } else if (auto *Addr = dynamic_cast<AddressOfExpr *>(E)) {
-    // Return &Type. For now just prepend &.
-    // If we want pointer type, maybe ^Type or *Type?
-    // Toka spec says: ^T is pointer. &r is reference.
-    // &a -> produces a reference or pointer?
-    // Let's use internal notation "ptr<T>" or just "^" + Type.
-    return "^" + checkExpr(Addr->Expression.get());
+    // strict: &T -> &T (Reference)
+    // Toka Spec: &x creates a Reference.
+    // If x is T, &x is &T.
+    std::string inner = checkExpr(Addr->Expression.get());
+    if (inner == "unknown")
+      return "unknown";
+    return "&" + inner;
   } else if (auto *Deref = dynamic_cast<DereferenceExpr *>(E)) {
-    std::string Inner = checkExpr(Deref->Expression.get());
-    if (Inner.size() > 1 && Inner[0] == '^') {
-      return Inner.substr(1);
+    std::string inner = checkExpr(Deref->Expression.get());
+    if (inner == "unknown")
+      return "unknown";
+
+    // Dereference a pointer/reference/handle
+    if (inner.size() > 1 && (inner[0] == '^' || inner[0] == '&' ||
+                             inner[0] == '*' || inner[0] == '~')) {
+      return inner.substr(1);
     }
-    // If not marked as pointer, error or assume unsafe cast?
-    // Toka morphology: *ptr accesses value if ptr is handle?
-    // For now just strip one level.
+    // Spec: variable name is the object. dereferencing a non-pointer is error?
+    // Morpholopy: *ptr is Identity value (address).
+    // Wait, AddressOfExpr is &x. DereferenceExpr is *x.
+    // If x is ^i32. *x accesses the raw address? Or the value?
+    // CodeGen: dereference load from pointer.
+    // So *x returns the pointee type.
+    error(Deref, "cannot dereference non-pointer type '" + inner + "'");
     return "unknown";
+  } else if (auto *Unary = dynamic_cast<UnaryExpr *>(E)) {
+    std::string rhsInfo = checkExpr(Unary->RHS.get());
+    if (rhsInfo == "unknown")
+      return "unknown";
+
+    if (Unary->Op == TokenType::Bang) { // !
+      if (rhsInfo != "bool") {
+        error(Unary, "operand of '!' must be bool, got '" + rhsInfo + "'");
+      }
+      return "bool";
+    } else if (Unary->Op == TokenType::Minus) { // -
+      // Numeric types
+      if (rhsInfo != "i32" && rhsInfo != "i64" && rhsInfo != "f32" &&
+          rhsInfo != "f64") {
+        error(Unary, "operand of '-' must be numeric, got '" + rhsInfo + "'");
+      }
+      return rhsInfo;
+    } else if (Unary->Op ==
+               TokenType::Tilde) { // ~ (bitwise not? or Shared handle?)
+      // If expression context, likely bitwise not if numeric.
+      // But Toka syntax uses ~ for Shared ptr.
+      // Lexer: Tilde.
+      // If numeric -> bitwise not.
+      if (rhsInfo == "i32" || rhsInfo == "i64")
+        return rhsInfo;
+      // If pointer?
+      // Let's assume bitwise for now.
+      error(Unary, "invalid operand for '~': '" + rhsInfo + "'");
+      return "unknown";
+    }
+    // Handle ++ -- (Prefix)
+    if (Unary->Op == TokenType::PlusPlus ||
+        Unary->Op == TokenType::MinusMinus) {
+      if (rhsInfo != "i32" && rhsInfo != "i64") { // Only ints for now?
+        error(Unary, "operand of increment/decrement must be integer, got '" +
+                         rhsInfo + "'");
+      }
+      // Check mutability?
+      // Is RHS an LValue?
+      // We should check if RHS is mutable variable.
+      // Simplified check:
+      if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
+        SymbolInfo Info;
+        if (CurrentScope->lookup(Var->Name, Info) && !Info.IsMutable) {
+          error(Unary, "cannot modify immutable variable '" + Var->Name + "'");
+        }
+      }
+      return rhsInfo;
+    }
+    return rhsInfo;
   } else if (auto *Str = dynamic_cast<StringExpr *>(E)) {
     // AST says 'char' for 'extern fn printf(^s: char ...)', suggesting char
     // pointer. Let's call it "str" for now to match 'let s = "Hello"' but
@@ -337,6 +397,24 @@ std::string Sema::checkExpr(Expr *E) {
       return LHS;
     }
 
+    // Logic
+    if (Bin->Op == "&&" || Bin->Op == "||") {
+      if (LHS != "bool" || RHS != "bool") {
+        error(Bin, "operands of '" + Bin->Op + "' must be bool");
+      }
+      return "bool";
+    }
+
+    // Comparison
+    if (Bin->Op == "==" || Bin->Op == "!=" || Bin->Op == "<" ||
+        Bin->Op == ">" || Bin->Op == "<=" || Bin->Op == ">=") {
+      if (!isTypeCompatible(LHS, RHS)) {
+        error(Bin, "operands of '" + Bin->Op + "' must be same type ('" + LHS +
+                       "' vs '" + RHS + "')");
+      }
+      return "bool";
+    }
+
     if (!isTypeCompatible(LHS, RHS) && LHS != "unknown" && RHS != "unknown") {
       error(Bin, "binary operator '" + Bin->Op +
                      "' operands must have same type ('" + LHS + "' vs '" +
@@ -344,10 +422,16 @@ std::string Sema::checkExpr(Expr *E) {
       return "unknown";
     }
     // Result type depends on Op.
-    if (Bin->Op == "==" || Bin->Op == "!=" || Bin->Op == "<" ||
-        Bin->Op == ">" || Bin->Op == "<=" || Bin->Op == ">=") {
-      return "bool";
+    // Arithmetic
+    // Strict arithmetic: only numeric types
+    if (Bin->Op == "+" || Bin->Op == "-" || Bin->Op == "*" || Bin->Op == "/") {
+      if (LHS != "i32" && LHS != "i64" && LHS != "f32" && LHS != "f64") {
+        // Maybe allow pointer arithmetic later?
+        error(Bin, "operands of '" + Bin->Op + "' must be numeric, got '" +
+                       LHS + "'");
+      }
     }
+
     return LHS;
   } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
     // Check FunctionMap
@@ -537,27 +621,15 @@ bool Sema::isTypeCompatible(const std::string &Target,
   std::string T = resolveType(Target);
   std::string S = resolveType(Source);
 
-  auto normalize = [](std::string s) {
-    s.erase(std::remove(s.begin(), s.end(), ' '), s.end());
-    return s;
-  };
-  if (normalize(T) == normalize(S))
+  if (T == S)
     return true;
   if (T == "unknown" || S == "unknown")
     return true;
 
-  // Tuple covariance/equivalence check?
-  if (T == "tuple" || S == "tuple")
-    return true; // Weak check for now
-
-  // String-like types compatibility
-  auto isStringy = [](const std::string &s) {
-    return s == "str" || s == "char" || s == "*i8" || s == "^i8" ||
-           s == "*char" || s == "^char" ||
-           s == "i8"; // Allow i8 as base for pointer
-  };
-  if (isStringy(T) && isStringy(S))
-    return true;
+  // Allow Reference to non-Reference compatibility if strict mode allows?
+  // Toka Spec: Strict compatibility. No implicit conversions.
+  // But maybe integer literal fallback? We haven't implemented literal types
+  // yet.
 
   return false;
 }
