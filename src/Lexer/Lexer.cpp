@@ -27,7 +27,7 @@ static std::unordered_map<std::string, TokenType> Keywords = {
     {"false", TokenType::KwFalse},    {"none", TokenType::KwNone},
     {"null", TokenType::KwNull},      {"defer", TokenType::KwDefer},
     {"main", TokenType::KwMain},      {"extern", TokenType::KwExtern},
-    {"option", TokenType::KwOption}};
+    {"option", TokenType::KwOption},  {"is", TokenType::KwIs}};
 
 Lexer::Lexer(const char *source) : m_Source(source), m_Current(source) {}
 
@@ -183,12 +183,20 @@ Token Lexer::punctuation() {
   case ':':
     return Token{TokenType::Colon, ":", line, col};
   case '&':
+    if (peek() == '&') {
+      advance();
+      return Token{TokenType::And, "&&", line, col};
+    }
     return Token{TokenType::Ampersand, "&", line, col};
   case '~':
     return Token{TokenType::Tilde, "~", line, col};
   case '@':
     return Token{TokenType::At, "@", line, col};
   case '|':
+    if (peek() == '|') {
+      advance();
+      return Token{TokenType::Or, "||", line, col};
+    }
     return Token{TokenType::Pipe, "|", line, col};
   case '+':
     if (peek() == '=') {

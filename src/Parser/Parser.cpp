@@ -312,13 +312,25 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl() {
   bool isRef = match(TokenType::Ampersand);
   bool hasPointer = false;
   bool isUnique = false;
+
   bool isShared = false;
+  bool isRebindable = false;
+  bool isPtrNullable = false;
   if (match(TokenType::Caret)) {
     isUnique = true;
+    Token tok = previous();
+    isRebindable = tok.IsSwappablePtr;
+    isPtrNullable = tok.HasNull;
   } else if (match(TokenType::Star)) {
     hasPointer = true;
+    Token tok = previous();
+    isRebindable = tok.IsSwappablePtr;
+    isPtrNullable = tok.HasNull;
   } else if (match(TokenType::Tilde)) {
     isShared = true;
+    Token tok = previous();
+    isRebindable = tok.IsSwappablePtr;
+    isPtrNullable = tok.HasNull;
   }
 
   // Check for positional destructuring: let Type(v1, v2) = ...
@@ -364,8 +376,13 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl() {
   node->IsUnique = isUnique;
   node->IsShared = isShared;
   node->IsReference = isRef;
-  node->IsMutable = name.HasWrite;
-  node->IsNullable = name.HasNull;
+  node->IsMutable = name.HasWrite; // Value Mutable
+  node->IsNullable = name.HasNull; // Value Nullable
+  // Explicit properties mapping
+  node->IsValueMutable = name.HasWrite;
+  node->IsValueNullable = name.HasNull;
+  node->IsRebindable = isRebindable;
+  node->IsPointerNullable = isPtrNullable;
   node->TypeName = typeName;
 
   consume(TokenType::Semicolon, "Expected ';' after variable declaration");
@@ -443,7 +460,12 @@ int Parser::getPrecedence(TokenType type) {
   case TokenType::Neq:
   case TokenType::Less:
   case TokenType::Greater:
+  case TokenType::KwIs:
     return 5;
+  case TokenType::And:
+    return 4;
+  case TokenType::Or:
+    return 3;
   default:
     return -1;
   }
@@ -464,7 +486,8 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
              !check(TokenType::Slash) && !check(TokenType::Equal) &&
              !check(TokenType::DoubleEqual) && !check(TokenType::Neq) &&
              !check(TokenType::Less) && !check(TokenType::Greater) &&
-             !check(TokenType::EndOfFile)) {
+             !check(TokenType::KwIs) && !check(TokenType::And) &&
+             !check(TokenType::Or) && !check(TokenType::EndOfFile)) {
         typeName += advance().Text;
       }
       Token tok = previous();
@@ -517,6 +540,11 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     TokenType op = tok.Kind;
     auto sub = parsePrimary();
     auto node = std::make_unique<UnaryExpr>(op, std::move(sub));
+    node->HasNull = tok.HasNull;
+    node->IsRebindable = tok.IsSwappablePtr;
+    node->IsValueMutable = tok.HasWrite;
+    node->IsValueNullable =
+        tok.HasNull; // Assuming identifier flags also mapped here if needed
     node->setLocation(tok, m_CurrentFile);
     return node;
   }
@@ -539,6 +567,11 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   } else if (match(TokenType::KwFalse)) {
     Token tok = previous();
     auto node = std::make_unique<BoolExpr>(false);
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
+  } else if (match(TokenType::KwNull)) {
+    Token tok = previous();
+    auto node = std::make_unique<NullExpr>();
     node->setLocation(tok, m_CurrentFile);
     expr = std::move(node);
   } else if (match(TokenType::String)) {
@@ -801,9 +834,10 @@ std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
 
 std::unique_ptr<Stmt> Parser::parseIf() {
   Token tok = consume(TokenType::KwIf, "Expected 'if'");
-  consume(TokenType::LParen, "Expected '('");
+  bool hasParen = match(TokenType::LParen);
   auto cond = parseExpr();
-  consume(TokenType::RParen, "Expected ')'");
+  if (hasParen)
+    consume(TokenType::RParen, "Expected ')'");
   auto thenStmt = parseStmt();
   std::unique_ptr<Stmt> elseStmt;
   if (match(TokenType::KwElse)) {

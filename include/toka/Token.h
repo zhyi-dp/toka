@@ -114,7 +114,9 @@ enum class TokenType {
   PlusPlus,
   MinusMinus,
   Tilde, // ~
-  At     // @
+  At,    // @
+  And,   // &&
+  Or     // ||
 };
 
 struct Token {

@@ -355,7 +355,15 @@ std::string Sema::checkExpr(Expr *E) {
       error(Var, "use of moved value: '" + Var->Name + "'");
     }
     return Info.Type;
+  } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
+    return "null";
   } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) {
+    if (Bin->Op == "is") {
+      checkExpr(Bin->LHS.get());
+      // We skip checkExpr(RHS) because RHS is a Type (e.g. ^Type) which would
+      // fail regular expr lookup
+      return "bool";
+    }
     std::string LHS = checkExpr(Bin->LHS.get());
     std::string RHS = checkExpr(Bin->RHS.get());
 
@@ -673,6 +681,14 @@ bool Sema::isTypeCompatible(const std::string &Target,
     return true;
   if (T == "unknown" || S == "unknown")
     return true;
+  if (S == "null") {
+    // Allow assigning null to pointers (start with ^ or *)
+    if (T.size() > 0 && (T[0] == '^' || T[0] == '*'))
+      return true;
+    // Also allow assigning null to Structs (Variable might be pointer)
+    if (StructMap.count(T))
+      return true;
+  }
 
   // Allow Reference to non-Reference compatibility if strict mode allows?
   // Toka Spec: Strict compatibility. No implicit conversions.

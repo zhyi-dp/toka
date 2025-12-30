@@ -54,6 +54,12 @@ public:
   std::string toString() const override { return Value ? "true" : "false"; }
 };
 
+class NullExpr : public Expr {
+public:
+  NullExpr() {}
+  std::string toString() const override { return "null"; }
+};
+
 class VariableExpr : public Expr {
 public:
   std::string Name;
@@ -103,10 +109,18 @@ class UnaryExpr : public Expr {
 public:
   TokenType Op;
   std::unique_ptr<Expr> RHS;
+  bool HasNull = false;      // For ^? or *?
+  bool IsRebindable = false; // For ^# or *#
+  bool IsValueMutable =
+      false; // For identifier# (unlikely in Unary op token but consistent)
+  bool IsValueNullable = false; // For identifier?
+  // Actually UnaryExpr covers ^, *, ~, etc.
+
   UnaryExpr(TokenType op, std::unique_ptr<Expr> rhs)
       : Op(op), RHS(std::move(rhs)) {}
   std::string toString() const override {
-    return "Unary(" + std::to_string((int)Op) + ", " + RHS->toString() + ")";
+    return "Unary(" + std::to_string((int)Op) + (HasNull ? "?" : "") +
+           (IsRebindable ? "#" : "") + ", " + RHS->toString() + ")";
   }
 };
 
@@ -353,6 +367,13 @@ public:
   bool IsUnique = false;
   bool IsShared = false;
   bool IsReference = false;
+  // Permissions (Dual-Location Attributes)
+  bool IsRebindable = false;      // Pointer Attribute # (^#p)
+  bool IsValueMutable = false;    // Identifier Attribute # (p#)
+  bool IsPointerNullable = false; // Pointer Attribute ? (^?p)
+  bool IsValueNullable = false;   // Identifier Attribute ? (p?)
+
+  // Deprecated/Legacy
   bool IsMutable = false;
   bool IsNullable = false;
 

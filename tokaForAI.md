@@ -235,12 +235,69 @@ Toka uses a unique "morphology" system to manage pointers and handles without ve
     - `mutex` (Mutex), `rwlock` (Read-Write), `spinlock` (Spinlock), `atomic`, `nolock` (Unsafe).
 - **Usage**:
     - Lock acquisition is **implicit** via the `#` token scope or `oncelock{}` blocks.
-### 5.3 Absolute Type Safety
-- **No Implicit Conversion**: Toka strictly prohibits any implicit type conversion (e.g., `i32` to `i64`, `float` to `double`). All conversions must be explicit via the `as` keyword.
-- **Binary Operations**: Both operands must have exactly the same type.
-- **Assignments**: The right-hand side type must match the left-hand side type exactly.
-- **Function Calls**: Argument types must match parameter types exactly.
+### 3. Permissions & Attributes System (Detailed)
 
+Toka uses a **Dual-Location Attribute System** distinguishing between the *Pointer/Container* and the *Object Value*.
+
+#### A. Pointer Attributes (Prefix on Morphology Token `^`, `*`, `~`, `&`)
+Control the **Reference/Pointer itself** (the container).
+-   **Suffixes on Morphology**: `#`, `?`, `!`.
+    -   `#` (`^#`): **Rebindable**. The pointer variable can be reassigned (`p = new`).
+    -   `?` (`^?`): **Nullable**. The pointer can be null.
+-   **Transfer Rule**:
+    -   **Move/Copy**: **Free Redefinition**. The new owner can define their pointer as Rebindable or Nullable regardless of the source, as it only affects the local container.
+    -   **Share/Borrow**: **Covariant**. Cannot grant more permission than the source (e.g., cannot borrow a nullable pointer as non-null without check).
+
+#### B. Value Attributes (Suffix on Identifier)
+Control the **Object Value** (the soul).
+-   **Suffixes on Identifier**: `#`, `?`.
+    -   `#` (`name#`): **Value Mutable**. The content (`*p`, `p.field`) can be modified.
+    -   `?` (`name?`): **Value Option** (Logical None possibility).
+-   **Transfer Rule**:
+    -   **ALL Transfers (Move/Copy/Share/Borrow)**: **Strict No-Upgrade**.
+        -   **Immutable -> Mutable**: **FORBIDDEN**. You cannot gain write access if the source was read-only, even if you Move it.
+        -   **Mutable -> Immutable**: **ALLOWED**. You can voluntarily drop write access.
+
+#### Implementation Requirements
+1.  **Parser Update**: Extract attributes from both Morphology Token (Prefix) and Identifier Token (Suffix).
+2.  **SymbolInfo**: Track `IsRebindable`, `IsValueMutable`, `IsPointerNullable`, `IsValueNullable` separately.
+3.  **Sema Logic**:
+    -   **Reassignment (`p = ...`)**: Check `IsRebindable`.
+    -   **Modification (`p.f = ...`)**: Check `IsValueMutable`.
+    -   **Transfer Check**:
+        -   Target `IsValueMutable` must be <= Source `IsValueMutable` (True <= True, False <= True/False). **False <= True is OK (Downgrade). True <= False is ERROR (Upgrade).**
+
+### 5. Nullability Handling (The `is` Operator)
+**Sole Mechanism**: Toka uses the `is` operator as the **only** method for null checks and unwrapping. 
+-   **Discarded/Forbidden**: `if let`, `match` for nulls, `== null` checks, implicit smart casts.
+-   **Syntax**: `if Source is Target { ... }`
+    -   **Source Expression**: `^?p` (matches the declaration pattern of the nullable variable).
+    -   **Target Expression**: `^p` (matches the desired non-nullable pattern).
+    -   **Actual Code**: `if ^?p is ^p { ... }`.
+    -   **Semantics**: Checks if variable `p` (declared as `let ^?p`) is not null. Returns true if valid.
+-   **Capabilities**:
+    -   **Unwrap**: Converts `?` or `!` to non-null (`#` or default).
+    -   **Deep Conversion**: `if ~!ptr? is ~ptr`.
+
+| Source Declaration | Check/Unwrap Syntax | Resulting Binding |
+| :--- | :--- | :--- |
+| `let ^?p = ...` | `if ^?p is ^p { ... }` | `p`: Unique Non-null (Check only for now) |
+| `let obj! = ...` | `if obj! is obj { ... }` | `obj`: Object Non-null |
+| `let ~!ptr? = ...` | `if ~!ptr? is ~ptr { ... }` | `ptr`: Shared Non-null |
+
+#### C. Control Flow Analysis
+Sema must verify that:
+-   **Return Check**: All control paths in a non-void function must explicitly return a value.
+-   **Unreachable Code**: Detect code after returns or infinite loops (optional but good).
+
+#### D. Parser Debt (Immediate Fixes Needed)
+- [x] **Logical Operators**: Implement parsing for `&&` (And) and `||` (Or) in `parseExpr`.
+- [x] **Attribute Extraction in Parser**:
+    -   Update `parseVariableDecl` to read `IsSwappablePtr` and `HasNull` from the Morphology Token (e.g., `Caret`).
+    -   Also updated `UnaryExpr` to propagate these attributes for `is` operator checks.
+- [x] **Refined Null Check (`is`)**: Implemented `if ^?p is ^p` syntax support via `is` operator and relaxed Sema checking for this construct.
+
+### 4. Smart Pointer Implementation Guidelines
 ## 6. Implementation Guidelines for Compiler
 1.  **Parser**:
     - Handle `Write Token` suffixing carefully. `ident` vs `ident#`.
@@ -253,6 +310,9 @@ Toka uses a unique "morphology" system to manage pointers and handles without ve
         - **Unique (`^`)**: Enforce **Move Semantics**. Assignment `let ^q = ^p` implies move; `p` effectively becomes invalid (though currently implemented as runtime nulling, Sema should eventually track this).
         - **Shared (`~`)**: Enforce type compatibility. Shared pointers can only be initialized from other Shared pointers (copy/incref) or fresh allocations (`new`).
     - **Type Inference**: Correctly propagate `IsUnique`/`IsShared` attributes during type inference (e.g., `let ~x = ...`).
+    - **Permissions & Attributes**:
+        - **Object Value Permission**: Cannot upgrade. If the source object is immutable, the destination object cannot become mutable, even on move.
+        - **Pointer Permission**: Can be redefined on move. The mutability/nullability of the pointer itself (not the pointed-to value) can change when moved to a new variable.
 3.  **CodeGen**:
     - "Immutable Pass-by-Value" -> "Pass-by-Reference" optimization.
     - **Type Aliases**: Resolution must be recursive via a compiler-wide mapping.

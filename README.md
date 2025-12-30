@@ -48,6 +48,7 @@ We are actively building the compiler self-hosting capabilities.
     - [x] **Strict Mutability Enforcement** (`#` Check)
     - [x] Type Checking Pass
     - [x] Ownership & Borrowing Verification (Move Semantics)
+    - [x] **Null Safety** (`is` Operator, Strict Null Checks)
 - [ ] **Advanced Features**
     - [ ] Generics / Templates
     - [ ] Concurrency (`Task`, `async`/`await`)
@@ -109,6 +110,14 @@ fn main() {
     match s {
         Stopped(code) => printf("Stopped with %d\n", code),
         _ => printf("Running...\n")
+    }
+    }
+}
+
+fn null_safety() {
+    let ^?p = null;
+    if ^?p is ^p {
+        printf("Not Null!\n");
     }
 }
 ```

@@ -745,6 +745,14 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
   if (auto *bl = dynamic_cast<const BoolExpr *>(expr)) {
     return llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), bl->Value);
   }
+  if (dynamic_cast<const NullExpr *>(expr)) {
+    // Return a null pointer. Since LLVM 15+ uses opaque pointers, a single
+    // "ptr" type handles all. If using older LLVM, we might need i8* null. Toka
+    // uses opaque pointers where possible? Step 272 view shows
+    // m_Builder.CreateIsNotNull. Let's assume PointerType::get(m_Context, 0) is
+    // valid.
+    return llvm::ConstantPointerNull::get(llvm::PointerType::get(m_Context, 0));
+  }
   if (auto *deref = dynamic_cast<const DereferenceExpr *>(expr)) {
     // Toka Morphology: *expr returns the handle/pointer identity (the
     // address)
@@ -1125,6 +1133,85 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       return rhsVal;
     }
 
+    // Logical Operators (Short-circuiting)
+    if (bin->Op == "&&") {
+      llvm::Value *lhs = genExpr(bin->LHS.get());
+      if (!lhs)
+        return nullptr;
+      if (!lhs->getType()->isIntegerTy(1))
+        lhs = m_Builder.CreateICmpNE(
+            lhs, llvm::ConstantInt::get(lhs->getType(), 0), "tobool");
+
+      llvm::Function *TheFunction = m_Builder.GetInsertBlock()->getParent();
+      llvm::BasicBlock *EntryBB = m_Builder.GetInsertBlock();
+      llvm::BasicBlock *RHSBB =
+          llvm::BasicBlock::Create(m_Context, "land.rhs", TheFunction);
+      llvm::BasicBlock *MergeBB =
+          llvm::BasicBlock::Create(m_Context, "land.end");
+
+      m_Builder.CreateCondBr(lhs, RHSBB, MergeBB);
+
+      // Eval RHS
+      m_Builder.SetInsertPoint(RHSBB);
+      llvm::Value *rhs = genExpr(bin->RHS.get());
+      if (!rhs)
+        return nullptr;
+      if (!rhs->getType()->isIntegerTy(1))
+        rhs = m_Builder.CreateICmpNE(
+            rhs, llvm::ConstantInt::get(rhs->getType(), 0), "tobool");
+
+      m_Builder.CreateBr(MergeBB);
+      RHSBB = m_Builder.GetInsertBlock();
+
+      // Merge
+      MergeBB->insertInto(TheFunction);
+      m_Builder.SetInsertPoint(MergeBB);
+      llvm::PHINode *PN =
+          m_Builder.CreatePHI(llvm::Type::getInt1Ty(m_Context), 2, "land.val");
+      PN->addIncoming(llvm::ConstantInt::getFalse(m_Context), EntryBB);
+      PN->addIncoming(rhs, RHSBB);
+      return PN;
+    }
+
+    if (bin->Op == "||") {
+      llvm::Value *lhs = genExpr(bin->LHS.get());
+      if (!lhs)
+        return nullptr;
+      if (!lhs->getType()->isIntegerTy(1))
+        lhs = m_Builder.CreateICmpNE(
+            lhs, llvm::ConstantInt::get(lhs->getType(), 0), "tobool");
+
+      llvm::Function *TheFunction = m_Builder.GetInsertBlock()->getParent();
+      llvm::BasicBlock *EntryBB = m_Builder.GetInsertBlock();
+      llvm::BasicBlock *RHSBB =
+          llvm::BasicBlock::Create(m_Context, "lor.rhs", TheFunction);
+      llvm::BasicBlock *MergeBB =
+          llvm::BasicBlock::Create(m_Context, "lor.end");
+
+      m_Builder.CreateCondBr(lhs, MergeBB, RHSBB);
+
+      // Eval RHS
+      m_Builder.SetInsertPoint(RHSBB);
+      llvm::Value *rhs = genExpr(bin->RHS.get());
+      if (!rhs)
+        return nullptr;
+      if (!rhs->getType()->isIntegerTy(1))
+        rhs = m_Builder.CreateICmpNE(
+            rhs, llvm::ConstantInt::get(rhs->getType(), 0), "tobool");
+
+      m_Builder.CreateBr(MergeBB);
+      RHSBB = m_Builder.GetInsertBlock();
+
+      // Merge
+      MergeBB->insertInto(TheFunction);
+      m_Builder.SetInsertPoint(MergeBB);
+      llvm::PHINode *PN =
+          m_Builder.CreatePHI(llvm::Type::getInt1Ty(m_Context), 2, "lor.val");
+      PN->addIncoming(llvm::ConstantInt::getTrue(m_Context), EntryBB);
+      PN->addIncoming(rhs, RHSBB);
+      return PN;
+    }
+
     // Standard Arithmetic and Comparisons
     llvm::Value *lhs = genExpr(bin->LHS.get());
     std::cerr << "[DEBUG] After genExpr(LHS), lhs=" << lhs << "\n";
@@ -1179,6 +1266,14 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       return nullptr;
     }
     */
+
+    // 'is' operator (Null Check)
+    if (bin->Op == "is") {
+      if (lhsType->isPointerTy()) {
+        return m_Builder.CreateIsNotNull(lhs, "is_not_null");
+      }
+      return llvm::ConstantInt::getTrue(m_Context);
+    }
 
     if (!lhsType->isIntOrIntVectorTy() && !lhsType->isPtrOrPtrVectorTy()) {
       std::string s;
