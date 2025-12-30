@@ -37,10 +37,14 @@ We are actively building the compiler self-hosting capabilities.
     - [x] Structs & Member Access
     - [x] **Algebraic Data Types (ADTs)** (`option`, `enum`)
     - [x] Pattern Matching (`match` statement)
+- [x] **Memory Management**
+    - [x] Unique Pointers (`^`) with Move Semantics
+    - [x] Shared Pointers (`~`) with Reference Counting
 - [x] **Object Oriented Features**
     - [x] `impl` blocks (Methods)
     - [x] **Trait System** (Interfaces, Default Implementations)
 - [ ] **Semantic Analysis (Sema)** *(In Progress)*
+    - [x] Infrastructure Scaffolding
     - [ ] **Strict Mutability Enforcement** (`#` Check)
     - [ ] Type Checking Pass
     - [ ] Ownership & Borrowing Verification

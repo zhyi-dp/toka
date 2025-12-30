@@ -37,10 +37,14 @@ let ^#p2? = ...;    // 可交换(指向可变)、可空、独占指针
     - [x] 结构体 (Structs) 与成员访问
     - [x] **代数数据类型 (ADTs)** (`option`, `enum`)
     - [x] 模式匹配 (`match` 语句)
+- [x] **内存管理 (Memory Management)**
+    - [x] 独占指针 (`^`) 与移动语义 (Move Semantics)
+    - [x] 共享指针 (`~`) 与引用计数 (Reference Counting)
 - [x] **面向对象特性**
     - [x] `impl` 块 (方法)
     - [x] **Trait 系统** (接口、默认实现)
 - [ ] **语义分析 (Sema)** *(进行中)*
+    - [x] 基础设施脚手架 (Infrastructure Scaffolding)
     - [ ] **严格的可变性强制检查** (`#` 检查)
     - [ ] 类型检查 (Type Checking Pass)
     - [ ] 所有权与借用验证 (Ownership & Borrowing Verification)
