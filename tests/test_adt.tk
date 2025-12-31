@@ -7,7 +7,7 @@ option State {
 }
 
 fn main() -> i32 {
-    let s = State::On();
+    auto s = State::On();
     
     match s {
         On => {
@@ -21,9 +21,9 @@ fn main() -> i32 {
         }
     }
     
-    let e = State::ErrCode(404);
+    auto e = State::ErrCode(404);
     match e {
-        let ErrCode(code) => {
+        auto ErrCode(code) => {
             printf("Matched ErrCode: %d\n", code);
         }
         _ => {

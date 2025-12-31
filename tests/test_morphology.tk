@@ -7,7 +7,7 @@ struct Point {
 }
 
 fn main() -> i32 {
-    let *ptr# = new Point { x = 10, y = 20 };
+    auto *ptr# = new Point { x = 10, y = 20 };
     
     // 1. Point-Value Duality: ptr is the object
     printf("ptr.x = %d (expected 10)\n", ptr.x);

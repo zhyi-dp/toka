@@ -15,7 +15,7 @@ fn processPoint(p: PointTup) {
 }
 
 fn addx(point: Point, v: i32) -> i32 {
-    let tmp = point.x + v;
+    auto tmp = point.x + v;
     return tmp;
 }
 
@@ -28,9 +28,9 @@ fn addtox_useref(&point#: Point, v: i32) {
 }
 
 fn main() -> i32 {
-    let p# = Point { x = 1, y = 2, z = 111 };
-    let i# = 0;
-    let logi# = 0;
+    auto p# = Point { x = 1, y = 2, z = 111 };
+    auto i# = 0;
+    auto logi# = 0;
     while (i < 3) {
         printf("[%03d]p.x is %d, loop %d\n", logi#++, p.x, i);
         p#.x = p.x + 10;
@@ -46,7 +46,7 @@ fn main() -> i32 {
     addtox_useref(&p#, 10);
     printf("[%03d]p.x is %d (after addtox_useref, should be 61)\n", logi#++, p.x);
 
-    let b# = true;
+    auto b# = true;
     if (b) {
         printf("[%03d]bool true works\n", logi#++);
     }
@@ -57,6 +57,6 @@ fn main() -> i32 {
         printf("[%03d]bool false works\n", logi#++);
     }
 
-    let f# = 3.14;
+    auto f# = 3.14;
     return 0;
 }

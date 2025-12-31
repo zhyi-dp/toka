@@ -5,7 +5,7 @@ struct Data {
 }
 
 fn main() -> i32 {
-    let ^?p = new Data { v = 42 };
+    auto ^?p = new Data { v = 42 };
     
     // Narrowing: ^?p is ^p
     if ^?p is ^p {
@@ -14,7 +14,7 @@ fn main() -> i32 {
         printf("Failure: p is null\n");
     }
 
-    let ^?q# = null;
+    auto ^?q# = null;
     if ^?q is ^q {
         printf("Error: q should be null\n");
     } else {

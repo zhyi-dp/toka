@@ -4,21 +4,21 @@ struct Data { v: i32 }
 
 fn main() -> i32 {
     // Parsing check for Logical Operators
-    let t = true;
-    let f = false;
-    let res = t && f || t; 
+    auto t = true;
+    auto f = false;
+    auto res = t && f || t; 
 
     if res {
         printf("Logical ops work: result is true\n");
     }
 
     // Checking Parser Update for Attributes
-    let ^#p1 = new Data{v=10};
+    auto ^#p1 = new Data{v=10};
     printf("Rebindable pointer p1->v: %d\n", p1.v);
 
     {
         // Nullable Pointer
-        let ^?p2 = new Data{v=99};
+        auto ^?p2 = new Data{v=99};
 
         // New syntax: 'is' operator for null check. 
         if ^?p2 is ^p2 {
@@ -28,7 +28,7 @@ fn main() -> i32 {
     }
     {
         // Nullable Pointer
-        let ^?p3# = null;
+        auto ^?p3# = null;
 
         // New syntax: 'is' operator for null check. 
         if ^?p3 is ^p3 {

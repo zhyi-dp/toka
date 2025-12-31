@@ -20,9 +20,9 @@ impl Test@Base {
 }
 
 fn main() -> i32 {
-    let t = Test { val = 20 };
-    let f = t.foo();
-    let b = t.bar();
+    auto t = Test { val = 20 };
+    auto f = t.foo();
+    auto b = t.bar();
     printf("Foo: %d\n", f);
     printf("Bar: %d\n", b);
     return 0;

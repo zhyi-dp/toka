@@ -1,17 +1,17 @@
 import "core/io";
 
 fn main() -> i32 {
-    let x# = 10;
+    auto x# = 10;
     
     {
-        let &y1 = &x;
-        let &y2 = &x;
+        auto &y1 = &x;
+        auto &y2 = &x;
         printf("y1=%d, y2=%d\n", y1, y2);
     }
     
     // After y1, y2 go out of scope, we can mutably borrow
     {
-        let &z# = &x#;
+        auto &z# = &x#;
         z# = 20;
         printf("z=%d\n", z);
         // printf("x=%d\n", x); // This would be an error

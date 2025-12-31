@@ -13,14 +13,14 @@ This document formalizes the Toka programming language specification based on th
 Compiler parser should treat these as reserved.
 
 **Declaration & Types**
-- `let`: Variable declaration start.
+- `auto`: Variable declaration start.
 - `type`: Type alias.
 - `const`: Constant declaration.
 - `struct`: Structure definition.
 - `trait`: Interface definition.
 - `impl`: Implementation block.
 - `fn`: Function/Method declaration.
-- `new`: Heap allocation (`let ^p = new Person{...}`).
+- `new`: Heap allocation (`auto ^p = new Person{...}`).
 - `dyn`: Dynamic dispatch marker for Traits.
 - `move`: Explicit ownership transfer.
 - `where`: Type constraints.
@@ -62,7 +62,7 @@ Compiler parser should treat these as reserved.
     - Integer literals without suffix: `i32`.
     - Floating point literals without suffix: `f64`.
 - `<-`: Dependency / Channel receive (Context dependent).
-- `&`: **Reference prefix** (e.g., `let &r = &x#`).
+- `&`: **Reference prefix** (e.g., `auto &r = &x#`).
 - `++` / `--`: **Increment/Decrement** (Prefix and Postfix).
 - `.`: Access.
 - `:`: Type annotation.
@@ -70,7 +70,7 @@ Compiler parser should treat these as reserved.
 ## 3. Type System & Attribute Tokens
 
 ### 3.1 The Attribute Token System (Core Feature)
-Toka separates **storage binding** (`let`) from **memory properties** (Tokens).
+Toka separates **storage binding** (`auto`) from **memory properties** (Tokens).
 
 | Token | Meaning on Object | Meaning on Pointer (`^`, `*`, `~`) |
 | :--- | :--- | :--- |
@@ -80,11 +80,11 @@ Toka separates **storage binding** (`let`) from **memory properties** (Tokens).
 | `$` | **Immutable + Non-null**. | **Fixed + Non-null**. |
 
 **Syntax Rules:**
-- Tokens are suffixes to the variable name (e.g., `let x# = ...`).
-- For pointers, tokens can attach to the pointer symbol `^` AND the variable name, creating 16 combinations (e.g., `let ^#p?`).
+- Tokens are suffixes to the variable name (e.g., `auto x# = ...`).
+- For pointers, tokens can attach to the pointer symbol `^` AND the variable name, creating 16 combinations (e.g., `auto ^#p?`).
     - `^#`: Pointer address is swappable (can point elsewhere).
     - `p?`: Object content is nullable (can be `none`).
-    - *Clarification*: `let ^?ptr#` = Nullable non-swappable pointer, pointing to a Writable non-nullable object.
+    - *Clarification*: `auto ^?ptr#` = Nullable non-swappable pointer, pointing to a Writable non-nullable object.
 
 #### 3.1.1 Reseat vs. Mutation
 Toka distinguishes between changing **where** a pointer points and **what** it points to.
@@ -129,19 +129,19 @@ Toka distinguishes between changing **where** a pointer points and **what** it p
       }
       ```
     - **Usage**:
-      - `let opt = Maybe::Some(42, "Hello")`
+      - `auto opt = Maybe::Some(42, "Hello")`
       - `use Maybe::*` allows `Some(42, "Hello")`
     - **Pattern Matching (`match`)**:
       ```scala
       match opt {
           // Destructuring binding
-          let Some(st, sv) => { ... }
+          auto Some(st, sv) => { ... }
           
           // Guard clause
-          let Some(st, sv) if sv > 10 => { ... }
+          auto Some(st, sv) if sv > 10 => { ... }
           
           // Named field destructuring with partial match
-          let Data{ st = .count, .. } => { ... }
+          auto Data{ st = .count, .. } => { ... }
           
           // Shorthand for named fields
           Data{ .value, .count } => { ... }
@@ -157,7 +157,7 @@ Toka distinguishes between changing **where** a pointer points and **what** it p
       }
       ```
     - **Control Flow Sugar**:
-      - `if let Some(x, y) = opt { ... }`
+      - `if auto Some(x, y) = opt { ... }`
       - `if opt is Some { print(opt.0) }`
 
 ### 3.4 Traits & Implementation
@@ -198,9 +198,9 @@ Toka distinguishes between changing **where** a pointer points and **what** it p
     - `^T` ≈ `T* const` (Fixed pointer, immutable data)
     - `^#T` ≈ `T*` (Swappable pointer, immutable data)
     - `^T#` ≈ `T* const` but data is mutable? (Needs strict verification with compiler rules)
-    - *Doc Standard*: `let ^p = new T` (Ownership root).
+    - *Doc Standard*: `auto ^p = new T` (Ownership root).
 - **Reference**: 
-    - Explicitly created using `&` (e.g., `let &ref = &var#`).
+    - Explicitly created using `&` (e.g., `auto &ref = &var#`).
     - References are **fixed** (cannot be reseated) and **non-nullable**.
     - Must abide by **Rule 406**: In-place access to the original variable is restricted during the lifetime of a mutable reference.
 - **Increment/Decrement**:
@@ -211,12 +211,12 @@ Toka distinguishes between changing **where** a pointer points and **what** it p
 ### 4.4 Toka Morphology (Point-Value Duality)
 Toka uses a unique "morphology" system to manage pointers and handles without verbose dereferencing symbols.
 
-- **Variable Name as Object**: In a scope where a pointer or reference is declared (e.g., `let *ptr = ...`), the name `ptr` refers directly to the **dereferenced object**.
+- **Variable Name as Object**: In a scope where a pointer or reference is declared (e.g., `auto *ptr = ...`), the name `ptr` refers directly to the **dereferenced object**.
     - `ptr.x` is valid and operates on the object's field.
     - `ptr` used in a context expecting a value will perform an auto-dereference load.
 - **Morphology Symbol as Identity/Handle**: To access the **identity** (memory address, ownership handle, or reference count structure), use the definition's morphology symbol as a prefix.
     - `*ptr`: Represents the **raw pointer value** (the address). `printf("%p", *ptr)` prints the address.
-    - `^ptr`: Represents the **unique ownership handle**. `let ^q = ^p` moves the handle.
+    - `^ptr`: Represents the **unique ownership handle**. `auto ^q = ^p` moves the handle.
     - `~ptr`: Represents the **shared ownership handle** (the control block + data pointer).
 - **Modification of Identity (Reseating)**:
     - `*ptr = new_address`: Changes where the pointer points (reseats the pointer identity).
@@ -233,8 +233,8 @@ Toka uses a unique "morphology" system to manage pointers and handles without ve
 
 ### 5.1 Tasks
 - **Task**: First-class citizen.
-- `let t = task_obj.async`: Start immediate.
-- `let t = task_obj.suspend`: Create lazy task.
+- `auto t = task_obj.async`: Start immediate.
+- `auto t = task_obj.suspend`: Create lazy task.
 - `t.await`: Block/Yield until result.
 - **Return Type**: `await` returns `Enum(Result, AsyncError)`.
 
@@ -278,21 +278,21 @@ Control the **Object Value** (the soul).
 
 ### 5. Nullability Handling (The `is` Operator)
 **Sole Mechanism**: Toka uses the `is` operator as the **only** method for null checks and unwrapping. 
--   **Discarded/Forbidden**: `if let`, `match` for nulls, `== null` checks, implicit smart casts.
+-   **Discarded/Forbidden**: `if auto`, `match` for nulls, `== null` checks, implicit smart casts.
 -   **Syntax**: `if Source is Target { ... }`
     -   **Source Expression**: `^?p` (matches the declaration pattern of the nullable variable).
     -   **Target Expression**: `^p` (matches the desired non-nullable pattern).
     -   **Actual Code**: `if ^?p is ^p { ... }`.
-    -   **Semantics**: Checks if variable `p` (declared as `let ^?p`) is not null. Returns true if valid.
+    -   **Semantics**: Checks if variable `p` (declared as `auto ^?p`) is not null. Returns true if valid.
 -   **Capabilities**:
     -   **Unwrap**: Converts `?` or `!` to non-null (`#` or default).
     -   **Deep Conversion**: `if ~!ptr? is ~ptr`.
 
 | Source Declaration | Check/Unwrap Syntax | Resulting Binding |
 | :--- | :--- | :--- |
-|    let ^?p = null; | `if ^?p is ^p { printf("Not Null!\n"); }` | `p`: Unique Non-null (Check only for now) |
-| `let obj! = ...` | `if obj! is obj { ... }` | `obj`: Object Non-null |
-| `let ~!ptr? = ...` | `if ~!ptr? is ~ptr { ... }` | `ptr`: Shared Non-null |
+|    auto ^?p = null; | `if ^?p is ^p { printf("Not Null!\n"); }` | `p`: Unique Non-null (Check only for now) |
+| `auto obj! = ...` | `if obj! is obj { ... }` | `obj`: Object Non-null |
+| `auto ~!ptr? = ...` | `if ~!ptr? is ~ptr { ... }` | `ptr`: Shared Non-null |
 
 #### C. Control Flow Analysis
 Sema must verify that:
@@ -316,9 +316,9 @@ Sema must verify that:
     - **Trait Check**: `impl` blocks must satisfy trait contracts (warn on `delete`).
     - **Thread Safety**: Verify that any `Token` marked shared variable has a Lock strategy.
     - **Smart Pointer Ownership**:
-        - **Unique (`^`)**: Enforce **Move Semantics**. Assignment `let ^q = ^p` implies move; `p` effectively becomes invalid (though currently implemented as runtime nulling, Sema should eventually track this).
+        - **Unique (`^`)**: Enforce **Move Semantics**. Assignment `auto ^q = ^p` implies move; `p` effectively becomes invalid (though currently implemented as runtime nulling, Sema should eventually track this).
         - **Shared (`~`)**: Enforce type compatibility. Shared pointers can only be initialized from other Shared pointers (copy/incref) or fresh allocations (`new`).
-    - **Type Inference**: Correctly propagate `IsUnique`/`IsShared` attributes during type inference (e.g., `let ~x = ...`).
+    - **Type Inference**: Correctly propagate `IsUnique`/`IsShared` attributes during type inference (e.g., `auto ~x = ...`).
     - **Permissions & Attributes**:
         - **Object Value Permission**: Cannot upgrade. If the source object is immutable, the destination object cannot become mutable, even on move.
         - **Pointer Permission**: Can be redefined on move. The mutability/nullability of the pointer itself (not the pointed-to value) can change when moved to a new variable.
@@ -346,13 +346,13 @@ fn process(d: Data) -> void {
 }
 
 fn main() {
-    let x# = 10         // Mutable int
+    auto x# = 10         // Mutable int
     x# = 11             // Mutation with token
     
-    let ^p = new Data{v = 0} // Heap alloc
+    auto ^p = new Data{v = 0} // Heap alloc
     // p.v = 1 // Error: p points to immutable Data
     
-    let ^p2# = new Data{v = 0}
+    auto ^p2# = new Data{v = 0}
     p2#.v = 1     // OK: p2 points to mutable Data
     
     process(p2)     // Implicit optimization to clean reference

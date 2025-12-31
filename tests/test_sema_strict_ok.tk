@@ -1,11 +1,11 @@
 fn main() {
     // 1. Valid Arithmetic
-    let i = 1 + 2; 
-    // let f = 1.0 + 2.0;
+    auto i = 1 + 2; 
+    // auto f = 1.0 + 2.0;
 
     // 2. Valid Comparison
-    let b = 1 == 2;
-    let b2 = 1 < 2;
+    auto b = 1 == 2;
+    auto b2 = 1 < 2;
 
     // 3. Valid If Condition
     if (true) {}

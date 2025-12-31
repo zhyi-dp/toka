@@ -1,8 +1,8 @@
 struct Point { x: i32 }
 
 fn main() -> i32 {
-    let p = ^Point { x = 10 };
-    let &y = &p;
-    let z = ^p; // Error: cannot move p while it is borrowed
+    auto p = ^Point { x = 10 };
+    auto &y = &p;
+    auto z = ^p; // Error: cannot move p while it is borrowed
     return 0;
 }
