@@ -60,6 +60,12 @@ public:
   std::string toString() const override { return "null"; }
 };
 
+class NoneExpr : public Expr {
+public:
+  NoneExpr() {}
+  std::string toString() const override { return "none"; }
+};
+
 class VariableExpr : public Expr {
 public:
   std::string Name;

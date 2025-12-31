@@ -481,7 +481,8 @@ std::string Sema::checkExpr(Expr *E) {
           else if (Unary->Op == TokenType::Ampersand)
             Morph = "&";
 
-          return Morph + (Info->IsPointerNullable ? "?" : "") + Info->Type;
+          bool isNullable = Info->IsPointerNullable || Info->IsValueNullable;
+          return Morph + (isNullable ? "?" : "") + Info->Type;
         }
       }
       return (Unary->Op == TokenType::Star
@@ -529,10 +530,16 @@ std::string Sema::checkExpr(Expr *E) {
       error(Var, "cannot access '" + Var->Name +
                      "' while it is mutably borrowed (Rule 406)");
     }
-    return Info.Type +
+    std::string baseType = Info.Type;
+    if (!baseType.empty() && baseType.back() == '?')
+      baseType.pop_back();
+
+    return baseType +
            (Info.IsValueNullable || Info.IsPointerNullable ? "?" : "");
   } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
     return "null";
+  } else if (auto *None = dynamic_cast<NoneExpr *>(E)) {
+    return "none";
   } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) {
     if (Bin->Op == "is") {
       checkExpr(Bin->LHS.get());
@@ -606,13 +613,43 @@ std::string Sema::checkExpr(Expr *E) {
             error(Bin,
                   "cannot modify '" + Var->Name + "' while it is borrowed");
           }
-          if (!InfoPtr->IsValueMutable && !InfoPtr->IsRebindable) {
-            error(Var,
-                  "cannot assign to '" + Var->Name + "' without # permission");
+          // FOR POINTER TYPES: ANY assignment to the variable itself is a
+          // Reseat. Because changing the view 'p' of a pointer variable means
+          // changing what it points to.
+          if (!InfoPtr->Morphology.empty()) {
+            if (!InfoPtr->IsRebindable) {
+              error(LHSExpr,
+                    "cannot reassign fixed pointer '" + Var->Name +
+                        "' (requires morphology # or !, e.g. ^# or ^!)");
+            } else if (!isTypeCompatible(LHS, RHS)) {
+              // This handles the 'null' vs 'none' check and '?' slot check
+              error(LHSExpr, "assignment type mismatch: cannot assign '" + RHS +
+                                 "' to '" + LHS + "'");
+            }
+          } else {
+            // FOR PLAIN VALUES: Assignment is a Value Mutation.
+            if (!InfoPtr->IsValueMutable) {
+              error(LHSExpr, "cannot assign to immutable variable '" +
+                                 Var->Name + "' (# required)");
+            }
           }
           if (!Var->IsMutable) {
             error(Var, "cannot modify variable '" + Var->Name +
                            "' without # suffix");
+          }
+        }
+      } else if (auto *Un = dynamic_cast<UnaryExpr *>(LHSExpr)) {
+        // Identity reseating: *p = ..., ^p = ...
+        if (Un->Op == TokenType::Star || Un->Op == TokenType::Caret ||
+            Un->Op == TokenType::Tilde) {
+          if (auto *Var = dynamic_cast<VariableExpr *>(Un->RHS.get())) {
+            SymbolInfo *InfoPtr = nullptr;
+            if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {
+              if (!InfoPtr->IsRebindable) {
+                error(LHSExpr, "cannot reseat fixed pointer identity '" +
+                                   Var->Name + "' (morphology # required)");
+              }
+            }
           }
         }
       } else if (auto *Memb = dynamic_cast<MemberExpr *>(LHSExpr)) {
@@ -788,9 +825,9 @@ std::string Sema::checkExpr(Expr *E) {
     return Init->StructName;
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
     std::string ObjTypeFull = checkExpr(Memb->Object.get());
-    if (!ObjTypeFull.empty() && ObjTypeFull.back() == '?') {
-      error(Memb, "cannot access member of nullable object '" + ObjTypeFull +
-                      "' (Rule 408)");
+    if (ObjTypeFull.find('?') != std::string::npos) {
+      error(Memb, "cannot access member of nullable '" + ObjTypeFull +
+                      "' without 'is' check (Rule 408)");
     }
     std::string ObjType = resolveType(ObjTypeFull);
 
@@ -799,7 +836,11 @@ std::string Sema::checkExpr(Expr *E) {
                                ObjType[0] == '*' || ObjType[0] == '~')) {
       ObjType = ObjType.substr(1);
     }
-    // Suffix checks if it stayed? substr(1) might leave '?' if it was '^?Point'
+    // Strip suffix '?' if it was '^?Point' -> '?Point' -> 'Point'
+    if (!ObjType.empty() && ObjType.back() == '?')
+      ObjType.pop_back();
+
+    // Secondary middle check if prefix icon remained somehow?
     if (!ObjType.empty() && ObjType[0] == '?')
       ObjType = ObjType.substr(1);
 
@@ -867,14 +908,10 @@ std::string Sema::checkExpr(Expr *E) {
 }
 
 std::string Sema::resolveType(const std::string &Type) {
-  std::string base = Type;
-  if (!base.empty() && base.back() == '?')
-    base.pop_back();
-
-  if (TypeAliasMap.count(base)) {
-    return resolveType(TypeAliasMap[base]);
+  if (TypeAliasMap.count(Type)) {
+    return resolveType(TypeAliasMap[Type]);
   }
-  return base;
+  return Type;
 }
 
 bool Sema::isTypeCompatible(const std::string &Target,
@@ -892,9 +929,23 @@ bool Sema::isTypeCompatible(const std::string &Target,
     return true;
 
   if (S == "null") {
-    // Allow assigning null to pointers (start with ^ or *)
-    if (T.size() > 0 && (T[0] == '^' || T[0] == '*' || T[0] == '~'))
+    // Identity nulling: Requires the morphology to be nullable (^? or ^!)
+    if (T.size() >= 2 &&
+        (T[0] == '^' || T[0] == '*' || T[0] == '~' || T[0] == '&')) {
+      return (T[1] == '?' || T[1] == '!');
+    }
+    return false;
+  }
+  if (S == "none") {
+    // Value nulling: Requires the value type to have a nullable suffix
+    // But we must distinguish between ^?T (pointer nullable) and ^T? (value
+    // nullable) Actually in checkExpr(VariableExpr), we return baseType + "?"
+    // if either is nullable.
+    // To be strict, none should target the value attribute.
+    if (!T.empty() && T.back() == '?') {
       return true;
+    }
+    return false;
   }
 
   // Basic Tuple/Struct weak check: if both look like tuples, allow for now

@@ -8,10 +8,10 @@ Toka is a systems programming language created by YiZhonghua in 2025. It is desi
 
 Toka eliminates hidden memory states by making properties explicit through orthogonal suffix tokens. This allows you to read the "shape" of memory usage at a glance.
 
-| Token | Meaning (Variable) | Meaning (Pointer) |
+| Token | Meaning (Value/Content) | Meaning (Identity/Address) |
 | :--- | :--- | :--- |
-| `#` | **Writable** (Mutable) | **Swappable** (Re-seatable) |
-| `?` | **Nullable** | **Nullable Reference** |
+| `#` | **Writable**: Can modify fields | **Swappable**: Can point elsewhere |
+| `?` | **Option**: Can be `none` | **Nullable**: Can be `null` |
 | `^` | - | **Unique Pointer** (Ownership) |
 | `~` | - | **Shared Pointer** (Ref Counted) |
 
@@ -115,9 +115,14 @@ fn main() {
 }
 
 fn null_safety() {
-    let ^?p = null;
+    let ^?p = null; // Identity is Nullable
     if ^?p is ^p {
-        printf("Not Null!\n");
+        printf("Not Null!\n"); 
+    }
+    
+    let obj! = none; // Value is Nullable (Option)
+    if obj! is obj {
+        printf("Object exists!\n");
     }
 }
 ```

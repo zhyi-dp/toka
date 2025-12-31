@@ -745,7 +745,8 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
   if (auto *bl = dynamic_cast<const BoolExpr *>(expr)) {
     return llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), bl->Value);
   }
-  if (dynamic_cast<const NullExpr *>(expr)) {
+  if (dynamic_cast<const NullExpr *>(expr) ||
+      dynamic_cast<const NoneExpr *>(expr)) {
     return llvm::ConstantPointerNull::get(llvm::PointerType::get(m_Context, 0));
   }
   if (auto *str = dynamic_cast<const StringExpr *>(expr)) {

@@ -54,9 +54,9 @@ Compiler parser should treat these as reserved.
 - `[]`: Arrays only.
 - `{}`: Blocks, Scopes, Object initialization.
 - `^`: Pointer prefix (e.g., `^Person`).
-- `#`: **Write Token** (Writable / Swappable).
-- `?`: **Null Token** (Nullable).
-- `!`: **Write + Null Token**.
+- `#`: **Write Token** (Writable Content / Swappable Address).
+- `?`: **Null Token** (Nullable: `none` for objects, `null` for pointers).
+- `!`: **Write + Null Token** (Writable/Swappable + Nullable).
 - `$`: **None Token** (Immutable & Non-null), usually omitted.
 - **Literal Defaults**: 
     - Integer literals without suffix: `i32`.
@@ -72,19 +72,28 @@ Compiler parser should treat these as reserved.
 ### 3.1 The Attribute Token System (Core Feature)
 Toka separates **storage binding** (`let`) from **memory properties** (Tokens).
 
-| Token | Meaning on Object | Meaning on Pointer (`^`) |
+| Token | Meaning on Object | Meaning on Pointer (`^`, `*`, `~`) |
 | :--- | :--- | :--- |
-| `#` | **Writable**: Can modify fields. | **Swappable**: Can change address stored. |
-| `?` | **Nullable**: Can be `none`. | **Nullable**: Can be `null`. |
+| `#` | **Writable** (Content) | **Swappable** (Identity/Address) |
+| `?` | **Nullable Slot** (Content) | **Nullable Slot** (Identity/Address) |
 | `!` | **Writable + Nullable**. | **Swappable + Nullable**. |
 | `$` | **Immutable + Non-null**. | **Fixed + Non-null**. |
 
 **Syntax Rules:**
 - Tokens are suffixes to the variable name (e.g., `let x# = ...`).
 - For pointers, tokens can attach to the pointer symbol `^` AND the variable name, creating 16 combinations (e.g., `let ^#p?`).
-    - `^#`: Pointer is swappable (can point elsewhere).
-    - `p?`: Object pointed to is nullable (can be `none`?). *Correction*: `?` usually implies the wrapper is nullable.
-    - *Clarification from doc*: `let ^?ptr#` = Nullable non-swappable pointer, pointing to a Writable non-nullable object.
+    - `^#`: Pointer address is swappable (can point elsewhere).
+    - `p?`: Object content is nullable (can be `none`).
+    - *Clarification*: `let ^?ptr#` = Nullable non-swappable pointer, pointing to a Writable non-nullable object.
+
+#### 3.1.1 Reseat vs. Mutation
+Toka distinguishes between changing **where** a pointer points and **what** it points to.
+- **Reseat (Identity Change)**: `p = ...` or `*p = null`. 
+    - Requires **Morphology `#` or `!`** (e.g., `^#` or `^!`).
+    - If the source is `null`, Morphology must also permit a null slot (`?` or `!`).
+- **Mutation (Content Change)**: `p.field = ...`.
+    - Requires **Value `#` or `!`** (e.g., `p#` or `p!`).
+    - If the source is `none`, Value must also permit a none slot (`?` or `!`).
 
 ### 3.2 Basic Types
 - `i8`..`i64`, `u8`..`u64`, `f32`, `f64`
@@ -281,7 +290,7 @@ Control the **Object Value** (the soul).
 
 | Source Declaration | Check/Unwrap Syntax | Resulting Binding |
 | :--- | :--- | :--- |
-| `let ^?p = ...` | `if ^?p is ^p { ... }` | `p`: Unique Non-null (Check only for now) |
+|    let ^?p = null; | `if ^?p is ^p { printf("Not Null!\n"); }` | `p`: Unique Non-null (Check only for now) |
 | `let obj! = ...` | `if obj! is obj { ... }` | `obj`: Object Non-null |
 | `let ~!ptr? = ...` | `if ~!ptr? is ~ptr { ... }` | `ptr`: Shared Non-null |
 
