@@ -1,17 +1,17 @@
 fn main() {
     // 1. Arithmetic Type Mismatch
-    auto i = 1 + 2.0; // Error: operands must be same type
+    auto i = 1 + 2.0 // Error: operands must be same type
 
     // 2. Comparison Type Mismatch
-    auto c = 1 == "s"; // Error: operands must be same type
+    auto c = 1 == "s" // Error: operands must be same type
 
     // 3. If Condition Type Mismatch
     if (1) {} // Error: condition must be bool
 
     // 4. Dereference Non-Pointer
     auto x = 10
-    auto y = *x; // Error: cannot dereference non-pointer
+    auto y = *x // Error: cannot dereference non-pointer
 
     // 5. Variable Type Mismatch
-    auto z: i32 = "hello"; // Error: mismatch
+    auto z: i32 = "hello" // Error: mismatch
 }

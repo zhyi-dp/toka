@@ -14,7 +14,7 @@ fn main() -> i32 {
         auto &z# = &x#
         z# = 20
         printf("z=%d\n", z)
-        // printf("x=%d\n", x); // This would be an error
+        // printf("x=%d\n", x) // This would be an error
     }
     
     printf("final x=%d\n", x)

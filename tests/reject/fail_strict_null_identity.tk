@@ -2,6 +2,6 @@ shape Data (v: i32)
 
 fn main() -> i32 {
     auto ^#p = new Data(v = 42)
-    *p = null; // Should Fail: ^p is not nullable
+    *p = null // Should Fail: ^p is not nullable
     return 0
 }

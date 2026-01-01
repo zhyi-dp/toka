@@ -17,11 +17,11 @@ Toka eliminates hidden memory states by making properties explicit through ortho
 
 **Example:**
 ```scala
-auto x# = 10;        // Mutable Integer
-x# = 11;            // OK
+auto x# = 10        // Mutable Integer
+x# = 11            // OK
 
-auto ^p = new Rect;  // Unique Pointer to Rect (default init)
-auto ^#p2? = ...;    // Mutable (Swappable), Nullable, Unique Pointer
+auto ^p = new Rect  // Unique Pointer to Rect (default init)
+auto ^#p2? = ...    // Mutable (Swappable), Nullable, Unique Pointer
 ```
 
 ## ✅ Project Status (Roadmap)
@@ -125,12 +125,12 @@ fn main() {
 }
 
 fn null_safety() {
-    auto ^?p = null; // Identity is Nullable
+    auto ^?p = null // Identity is Nullable
     if ^?p is ^p {
         printf("Not Null!\n")
     }
     
-    auto obj! = none; // Value is Nullable (Option)
+    auto obj! = none // Value is Nullable (Option)
     if obj! is obj {
         printf("Object exists!\n")
     }

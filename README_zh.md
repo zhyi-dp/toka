@@ -17,11 +17,11 @@ Toka 通过正交的后缀标记让内存属性显式化，消除了隐藏的内
 
 **示例:**
 ```scala
-auto x# = 10;        // 可变整数 (Mutable Integer)
-x# = 11;            // 允许修改 (OK)
+auto x# = 10        // 可变整数 (Mutable Integer)
+x# = 11            // 允许修改 (OK)
 
-auto ^p = new Rect;  // Rect 的独占指针 (默认初始化)
-auto ^#p2? = ...;    // 可交换(指向可变)、可空、独占指针
+auto ^p = new Rect  // Rect 的独占指针 (默认初始化)
+auto ^#p2? = ...    // 可交换(指向可变)、可空、独占指针
 ```
 
 ## ✅ 项目状态 (路线图)
@@ -124,12 +124,12 @@ fn main() {
 }
 
 fn null_safety() {
-    auto ^?p = null; // 身份可空 (Identity is Nullable)
+    auto ^?p = null // 身份可空 (Identity is Nullable)
     if ^?p is ^p {
-        printf("Not Null!\n"); // 只有在指针不为空时执行
+        printf("Not Null!\n") // 只有在指针不为空时执行
     }
     
-    auto obj! = none; // 内容可空 (Value is Nullable)
+    auto obj! = none // 内容可空 (Value is Nullable)
     if obj! is obj {
         printf("Object exists!\n")
     }

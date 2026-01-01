@@ -376,7 +376,7 @@ Control the **Object Value** (the soul).
 
 | Source Declaration | Check/Unwrap Syntax | Resulting Binding |
 | :--- | :--- | :--- |
-|    auto ^?p = null; | `if ^?p is ^p { printf("Not Null!\n"); }` | `p`: Unique Non-null (Check only for now) |
+|    auto ^?p = null | `if ^?p is ^p { printf("Not Null!\n") }` | `p`: Unique Non-null (Check only for now) |
 | `auto obj! = ...` | `if obj! is obj { ... }` | `obj`: Object Non-null |
 | `auto ~!ptr? = ...` | `if ~!ptr? is ~ptr { ... }` | `ptr`: Shared Non-null |
 
@@ -420,7 +420,7 @@ Sema must verify that:
         - **Unique**: Check for null; `free` if not null.
     - **In-place Initialization**: If a complex type (Struct/Tuple) is initialized with a slightly different type (e.g., different sized integers), CodeGen must perform **Member-wise conversion** (creating temporaries and casting each field) rather than a simple bit-cast to ensure data integrity.
     - **CodeGen Safety & Dead Code (Dead Instruction Probes)**:
-        - Before emitting ANY instruction, CodeGen MUST check if the current `BasicBlock` is terminated: `if (!m_Builder.GetInsertBlock() || m_Builder.GetInsertBlock()->getTerminator()) return nullptr;`.
+        - Before emitting ANY instruction, CodeGen MUST check if the current `BasicBlock` is terminated: `if (!m_Builder.GetInsertBlock() || m_Builder.GetInsertBlock()->getTerminator()) return nullptr`.
         - This prevents LLVM assertion failures when generating code for branches that follow a `break`, `continue`, or `return`.
         - In `BinaryExpr`, check liveness after each operand evaluation, as the evaluation itself might contain a terminator (e.g., a function call that includes a non-local break).
         - **Result Allocas**: Ensure `resultAddr` allocas for `IfExpr`, `WhileExpr`, etc., are created at the VERY BEGINNING of the expression generation, before any branches, to ensure they are accessible from all paths.

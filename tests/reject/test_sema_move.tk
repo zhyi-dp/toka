@@ -2,7 +2,7 @@ shape Rect (w: i32, h: i32)
 
 fn main() {
     auto ^r1 = new Rect(w=1, h=1)
-    auto ^r2 = ^r1; // Moves r1 to r2
+    auto ^r2 = ^r1 // Moves r1 to r2
     
-    auto x = r1.w; // Error: use of moved value
+    auto x = r1.w // Error: use of moved value
 }

@@ -2,6 +2,6 @@ shape Point (x: i32)
 fn main() -> i32 {
     auto p# = Point(x = 10)
     auto &y# = &p#
-    auto val = p.x; // Error: p is mutably borrowed by y
+    auto val = p.x // Error: p is mutably borrowed by y
     return 0
 }

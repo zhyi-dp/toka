@@ -101,7 +101,7 @@ fn main() -> i32 {
     }
 
     {
-        auto &c = &a; // immutable ref
+        auto &c = &a // immutable ref
         printf("[%03d]Immutable ref: c is %d\n", logi#++, c)
         // rule 405: multiple immutable refs are fine, and accessing 'a' read-only is fine
         printf("[%03d]Original a is still %d\n", logi#++, a)
@@ -132,7 +132,7 @@ fn main() -> i32 {
     {
         printf("Testing Shared Semantics...\n")
 //        auto ~s1# = new Point{x = 1000, y = 2000, z = 0}
-//        auto ~s2 = ~s1; // Shared Copy (ref++)
+//        auto ~s2 = ~s1 // Shared Copy (ref++)
 //        s1#.x = 3000
 //        printf("[%03d]Shared s1.x=3000\n", logi#++)
 //        if (s2.x == 3000) {
