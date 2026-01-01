@@ -1730,12 +1730,16 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     return m_Builder.CreateLoad(st, alloca);
   }
   if (auto *arr = dynamic_cast<const ArrayExpr *>(expr)) {
-    if (arr->Elements.empty())
-      return nullptr;
+    if (arr->Elements.empty()) {
+      llvm::ArrayType *at = llvm::ArrayType::get(m_Builder.getInt32Ty(), 0);
+      llvm::Value *alloca = m_Builder.CreateAlloca(at, nullptr, "empty_array");
+      return m_Builder.CreateLoad(at, alloca);
+    }
     std::vector<llvm::Value *> vals;
     for (auto &e : arr->Elements)
       vals.push_back(genExpr(e.get()));
-    llvm::ArrayType *at = llvm::ArrayType::get(vals[0]->getType(), vals.size());
+    llvm::ArrayType *at =
+        llvm::ArrayType::get(vals[0]->getType(), (uint64_t)vals.size());
     llvm::Value *alloca = m_Builder.CreateAlloca(at, nullptr, "arrayliteral");
     for (size_t i = 0; i < vals.size(); ++i) {
       llvm::Value *ptr = m_Builder.CreateInBoundsGEP(

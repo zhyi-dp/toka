@@ -705,10 +705,18 @@ std::string Sema::checkExpr(Expr *E) {
     return (thenType != "void") ? thenType : elseType;
   } else if (auto *we = dynamic_cast<WhileExpr *>(E)) {
     checkExpr(we->Condition.get());
-    m_ControlFlowStack.push_back({"", "void", true});
+    bool tookOver = false;
+    if (!m_ControlFlowStack.empty() && !m_ControlFlowStack.back().IsLoop &&
+        !m_ControlFlowStack.back().Label.empty()) {
+      m_ControlFlowStack.back().IsLoop = true;
+      tookOver = true;
+    } else {
+      m_ControlFlowStack.push_back({"", "void", true});
+    }
     checkStmt(we->Body.get());
     std::string bodyType = m_ControlFlowStack.back().ExpectedType;
-    m_ControlFlowStack.pop_back();
+    if (!tookOver)
+      m_ControlFlowStack.pop_back();
 
     std::string elseType = "void";
     if (we->ElseBody) {
@@ -727,10 +735,18 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return (bodyType != "void") ? bodyType : elseType;
   } else if (auto *le = dynamic_cast<LoopExpr *>(E)) {
-    m_ControlFlowStack.push_back({"", "void", true});
+    bool tookOver = false;
+    if (!m_ControlFlowStack.empty() && !m_ControlFlowStack.back().IsLoop &&
+        !m_ControlFlowStack.back().Label.empty()) {
+      m_ControlFlowStack.back().IsLoop = true;
+      tookOver = true;
+    } else {
+      m_ControlFlowStack.push_back({"", "void", true});
+    }
     checkStmt(le->Body.get());
     std::string res = m_ControlFlowStack.back().ExpectedType;
-    m_ControlFlowStack.pop_back();
+    if (!tookOver)
+      m_ControlFlowStack.pop_back();
     return res;
   } else if (auto *fe = dynamic_cast<ForExpr *>(E)) {
     std::string collType = checkExpr(fe->Collection.get());
@@ -745,10 +761,18 @@ std::string Sema::checkExpr(Expr *E) {
     Info.Morphology = fe->IsReference ? "&" : "";
     CurrentScope->define(fe->VarName, Info);
 
-    m_ControlFlowStack.push_back({"", "void", true});
+    bool tookOver = false;
+    if (!m_ControlFlowStack.empty() && !m_ControlFlowStack.back().IsLoop &&
+        !m_ControlFlowStack.back().Label.empty()) {
+      m_ControlFlowStack.back().IsLoop = true;
+      tookOver = true;
+    } else {
+      m_ControlFlowStack.push_back({"", "void", true});
+    }
     checkStmt(fe->Body.get());
     std::string bodyType = m_ControlFlowStack.back().ExpectedType;
-    m_ControlFlowStack.pop_back();
+    if (!tookOver)
+      m_ControlFlowStack.pop_back();
 
     std::string elseType = "void";
     if (fe->ElseBody) {
@@ -1011,7 +1035,7 @@ std::string Sema::checkExpr(Expr *E) {
       return "[" + ElemTy + "; " + std::to_string(ArrLit->Elements.size()) +
              "]";
     }
-    return "unknown";
+    return "[i32; 0]";
   }
 
   return "unknown";
