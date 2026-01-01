@@ -1,6 +1,6 @@
 struct Rect { w: i32, h: i32 }
 
-extern fn printf(*fmt: i8, ...) -> i32
+import core/io::printf
 
 fn main() -> i32 {
     auto ^r1 = new Rect{w=1, h=1}
@@ -8,6 +8,6 @@ fn main() -> i32 {
     
     // r2 is valid
     auto x = r2.w; // OK
-    io::printf("Move OK: x is %d\n", x)
+    printf("Move OK: x is %d\n", x)
     return 0
 }

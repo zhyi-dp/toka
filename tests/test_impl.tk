@@ -1,4 +1,4 @@
-extern fn printf(*fmt: i8, ...) -> i32
+import core/io::printf
 
 struct Rect {
     width: i32,
@@ -20,9 +20,9 @@ fn main() -> i32 {
     
     // Test method call
     auto a = r.area()
-    io::printf("Area: %d\n", a)
+    printf("Area: %d\n", a)
     
     auto p = r.perimeter()
-    io::printf("Perimeter: %d\n", p)
+    printf("Perimeter: %d\n", p)
     return 0
 }

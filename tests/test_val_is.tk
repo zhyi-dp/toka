@@ -1,4 +1,4 @@
-extern fn printf(fmt: str, ...) -> i32
+import core/io::printf
 
 fn main() -> i32 {
     auto x! = 10; // Nullable integer (not typical in Toka but testing the mechanism)

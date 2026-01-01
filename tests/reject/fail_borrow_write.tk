@@ -4,6 +4,6 @@ fn main() -> i32 {
     auto x# = 10
     auto &y = &x
     x# = 20; // Error: x is borrowed by y (immutable borrow still blocks owner write)
-    io::printf("y is %d\n", y)
+    printf("y is %d\n", y)
     return 0
 }

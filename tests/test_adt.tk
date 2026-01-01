@@ -1,4 +1,4 @@
-extern fn printf(*fmt: i8, ...) -> i32
+import core/io::printf
 
 option State {
     On = (),
@@ -11,23 +11,23 @@ fn main() -> i32 {
     
     match s {
         On => {
-            io::printf("Matched On!\n")
+            printf("Matched On!\n")
         }
         Off => {
-            io::printf("Matched Off!\n")
+            printf("Matched Off!\n")
         }
         _ => {
-            io::printf("Matched Default/Wildcard!\n")
+            printf("Matched Default/Wildcard!\n")
         }
     }
     
     auto e = State::ErrCode(404)
     match e {
         auto ErrCode(code) => {
-            io::printf("Matched ErrCode: %d\n", code)
+            printf("Matched ErrCode: %d\n", code)
         }
         _ => {
-            io::printf("Ignored\n")
+            printf("Ignored\n")
         }
     }
     return 0

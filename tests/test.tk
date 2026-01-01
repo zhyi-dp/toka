@@ -10,7 +10,7 @@ struct Point {
 type PointTup = (i32, i32)
 
 fn processPoint(p: PointTup) {
-    io::printf("Point is (%d, %d)\n", p.0, p.1)
+    printf("Point is (%d, %d)\n", p.0, p.1)
     return
 }
 
@@ -32,59 +32,59 @@ fn main() -> i32 {
     auto i# = 0
     auto logi# = 0
     while (i < 3) {
-        io::printf("[%03d]p.x is %d, loop %d\n", logi#++, p.x, i)
+        printf("[%03d]p.x is %d, loop %d\n", logi#++, p.x, i)
         p#.x = p.x + 10
         i# = i + 1
     }
-    io::printf("[%03d]p.x is %d, loop %d\n", logi#++, p.x, i)
+    printf("[%03d]p.x is %d, loop %d\n", logi#++, p.x, i)
     p#.x = addx(p, 10)
-    io::printf("[%03d]p.x is %d (after addx, should be 41)\n", logi#++, p.x)
+    printf("[%03d]p.x is %d (after addx, should be 41)\n", logi#++, p.x)
     
     addtox(p#, 10)
-    io::printf("[%03d]p.x is %d (after addtox, should be 51 because of In-place Capture)\n", logi#++, p.x)
+    printf("[%03d]p.x is %d (after addtox, should be 51 because of In-place Capture)\n", logi#++, p.x)
     
     addtox_useref(&p#, 10)
-    io::printf("[%03d]p.x is %d (after addtox_useref, should be 61)\n", logi#++, p.x)
+    printf("[%03d]p.x is %d (after addtox_useref, should be 61)\n", logi#++, p.x)
 
     auto b# = true
     if (b) {
-        io::printf("[%03d]bool true works\n", logi#++)
+        printf("[%03d]bool true works\n", logi#++)
     }
     b# = false
     if (b) {
-        io::printf("[%03d]bool false error\n", logi#++)
+        printf("[%03d]bool false error\n", logi#++)
     } else {
-        io::printf("[%03d]bool false works\n", logi#++)
+        printf("[%03d]bool false works\n", logi#++)
     }
 
     auto f# = 3.14
-    io::printf("[%03d]float is %f\n", logi#++, f)
+    printf("[%03d]float is %f\n", logi#++, f)
 
     auto s = "Hello Toka"
-    io::printf("[%03d]string is %s\n", logi#++, s)
+    printf("[%03d]string is %s\n", logi#++, s)
 
     auto arr# = [10, 20, 30]
-    io::printf("[%03d]arr[0] is %d\n", logi#++, arr[0])
-    io::printf("[%03d]arr[1] is %d\n", logi#++, arr[1])
+    printf("[%03d]arr[0] is %d\n", logi#++, arr[0])
+    printf("[%03d]arr[1] is %d\n", logi#++, arr[1])
     arr#[2] = 40
-    io::printf("[%03d]arr[2] is %d\n", logi#++, arr[2])
+    printf("[%03d]arr[2] is %d\n", logi#++, arr[2])
 
     auto tup = (1, "tuple", 1.1)
-    io::printf("[%03d]tup.0 is %d\n", logi#++, tup.0)
-    io::printf("[%03d]tup.1 is %s\n", logi#++, tup.1)
-    io::printf("[%03d]tup.2 is %f\n", logi#++, tup.2)
+    printf("[%03d]tup.0 is %d\n", logi#++, tup.0)
+    printf("[%03d]tup.1 is %s\n", logi#++, tup.1)
+    printf("[%03d]tup.2 is %f\n", logi#++, tup.2)
 
     auto pt: PointTup = (100, 200)
     processPoint(pt)
 
     auto PointTup(tup0, tup1) = pt
-    io::printf("[%03d]tup0 is %d\n", logi#++, tup0)
-    io::printf("[%03d]tup1 is %d\n", logi#++, tup1)
+    printf("[%03d]tup0 is %d\n", logi#++, tup0)
+    printf("[%03d]tup1 is %d\n", logi#++, tup1)
 
     auto Point(v0, v1, v2) = p
-    io::printf("[%03d]v0 is %d\n", logi#++, v0)
-    io::printf("[%03d]v1 is %d\n", logi#++, v1)
-    io::printf("[%03d]v2 is %d\n", logi#++, v2)
+    printf("[%03d]v0 is %d\n", logi#++, v0)
+    printf("[%03d]v1 is %d\n", logi#++, v1)
+    printf("[%03d]v2 is %d\n", logi#++, v2)
 
     // Reference tests following safety rules
     auto a# = 10
@@ -95,57 +95,57 @@ fn main() -> i32 {
     }
     // Now b# is out of scope, safe to access a
     if (a == 20) {
-        io::printf("[%03d]Reference assignment works: a is %d\n", logi#++, a)
+        printf("[%03d]Reference assignment works: a is %d\n", logi#++, a)
     } else {
-        io::printf("[%03d]Reference assignment FAILED: a is %d\n", logi#++, a)
+        printf("[%03d]Reference assignment FAILED: a is %d\n", logi#++, a)
     }
 
     {
         auto &c = &a; // immutable ref
-        io::printf("[%03d]Immutable ref: c is %d\n", logi#++, c)
+        printf("[%03d]Immutable ref: c is %d\n", logi#++, c)
         // rule 405: multiple immutable refs are fine, and accessing 'a' read-only is fine
-        io::printf("[%03d]Original a is still %d\n", logi#++, a)
+        printf("[%03d]Original a is still %d\n", logi#++, a)
     }
 
     auto d# = 100
-    io::printf("[%03d]Prefix ++: d is %d\n", logi#++, ++d#)
-    io::printf("[%03d]Prefix --: d is %d\n", logi#++, --d#)
+    printf("[%03d]Prefix ++: d is %d\n", logi#++, ++d#)
+    printf("[%03d]Prefix --: d is %d\n", logi#++, --d#)
 
     {
-        io::printf("Testing Raw pointer...\n")
+        printf("Testing Raw pointer...\n")
         auto *ptr = new Point{x=999, y=111, z=0}
-        io::printf("[%03d]Raw Heap Point: ptr.x=%d, address=%p\n", logi#++, ptr.x, *ptr)
+        printf("[%03d]Raw Heap Point: ptr.x=%d, address=%p\n", logi#++, ptr.x, *ptr)
         del *ptr
     }
 
     // Heap Allocation Test
     auto ^heapNode = new Point{x = 777, y = 888, z = 0}
-    io::printf("[%03d]Heap Point is (%d, %d)\n", logi#++, heapNode.x, heapNode.y)
+    printf("[%03d]Heap Point is (%d, %d)\n", logi#++, heapNode.x, heapNode.y)
 
     {
-        io::printf("Testing Move Semantics...\n")
+        printf("Testing Move Semantics...\n")
         auto ^p = new Point{x=999, y=111, z=0}
         auto ^q = ^p
-        io::printf("[%03d]Moved Heap Point: q.x=%d\n", logi#++, q.x)
+        printf("[%03d]Moved Heap Point: q.x=%d\n", logi#++, q.x)
     }
 
     {
-        io::printf("Testing Shared Semantics...\n")
+        printf("Testing Shared Semantics...\n")
         auto ~s1# = new Point{x = 1000, y = 2000, z = 0};//(ref++)
         {
             auto ~s2# = ~s1#; // Shared Copy (ref++)
             s2#.x = 3000
         }//ref--
-        io::printf("[%03d]Shared s1.x=3000\n", logi#++)
+        printf("[%03d]Shared s1.x=3000\n", logi#++)
         if (s1.x == 3000) {
-            io::printf("[%03d]Shared s1.x sees change (3000)\n", logi#++)
+            printf("[%03d]Shared s1.x sees change (3000)\n", logi#++)
         } else {
-            io::printf("FAIL: s1.x not updated\n")
+            printf("FAIL: s1.x not updated\n")
         }
         //ref-- now ref is zero, free the Point memory
     }
 
-    io::printf("main() done\n")
+    printf("main() done\n")
     return 0
 }
 

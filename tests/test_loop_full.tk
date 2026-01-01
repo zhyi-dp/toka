@@ -3,45 +3,45 @@ import core/io::printf
 fn main() {
     auto i# = 0
     while i < 5 {
-        io::printf("while: %d\n", i)
+        printf("while: %d\n", i)
         i# += 1
         if i == 3 { 
-            io::printf("i = %d, break\n", i)
+            printf("i = %d, break\n", i)
             break 
         }
         if i == 2 { 
-            io::printf("i = %d, continue\n", i)
+            printf("i = %d, continue\n", i)
             continue 
         }
     }
 
     // Range loop
     for auto x in [0,1,2] {
-        io::printf("for range: %d\n", x)
+        printf("for range: %d\n", x)
     }
 
     // Loop as expression with yield
     auto res = loop {
         if i > 10 { 
-            io::printf("i = %d, break\n", i)
+            printf("i = %d, break\n", i)
             break 42 
         }
         i# += 1
     }
-    io::printf("loop result: %d\n", res)
+    printf("loop result: %d\n", res)
 
     // While as expression with yield
     auto j# = 0
     auto res2 = while j < 10 {
         if j == 5 {
-            io::printf("j = %d, break\n", j)
+            printf("j = %d, break\n", j)
             break j * 2 
         }
         j# += 1
     }
     or {
-        io::printf("or, pass\n")
+        printf("or, pass\n")
         pass 0
     }
-    io::printf("while result: %d\n", res2)
+    printf("while result: %d\n", res2)
 }
