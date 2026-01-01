@@ -642,11 +642,50 @@ std::string Sema::checkExpr(Expr *E) {
     return LHS;
   } else if (auto *ie = dynamic_cast<IfExpr *>(E)) {
     std::string condType = checkExpr(ie->Condition.get());
-    if (condType != "bool") {
-      // Allow int if we want truthy/falsy
+
+    // Type Narrowing for 'is' check
+    std::string narrowedVar;
+    SymbolInfo originalInfo;
+    bool narrowed = false;
+
+    if (auto *bin = dynamic_cast<BinaryExpr *>(ie->Condition.get())) {
+      if (bin->Op == "is") {
+        Expr *lhs = bin->LHS.get();
+        VariableExpr *varExpr = dynamic_cast<VariableExpr *>(lhs);
+        if (!varExpr) {
+          if (auto *un = dynamic_cast<UnaryExpr *>(lhs)) {
+            varExpr = dynamic_cast<VariableExpr *>(un->RHS.get());
+          }
+        }
+
+        if (varExpr) {
+          SymbolInfo *infoPtr = nullptr;
+          if (CurrentScope->findSymbol(varExpr->Name, infoPtr)) {
+            narrowedVar = varExpr->Name;
+            originalInfo = *infoPtr;
+            infoPtr->IsValueNullable = false;
+            infoPtr->IsPointerNullable = false;
+            if (!infoPtr->Type.empty() && infoPtr->Type[0] == '?')
+              infoPtr->Type = infoPtr->Type.substr(1);
+            if (!infoPtr->Type.empty() && infoPtr->Type.back() == '?')
+              infoPtr->Type.pop_back();
+            narrowed = true;
+          }
+        }
+      }
     }
+
     m_ControlFlowStack.push_back({"", "void", false});
     checkStmt(ie->Then.get());
+
+    // Restore if narrowed
+    if (narrowed) {
+      SymbolInfo *infoPtr = nullptr;
+      if (CurrentScope->findSymbol(narrowedVar, infoPtr)) {
+        *infoPtr = originalInfo;
+      }
+    }
+
     std::string thenType = m_ControlFlowStack.back().ExpectedType;
     m_ControlFlowStack.pop_back();
 
