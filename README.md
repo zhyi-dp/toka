@@ -43,6 +43,11 @@ We are actively building the compiler self-hosting capabilities.
 - [x] **Object Oriented Features**
     - [x] `impl` blocks (Methods)
     - [x] **Trait System** (Interfaces, Default Implementations)
+- [x] **Control Flow Expressions**
+    - [x] Loops (`while`, `for`, `loop`) as Expressions
+    - [x] Value yielding via `pass` and `break`
+    - [x] `or` Fallback for loops
+    - [x] Targeted labels for `break`/`continue`
 - [ ] **Semantic Analysis (Sema)** *(In Progress)*
     - [x] Infrastructure Scaffolding
     - [x] **Strict Mutability Enforcement** (`#` Check)

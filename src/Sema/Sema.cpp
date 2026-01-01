@@ -182,59 +182,12 @@ void Sema::checkStmt(Stmt *S) {
   } else if (auto *ExprS = dynamic_cast<ExprStmt *>(S)) {
     checkExpr(ExprS->Expression.get());
     clearStmtBorrows();
-  } else if (auto *If = dynamic_cast<IfStmt *>(S)) {
-    std::string CondType = checkExpr(If->Condition.get());
-    clearStmtBorrows();
-    if (CondType != "bool") {
-      error(If->Condition.get(),
-            "if condition must be bool, got '" + CondType + "'");
-    }
-
-    // Narrowing logic for 'is' operator
-    std::string refinedVar = "";
-    if (auto *Bin = dynamic_cast<BinaryExpr *>(If->Condition.get())) {
-      if (Bin->Op == "is") {
-        if (auto *UL = dynamic_cast<UnaryExpr *>(Bin->LHS.get())) {
-          if (auto *UR = dynamic_cast<UnaryExpr *>(Bin->RHS.get())) {
-            if (UL->Op == UR->Op && UL->HasNull && !UR->HasNull) {
-              if (auto *VL = dynamic_cast<VariableExpr *>(UL->RHS.get())) {
-                refinedVar = VL->Name;
-              }
-            }
-          }
-        } else if (auto *VL = dynamic_cast<VariableExpr *>(Bin->LHS.get())) {
-          if (auto *VR = dynamic_cast<VariableExpr *>(Bin->RHS.get())) {
-            if (VL->Name == VR->Name && VL->IsNullable && !VR->IsNullable) {
-              refinedVar = VL->Name;
-            }
-          }
-        }
-      }
-    }
-
-    if (!refinedVar.empty()) {
-      SymbolInfo *Info = nullptr;
-      if (CurrentScope->findSymbol(refinedVar, Info)) {
-        enterScope();
-        SymbolInfo Refined = *Info;
-        Refined.IsPointerNullable = false;
-        Refined.IsValueNullable = false;
-        CurrentScope->Symbols[refinedVar] = Refined;
-        checkStmt(If->Then.get());
-        exitScope();
-      } else {
-        checkStmt(If->Then.get());
-      }
-    } else {
-      checkStmt(If->Then.get());
-    }
-
-    if (If->Else)
-      checkStmt(If->Else.get());
   } else if (auto *Var = dynamic_cast<VariableDecl *>(S)) {
     std::string InitType = "";
     if (Var->Init) {
+      m_ControlFlowStack.push_back({Var->Name, "void", false});
       InitType = checkExpr(Var->Init.get());
+      m_ControlFlowStack.pop_back();
     }
 
     // If type not specified, infer from init
@@ -326,14 +279,6 @@ void Sema::checkStmt(Stmt *S) {
       }
     }
     clearStmtBorrows();
-  } else if (auto *While = dynamic_cast<WhileStmt *>(S)) {
-    std::string CondType = checkExpr(While->Condition.get());
-    clearStmtBorrows();
-    if (CondType != "bool") {
-      error(While->Condition.get(),
-            "while condition must be bool, got '" + CondType + "'");
-    }
-    checkStmt(While->Body.get());
   } else if (auto *Destruct = dynamic_cast<DestructuringDecl *>(S)) {
     std::string InitType = resolveType(checkExpr(Destruct->Init.get()));
     std::string DeclType = resolveType(Destruct->TypeName);
@@ -549,6 +494,7 @@ std::string Sema::checkExpr(Expr *E) {
     std::string LHS = checkExpr(Bin->LHS.get());
     std::string RHS = checkExpr(Bin->RHS.get());
 
+    bool isRefAssign = false;
     // Assignment
     if (Bin->Op == "=") {
       // Move Logic: If RHS is Unique Variable, mark it moved.
@@ -576,29 +522,31 @@ std::string Sema::checkExpr(Expr *E) {
       // pointee. LHS type (from checkExpr) returns the type of the symbol. If
       // Symbol.IsReference is true, does checkExpr return T or ^T?
       // ... (Rest of existing logic)
-      bool IsRefAssign = false;
       if (auto *VarLHS = dynamic_cast<VariableExpr *>(Bin->LHS.get())) {
         SymbolInfo Info;
         if (CurrentScope->lookup(VarLHS->Name, Info)) {
           if (Info.IsReference()) {
             // It's a reference variable.
             // We expect RHS to match the Pointee type.
-            // Type is likely "^i32". Pointee is "i32".
-            if (LHS.size() > 1 && LHS[0] == '^') {
+            if (LHS.size() > 1 && LHS[0] == '&') {
               std::string Pointee = LHS.substr(1);
               if (!isTypeCompatible(Pointee, RHS)) {
                 error(Bin, "assignment type mismatch (ref): cannot assign '" +
                                RHS + "' to '" + Pointee + "'");
               }
-              return Pointee; // Assignment result type? usually void or
-                              // value.
+              return Pointee;
             }
-            IsRefAssign = true;
+            isRefAssign = true;
           }
         }
       }
+    }
 
-      if (!IsRefAssign && !isTypeCompatible(LHS, RHS) && LHS != "unknown" &&
+    bool isAssign = (Bin->Op == "=" || Bin->Op == "+=" || Bin->Op == "-=" ||
+                     Bin->Op == "*=" || Bin->Op == "/=");
+
+    if (isAssign) {
+      if (!isRefAssign && !isTypeCompatible(LHS, RHS) && LHS != "unknown" &&
           RHS != "unknown") {
         error(Bin, "assignment type mismatch: cannot assign '" + RHS +
                        "' to '" + LHS + "'");
@@ -613,23 +561,13 @@ std::string Sema::checkExpr(Expr *E) {
             error(Bin,
                   "cannot modify '" + Var->Name + "' while it is borrowed");
           }
-          // FOR POINTER TYPES: ANY assignment to the variable itself is a
-          // Reseat. Because changing the view 'p' of a pointer variable means
-          // changing what it points to.
-          // EXCEPTION: References (&) cannot be reseated, so assignment is
-          // value mutation.
           if (!InfoPtr->Morphology.empty() && InfoPtr->Morphology != "&") {
             if (!InfoPtr->IsRebindable) {
               error(LHSExpr,
                     "cannot reassign fixed pointer '" + Var->Name +
                         "' (requires morphology # or !, e.g. ^# or ^!)");
-            } else if (!isTypeCompatible(LHS, RHS)) {
-              // This handles the 'null' vs 'none' check and '?' slot check
-              error(LHSExpr, "assignment type mismatch: cannot assign '" + RHS +
-                                 "' to '" + LHS + "'");
             }
           } else {
-            // FOR PLAIN VALUES: Assignment is a Value Mutation.
             if (!InfoPtr->IsValueMutable) {
               error(LHSExpr, "cannot assign to immutable variable '" +
                                  Var->Name + "' (# required)");
@@ -641,7 +579,6 @@ std::string Sema::checkExpr(Expr *E) {
           }
         }
       } else if (auto *Un = dynamic_cast<UnaryExpr *>(LHSExpr)) {
-        // Identity reseating: *p = ..., ^p = ...
         if (Un->Op == TokenType::Star || Un->Op == TokenType::Caret ||
             Un->Op == TokenType::Tilde) {
           if (auto *Var = dynamic_cast<VariableExpr *>(Un->RHS.get())) {
@@ -669,7 +606,6 @@ std::string Sema::checkExpr(Expr *E) {
           }
         }
       }
-      return LHS;
     }
 
     // Logic
@@ -696,18 +632,151 @@ std::string Sema::checkExpr(Expr *E) {
                      RHS + "')");
       return "unknown";
     }
-    // Result type depends on Op.
-    // Arithmetic
-    // Strict arithmetic: only numeric types
     if (Bin->Op == "+" || Bin->Op == "-" || Bin->Op == "*" || Bin->Op == "/") {
       if (LHS != "i32" && LHS != "i64" && LHS != "f32" && LHS != "f64") {
-        // Maybe allow pointer arithmetic later?
         error(Bin, "operands of '" + Bin->Op + "' must be numeric, got '" +
                        LHS + "'");
       }
     }
 
     return LHS;
+  } else if (auto *ie = dynamic_cast<IfExpr *>(E)) {
+    std::string condType = checkExpr(ie->Condition.get());
+    if (condType != "bool") {
+      // Allow int if we want truthy/falsy
+    }
+    m_ControlFlowStack.push_back({"", "void", false});
+    checkStmt(ie->Then.get());
+    std::string thenType = m_ControlFlowStack.back().ExpectedType;
+    m_ControlFlowStack.pop_back();
+
+    std::string elseType = "void";
+    if (ie->Else) {
+      m_ControlFlowStack.push_back({"", "void", false});
+      checkStmt(ie->Else.get());
+      elseType = m_ControlFlowStack.back().ExpectedType;
+      m_ControlFlowStack.pop_back();
+    }
+
+    if (thenType != "void" && elseType != "void" &&
+        !isTypeCompatible(thenType, elseType)) {
+      error(ie, "If branches have incompatible types: '" + thenType +
+                    "' and '" + elseType + "'");
+    }
+    return (thenType != "void") ? thenType : elseType;
+  } else if (auto *we = dynamic_cast<WhileExpr *>(E)) {
+    checkExpr(we->Condition.get());
+    m_ControlFlowStack.push_back({"", "void", true});
+    checkStmt(we->Body.get());
+    std::string bodyType = m_ControlFlowStack.back().ExpectedType;
+    m_ControlFlowStack.pop_back();
+
+    std::string elseType = "void";
+    if (we->ElseBody) {
+      m_ControlFlowStack.push_back({"", "void", false});
+      checkStmt(we->ElseBody.get());
+      elseType = m_ControlFlowStack.back().ExpectedType;
+      m_ControlFlowStack.pop_back();
+    }
+
+    if (bodyType != "void" && !we->ElseBody) {
+      error(we, "Yielding while loop must have an 'or' block");
+    }
+    if (bodyType != "void" && elseType != "void" &&
+        !isTypeCompatible(bodyType, elseType)) {
+      error(we, "While loop branches have incompatible types");
+    }
+    return (bodyType != "void") ? bodyType : elseType;
+  } else if (auto *le = dynamic_cast<LoopExpr *>(E)) {
+    m_ControlFlowStack.push_back({"", "void", true});
+    checkStmt(le->Body.get());
+    std::string res = m_ControlFlowStack.back().ExpectedType;
+    m_ControlFlowStack.pop_back();
+    return res;
+  } else if (auto *fe = dynamic_cast<ForExpr *>(E)) {
+    std::string collType = checkExpr(fe->Collection.get());
+    std::string elemType = "i32"; // TODO: better inference
+    if (collType.size() > 2 && collType.substr(0, 2) == "[]")
+      elemType = collType.substr(2);
+
+    enterScope();
+    SymbolInfo Info;
+    Info.Type = elemType;
+    Info.IsValueMutable = fe->IsMutable;
+    Info.Morphology = fe->IsReference ? "&" : "";
+    CurrentScope->define(fe->VarName, Info);
+
+    m_ControlFlowStack.push_back({"", "void", true});
+    checkStmt(fe->Body.get());
+    std::string bodyType = m_ControlFlowStack.back().ExpectedType;
+    m_ControlFlowStack.pop_back();
+
+    std::string elseType = "void";
+    if (fe->ElseBody) {
+      m_ControlFlowStack.push_back({"", "void", false});
+      checkStmt(fe->ElseBody.get());
+      elseType = m_ControlFlowStack.back().ExpectedType;
+      m_ControlFlowStack.pop_back();
+    }
+    exitScope();
+
+    if (bodyType != "void" && !fe->ElseBody) {
+      error(fe, "Yielding for loop must have an 'or' block");
+    }
+    if (bodyType != "void" && elseType != "void" &&
+        !isTypeCompatible(bodyType, elseType)) {
+      error(fe, "For loop branches have incompatible types");
+    }
+    return (bodyType != "void") ? bodyType : elseType;
+  } else if (auto *pe = dynamic_cast<PassExpr *>(E)) {
+    std::string valType = checkExpr(pe->Value.get());
+    if (!m_ControlFlowStack.empty()) {
+      if (m_ControlFlowStack.back().ExpectedType == "void") {
+        m_ControlFlowStack.back().ExpectedType = valType;
+      } else if (!isTypeCompatible(m_ControlFlowStack.back().ExpectedType,
+                                   valType)) {
+        error(pe, "Yield type mismatch");
+      }
+    }
+    return "void";
+  } else if (auto *be = dynamic_cast<BreakExpr *>(E)) {
+    std::string valType = "void";
+    if (be->Value)
+      valType = checkExpr(be->Value.get());
+
+    ControlFlowInfo *target = nullptr;
+    if (be->TargetLabel.empty()) {
+      for (auto it = m_ControlFlowStack.rbegin();
+           it != m_ControlFlowStack.rend(); ++it) {
+        if (it->IsLoop) {
+          target = &(*it);
+          break;
+        }
+      }
+    } else {
+      for (auto it = m_ControlFlowStack.rbegin();
+           it != m_ControlFlowStack.rend(); ++it) {
+        if (it->Label == be->TargetLabel) {
+          target = &(*it);
+          break;
+        }
+      }
+    }
+
+    if (!target) {
+      error(be, "Target for break not found");
+    } else {
+      if (valType != "void") {
+        if (target->ExpectedType == "void")
+          target->ExpectedType = valType;
+        else if (!isTypeCompatible(target->ExpectedType, valType))
+          error(be, "Break value type mismatch");
+      }
+    }
+    return "void";
+  } else if (auto *ce = dynamic_cast<ContinueExpr *>(E)) {
+    // Continue target must be a loop
+    return "void";
   } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
     // Check FunctionMap
     if (FunctionMap.count(Call->Callee)) {

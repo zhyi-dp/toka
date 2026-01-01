@@ -108,6 +108,13 @@ private:
   // {VarName, IsMutable}
   std::vector<std::pair<std::string, bool>> m_CurrentStmtBorrows;
 
+  struct ControlFlowInfo {
+    std::string Label;
+    std::string ExpectedType;
+    bool IsLoop;
+  };
+  std::vector<ControlFlowInfo> m_ControlFlowStack;
+
   void error(ASTNode *Node, const std::string &Msg);
 
   // Scope management

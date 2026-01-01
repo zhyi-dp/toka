@@ -1,0 +1,47 @@
+import "core/io"
+
+fn main() {
+    auto i# = 0
+    while i < 5 {
+        printf("while: %d\n", i)
+        i# += 1
+        if i == 3 { 
+            printf("i = %d, break\n", i)
+            break 
+        }
+        if i == 2 { 
+            printf("i = %d, continue\n", i)
+            continue 
+        }
+    }
+
+    // Range loop
+    for auto x in [0,1,2] {
+        printf("for range: %d\n", x)
+    }
+
+    // Loop as expression with yield
+    auto res = loop {
+        if i > 10 { 
+            printf("i = %d, break\n", i)
+            break 42 
+        }
+        i# += 1
+    }
+    printf("loop result: %d\n", res)
+
+    // While as expression with yield
+    auto j# = 0
+    auto res2 = while j < 10 {
+        if j == 5 {
+            printf("j = %d, break\n", j)
+            break j * 2 
+        }
+        j# += 1
+    }
+    or {
+        printf("or, pass\n")
+        pass 0
+    }
+    printf("while result: %d\n", res2)
+}

@@ -453,11 +453,15 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
   if (check(TokenType::LBrace))
     return parseBlock();
   if (check(TokenType::KwIf))
-    return parseIf();
+    return std::make_unique<ExprStmt>(parseIf());
   if (check(TokenType::KwMatch))
     return parseMatchStmt();
   if (check(TokenType::KwWhile))
-    return parseWhile();
+    return std::make_unique<ExprStmt>(parseWhile());
+  if (check(TokenType::KwLoop))
+    return std::make_unique<ExprStmt>(parseLoop());
+  if (check(TokenType::KwFor))
+    return std::make_unique<ExprStmt>(parseForExpr());
   if (check(TokenType::KwReturn))
     return parseReturn();
   if (check(TokenType::KwLet))
@@ -634,6 +638,27 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     Token tok = previous();
     auto node = std::make_unique<StringExpr>(tok.Text);
     node->setLocation(tok, m_CurrentFile);
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
+  } else if (match(TokenType::KwIf)) {
+    expr = parseIf();
+  } else if (match(TokenType::KwWhile)) {
+    expr = parseWhile();
+  } else if (match(TokenType::KwLoop)) {
+    expr = parseLoop();
+  } else if (match(TokenType::KwFor)) {
+    expr = parseForExpr();
+  } else if (match(TokenType::KwBreak)) {
+    expr = parseBreak();
+  } else if (match(TokenType::KwContinue)) {
+    expr = parseContinue();
+  } else if (match(TokenType::KwPass)) {
+    expr = parsePass();
+  } else if (match(TokenType::KwYield)) {
+    // Treat yield as pass for now, or keep it separate if needed
+    Token tok = previous();
+    auto val = parseExpr();
+    auto node = std::make_unique<PassExpr>(std::move(val));
     node->setLocation(tok, m_CurrentFile);
     expr = std::move(node);
   } else if (match(TokenType::KwSelf)) {
@@ -888,8 +913,10 @@ std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
   return node;
 }
 
-std::unique_ptr<Stmt> Parser::parseIf() {
-  Token tok = consume(TokenType::KwIf, "Expected 'if'");
+std::unique_ptr<Expr> Parser::parseIf() {
+  Token tok = previous(); // consumed by match(KwIf)
+  if (tok.Kind != TokenType::KwIf)
+    tok = consume(TokenType::KwIf, "Expected 'if'");
   bool hasParen = match(TokenType::LParen);
   auto cond = parseExpr();
   if (hasParen)
@@ -899,19 +926,94 @@ std::unique_ptr<Stmt> Parser::parseIf() {
   if (match(TokenType::KwElse)) {
     elseStmt = parseStmt();
   }
-  auto node = std::make_unique<IfStmt>(std::move(cond), std::move(thenStmt),
+  auto node = std::make_unique<IfExpr>(std::move(cond), std::move(thenStmt),
                                        std::move(elseStmt));
   node->setLocation(tok, m_CurrentFile);
   return node;
 }
 
-std::unique_ptr<Stmt> Parser::parseWhile() {
-  Token tok = consume(TokenType::KwWhile, "Expected 'while'");
-  consume(TokenType::LParen, "Expected '('");
+std::unique_ptr<Expr> Parser::parseWhile() {
+  Token tok = previous();
+  if (tok.Kind != TokenType::KwWhile)
+    tok = consume(TokenType::KwWhile, "Expected 'while'");
+  bool hasParen = match(TokenType::LParen);
   auto cond = parseExpr();
-  consume(TokenType::RParen, "Expected ')'");
+  if (hasParen)
+    consume(TokenType::RParen, "Expected ')'");
   auto body = parseStmt();
-  auto node = std::make_unique<WhileStmt>(std::move(cond), std::move(body));
+  std::unique_ptr<Stmt> elseBody;
+  if (match(TokenType::KwOr)) {
+    elseBody = parseBlock();
+  }
+  auto node = std::make_unique<WhileExpr>(std::move(cond), std::move(body),
+                                          std::move(elseBody));
+  node->setLocation(tok, m_CurrentFile);
+  return node;
+}
+
+std::unique_ptr<Expr> Parser::parseLoop() {
+  Token tok = previous();
+  if (tok.Kind != TokenType::KwLoop)
+    tok = consume(TokenType::KwLoop, "Expected 'loop'");
+  auto body = parseStmt();
+  auto node = std::make_unique<LoopExpr>(std::move(body));
+  node->setLocation(tok, m_CurrentFile);
+  return node;
+}
+
+std::unique_ptr<Expr> Parser::parseForExpr() {
+  Token tok = previous();
+  if (tok.Kind != TokenType::KwFor)
+    tok = consume(TokenType::KwFor, "Expected 'for'");
+
+  bool isMut = match(TokenType::KwLet);
+  bool isRef = match(TokenType::Ampersand);
+  Token varName =
+      consume(TokenType::Identifier, "Expected variable name in for");
+  consume(TokenType::KwIn, "Expected 'in' in for loop");
+  auto collection = parseExpr();
+  auto body = parseStmt();
+  std::unique_ptr<Stmt> elseBody;
+  if (match(TokenType::KwOr)) {
+    elseBody = parseBlock();
+  }
+  auto node = std::make_unique<ForExpr>(varName.Text, isRef, isMut,
+                                        std::move(collection), std::move(body),
+                                        std::move(elseBody));
+  node->setLocation(tok, m_CurrentFile);
+  return node;
+}
+
+std::unique_ptr<Expr> Parser::parseBreak() {
+  Token tok = previous();
+  std::string label = "";
+  if (match(TokenType::KwTo)) {
+    label = consume(TokenType::Identifier, "Expected label after 'to'").Text;
+  }
+  std::unique_ptr<Expr> val;
+  if (!isEndOfStatement() && !check(TokenType::RBrace)) {
+    val = parseExpr();
+  }
+  auto node = std::make_unique<BreakExpr>(label, std::move(val));
+  node->setLocation(tok, m_CurrentFile);
+  return node;
+}
+
+std::unique_ptr<Expr> Parser::parseContinue() {
+  Token tok = previous();
+  std::string label = "";
+  if (match(TokenType::KwTo)) {
+    label = consume(TokenType::Identifier, "Expected label after 'to'").Text;
+  }
+  auto node = std::make_unique<ContinueExpr>(label);
+  node->setLocation(tok, m_CurrentFile);
+  return node;
+}
+
+std::unique_ptr<Expr> Parser::parsePass() {
+  Token tok = previous();
+  auto val = parseExpr();
+  auto node = std::make_unique<PassExpr>(std::move(val));
   node->setLocation(tok, m_CurrentFile);
   return node;
 }

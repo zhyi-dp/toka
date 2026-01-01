@@ -44,6 +44,10 @@ enum class TokenType {
   KwContinue,
   KwReturn,
   KwYield,
+  KwLoop,
+  KwPass,
+  KwTo,
+  KwOr,
 
   KwTask,
   KwSuspend,

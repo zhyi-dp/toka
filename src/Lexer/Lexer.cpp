@@ -15,6 +15,8 @@ static std::unordered_map<std::string, TokenType> Keywords = {
     {"if", TokenType::KwIf},          {"else", TokenType::KwElse},
     {"match", TokenType::KwMatch},    {"case", TokenType::KwCase},
     {"for", TokenType::KwFor},        {"while", TokenType::KwWhile},
+    {"loop", TokenType::KwLoop},      {"pass", TokenType::KwPass},
+    {"to", TokenType::KwTo},          {"or", TokenType::KwOr},
     {"break", TokenType::KwBreak},    {"continue", TokenType::KwContinue},
     {"return", TokenType::KwReturn},  {"yield", TokenType::KwYield},
     {"Task", TokenType::KwTask},      {"suspend", TokenType::KwSuspend},

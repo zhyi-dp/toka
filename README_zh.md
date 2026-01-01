@@ -43,6 +43,11 @@ auto ^#p2? = ...;    // 可交换(指向可变)、可空、独占指针
 - [x] **面向对象特性**
     - [x] `impl` 块 (方法)
     - [x] **Trait 系统** (接口、默认实现)
+- [x] **控制流表达式 (Control Flow Expressions)**
+    - [x] 循环 (`while`, `for`, `loop`) 作为表达式
+    - [x] 通过 `pass` 和 `break` 产生值
+    - [x] 循环的 `or` 回退块
+    - [x] `break`/`continue` 的定向标签 (Target Labels)
 - [ ] **语义分析 (Sema)** *(进行中)*
     - [x] 基础设施脚手架 (Infrastructure Scaffolding)
     - [x] **严格的可变性强制检查** (`#` 检查)

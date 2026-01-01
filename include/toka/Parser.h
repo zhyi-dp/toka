@@ -3,6 +3,7 @@
 #include "toka/AST.h"
 #include "toka/Lexer.h"
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace toka {
@@ -46,8 +47,13 @@ private:
   std::unique_ptr<Stmt> parseMatchStmt();
 
   std::unique_ptr<Stmt> parseStmt();
-  std::unique_ptr<Stmt> parseIf();
-  std::unique_ptr<Stmt> parseWhile();
+  std::unique_ptr<Expr> parseIf();
+  std::unique_ptr<Expr> parseWhile();
+  std::unique_ptr<Expr> parseLoop();
+  std::unique_ptr<Expr> parseForExpr();
+  std::unique_ptr<Expr> parseBreak();
+  std::unique_ptr<Expr> parseContinue();
+  std::unique_ptr<Expr> parsePass();
   std::unique_ptr<BlockStmt> parseBlock();
   std::unique_ptr<Stmt> parseDeleteStmt();
   std::unique_ptr<ReturnStmt> parseReturn();

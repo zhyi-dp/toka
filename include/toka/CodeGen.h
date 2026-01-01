@@ -60,6 +60,15 @@ private:
   std::map<std::string, const OptionDecl *> m_Options;
   std::map<llvm::Type *, std::string> m_TypeToName;
 
+  struct CFInfo {
+    std::string Label;
+    llvm::BasicBlock *BreakTarget;
+    llvm::BasicBlock *ContinueTarget;
+    llvm::Value *ResultAddr; // Alloca for storing results
+    size_t ScopeDepth;
+  };
+  std::vector<CFInfo> m_CFStack;
+
   struct VariableScopeInfo {
     std::string Name;
     llvm::Value *Alloca;
@@ -70,6 +79,7 @@ private:
 
   llvm::Type *resolveType(const std::string &baseType, bool hasPointer);
 
+  void cleanupScopes(size_t targetDepth);
   llvm::Value *genExpr(const Expr *expr);
   llvm::Value *genAddr(const Expr *expr);
   llvm::Value *genStmt(const Stmt *stmt);

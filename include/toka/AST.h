@@ -265,6 +265,29 @@ public:
   }
 };
 
+class PassExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Value;
+  PassExpr(std::unique_ptr<Expr> val) : Value(std::move(val)) {}
+  std::string toString() const override { return "Pass"; }
+};
+
+class BreakExpr : public Expr {
+public:
+  std::string TargetLabel;
+  std::unique_ptr<Expr> Value;
+  BreakExpr(std::string label, std::unique_ptr<Expr> val)
+      : TargetLabel(std::move(label)), Value(std::move(val)) {}
+  std::string toString() const override { return "Break"; }
+};
+
+class ContinueExpr : public Expr {
+public:
+  std::string TargetLabel;
+  ContinueExpr(std::string label) : TargetLabel(std::move(label)) {}
+  std::string toString() const override { return "Continue"; }
+};
+
 // --- Statements ---
 
 class BlockStmt : public Stmt {
@@ -297,13 +320,13 @@ public:
   std::string toString() const override { return "Delete"; }
 };
 
-class IfStmt : public Stmt {
+class IfExpr : public Expr {
 public:
   std::unique_ptr<Expr> Condition;
   std::unique_ptr<Stmt> Then;
   std::unique_ptr<Stmt> Else;
 
-  IfStmt(std::unique_ptr<Expr> cond, std::unique_ptr<Stmt> thenStmt,
+  IfExpr(std::unique_ptr<Expr> cond, std::unique_ptr<Stmt> thenStmt,
          std::unique_ptr<Stmt> elseStmt)
       : Condition(std::move(cond)), Then(std::move(thenStmt)),
         Else(std::move(elseStmt)) {}
@@ -311,15 +334,45 @@ public:
   std::string toString() const override { return "If(...)"; }
 };
 
-class WhileStmt : public Stmt {
+class WhileExpr : public Expr {
 public:
   std::unique_ptr<Expr> Condition;
   std::unique_ptr<Stmt> Body;
+  std::unique_ptr<Stmt> ElseBody;
 
-  WhileStmt(std::unique_ptr<Expr> cond, std::unique_ptr<Stmt> body)
-      : Condition(std::move(cond)), Body(std::move(body)) {}
+  WhileExpr(std::unique_ptr<Expr> cond, std::unique_ptr<Stmt> body,
+            std::unique_ptr<Stmt> elseBody = nullptr)
+      : Condition(std::move(cond)), Body(std::move(body)),
+        ElseBody(std::move(elseBody)) {}
 
   std::string toString() const override { return "While(...)"; }
+};
+
+class LoopExpr : public Expr {
+public:
+  std::unique_ptr<Stmt> Body;
+  LoopExpr(std::unique_ptr<Stmt> body) : Body(std::move(body)) {}
+
+  std::string toString() const override { return "Loop"; }
+};
+
+class ForExpr : public Expr {
+public:
+  std::string VarName;
+  bool IsReference = false;
+  bool IsMutable = false;
+  std::unique_ptr<Expr> Collection;
+  std::unique_ptr<Stmt> Body;
+  std::unique_ptr<Stmt> ElseBody;
+
+  ForExpr(const std::string &varName, bool isRef, bool isMut,
+          std::unique_ptr<Expr> coll, std::unique_ptr<Stmt> body,
+          std::unique_ptr<Stmt> elseBody = nullptr)
+      : VarName(varName), IsReference(isRef), IsMutable(isMut),
+        Collection(std::move(coll)), Body(std::move(body)),
+        ElseBody(std::move(elseBody)) {}
+
+  std::string toString() const override { return "For(" + VarName + ")"; }
 };
 
 struct MatchCase {

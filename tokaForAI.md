@@ -30,8 +30,8 @@ Compiler parser should treat these as reserved.
 - `Fn`: Synchronous function type.
 
 **Control Flow**
-- `if`, `else`, `match`, `case`
-- `for`, `while`, `break`, `continue`
+- `if`, `else`, `match`, `case`, `pass`
+- `for`, `while`, `loop`, `break`, `continue`
 - `return`, `yield`
 
 **Concurrency**
@@ -172,7 +172,45 @@ Toka distinguishes between changing **where** a pointer points and **what** it p
       - `if auto Some(x, y) = opt { ... }`
       - `if opt is Some { print(opt.0) }`
 
-### 3.4 Traits & Implementation
+### 3.4 Control Flow Expressions
+
+In Toka, all control flow structures can be used as expressions to produce values.
+
+#### 3.4.1 Mechanics of Value Yielding
+- **`pass [value]`**: Used in `if` and `match` branches to yield a value.
+- **`break [to label] [value]`**: Used in `for`, `while`, and `loop` to terminate the loop and yield a value.
+- **`continue [to label]`**: Skips the rest of the loop body and starts the next iteration.
+- **Implicit Rules**:
+    - `break` and `pass` must be the **last statement** within their immediate block `{}` if they are intended to yield a value for that block.
+    - If a control flow structure is used as an expression (e.g., assigned to a variable), **all branches must provide a value** via `pass`, `break`, or `return`.
+
+#### 3.4.2 Loop Expressions & `or` Fallback
+When a `for` or `while` loop is used as an expression, it must provide a fallback value in case the loop completes normally (without a `break`). This is done using the `or` block.
+```scala
+auto val = for auto x in list {
+    if x > 10 {
+        break x  // Loop terminates, val becomes x
+    }
+} or {
+    pass -1      // Loop finished normally, val becomes -1
+}
+```
+*Note*: `loop` does not require an `or` block because it is either infinite or must be terminated by a `break` with a value.
+
+#### 3.4.3 Targeted Control Flow (Labels)
+Loops can be targeted by `break` and `continue` using the name of the variable receiving the loop's value as a label.
+```scala
+auto result = loop {
+    for auto i in [1, 2, 3] {
+        if i == 2 {
+            break to result 42 // Hits the 'loop' directly
+        }
+    }
+}
+```
+If no label is provided, `break` and `continue` target the innermost loop.
+
+### 3.5 Traits & Implementation
 - **Definition**: Trait names are prefixed with `@` in definitions and usage.
   ```scala
   trait @Shape {
@@ -345,6 +383,11 @@ Sema must verify that:
         - **Shared**: Decrement ref-count; release both data and ref-count memory if zero.
         - **Unique**: Check for null; `free` if not null.
     - **In-place Initialization**: If a complex type (Struct/Tuple) is initialized with a slightly different type (e.g., different sized integers), CodeGen must perform **Member-wise conversion** (creating temporaries and casting each field) rather than a simple bit-cast to ensure data integrity.
+    - **CodeGen Safety & Dead Code (Dead Instruction Probes)**:
+        - Before emitting ANY instruction, CodeGen MUST check if the current `BasicBlock` is terminated: `if (!m_Builder.GetInsertBlock() || m_Builder.GetInsertBlock()->getTerminator()) return nullptr;`.
+        - This prevents LLVM assertion failures when generating code for branches that follow a `break`, `continue`, or `return`.
+        - In `BinaryExpr`, check liveness after each operand evaluation, as the evaluation itself might contain a terminator (e.g., a function call that includes a non-local break).
+        - **Result Allocas**: Ensure `resultAddr` allocas for `IfExpr`, `WhileExpr`, etc., are created at the VERY BEGINNING of the expression generation, before any branches, to ensure they are accessible from all paths.
     - Auto-generation of `drop` glue at scope end.
     - `async/await` state machine generation.
 
