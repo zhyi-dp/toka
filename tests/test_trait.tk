@@ -1,9 +1,9 @@
 import core/io::printf
 
-struct Rect {
+shape Rect (
     w: i32,
     h: i32
-}
+)
 
 trait @Shape {
     fn area(self) -> i32
@@ -28,7 +28,7 @@ impl Rect@Fly {
 }
 
 fn main() -> i32 {
-    auto r = Rect { w = 10, h = 20 }
+    auto r = Rect(w = 10, h = 20)
     auto s = r.area()
     printf("Shape Area: %d\n", s)
     auto f = r.fly()

@@ -1,6 +1,6 @@
 import core/io::printf
 
-struct Data { v: i32 }
+shape Data (v: i32)
 
 fn main() -> i32 {
     // Parsing check for Logical Operators
@@ -13,12 +13,12 @@ fn main() -> i32 {
     }
 
     // Checking Parser Update for Attributes
-    auto ^#p1 = new Data{v=10}
+    auto ^#p1 = new Data(v=10)
     printf("Rebindable pointer p1->v: %d\n", p1.v)
 
     {
         // Nullable Pointer
-        auto ^?p2 = new Data{v=99}
+        auto ^?p2 = new Data(v=99)
 
         // New syntax: 'is' operator for null check. 
         if ^?p2 is ^p2 {

@@ -19,9 +19,12 @@ enum class TokenType {
 
   // Keywords
   KwLet,
+  KwAuto,
+  KwMut,
   KwType,
   KwConst,
-  KwStruct,
+  KwShape,
+  KwPacked,
   KwTrait,
   KwImpl,
   KwFn,
@@ -69,7 +72,6 @@ enum class TokenType {
   KwDefer,
   KwMain,
   KwExtern,
-  KwOption,
 
   // Attribute Tokens (When separate, though usually parsed as part of Ident or
   // Type)

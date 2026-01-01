@@ -19,7 +19,7 @@ class Expr;
 class FunctionDecl;
 class ExternDecl;
 class VariableDecl;
-class StructDecl;
+class ShapeDecl;
 class ImplDecl;
 class MethodCallExpr;
 
@@ -57,7 +57,7 @@ private:
   std::map<std::string, bool> m_ValueIsUnique;     // Tracks ^Type for variables
   std::map<std::string, bool> m_ValueIsShared;     // Tracks ~Type for variables
   std::map<std::string, bool> m_ValueIsRawPointer; // Tracks *Type for variables
-  std::map<std::string, const OptionDecl *> m_Options;
+  std::map<std::string, const ShapeDecl *> m_Shapes;
   std::map<llvm::Type *, std::string> m_TypeToName;
 
   struct CFInfo {
@@ -88,10 +88,11 @@ private:
                               bool declOnly = false);
   void genGlobal(const Stmt *stmt);
   void genExtern(const ExternDecl *ext);
-  void genStruct(const StructDecl *str);
-  void genOption(const OptionDecl *opt);
+  void genShape(const ShapeDecl *sh);
   void genImpl(const ImplDecl *impl, bool declOnly = false);
-  llvm::Value *genMatch(const MatchStmt *stmt);
+  llvm::Value *genMatchExpr(const MatchExpr *expr);
+  void genPatternBinding(const MatchArm::Pattern *pat, llvm::Value *targetAddr,
+                         llvm::Type *targetType);
   llvm::Value *genMethodCall(const MethodCallExpr *expr);
 };
 

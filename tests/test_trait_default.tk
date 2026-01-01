@@ -8,9 +8,9 @@ trait @Base {
     fn bar(self) -> i32
 }
 
-struct Test {
+shape Test (
     val: i32
-}
+)
 
 impl Test@Base {
     fn bar(self) -> i32 {
@@ -20,7 +20,7 @@ impl Test@Base {
 }
 
 fn main() -> i32 {
-    auto t = Test { val = 20 }
+    auto t = Test(val = 20)
     auto f = t.foo()
     auto b = t.bar()
     printf("Foo: %d\n", f)

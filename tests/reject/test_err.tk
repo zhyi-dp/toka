@@ -1,9 +1,9 @@
 import core/io::printf
 
-struct Point {
+shape Point (
     x: i32,
     y: i32
-}
+)
 
 fn takes_i32(a: i32) {
     return
@@ -37,7 +37,7 @@ fn main() {
     auto e3 = e1 + e2; // Error: i32 + i64
 
     // 6. Struct initialization type mismatch
-    auto p = Point { x = a, y = 20 }; // Error: x expects i32, a is i64
+    auto p = Point(x = a, y = 20); // Error: x expects i32, a is i64
 
     return
 }

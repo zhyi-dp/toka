@@ -1,10 +1,10 @@
 import core/io::printf
 
-option State {
-    On = (),
-    Off = (),
-    ErrCode = (i32)
-}
+shape State (
+    On |
+    Off |
+    ErrCode(i32)
+)
 
 fn main() -> i32 {
     auto s = State::On()

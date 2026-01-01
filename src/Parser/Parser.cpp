@@ -129,7 +129,7 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->Imports.push_back(parseImport(isPub));
     } else if (check(TokenType::KwFn)) {
       module->Functions.push_back(parseFunctionDecl(isPub));
-    } else if (check(TokenType::KwLet)) {
+    } else if (check(TokenType::KwLet) || check(TokenType::KwAuto)) {
       if (isPub)
         error(peek(), "Global variables cannot be public yet");
       module->Globals.push_back(parseVariableDecl());
@@ -145,15 +145,11 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->Impls.push_back(parseImpl());
     } else if (check(TokenType::KwTrait)) {
       module->Traits.push_back(parseTrait(isPub));
-    } else if (check(TokenType::KwStruct)) {
-      module->Structs.push_back(parseStruct(isPub));
-    } else if (check(TokenType::KwOption)) {
-      module->Options.push_back(parseOptionDecl(isPub));
+    } else if (check(TokenType::KwShape) || check(TokenType::KwPacked)) {
+      module->Shapes.push_back(parseShape(isPub));
     } else if (check(TokenType::Identifier) && checkAt(1, TokenType::Equal)) {
       // Legacy or alternate struct init?
-      // Keeping strict for now, but if this branch is taken, parseStruct fails.
-      // We'll skip fixing the logic bug but update signature.
-      module->Structs.push_back(parseStruct(isPub));
+      module->Shapes.push_back(parseShape(isPub));
     } else {
       if (isPub)
         error(peek(), "Expected declaration after 'pub'");
@@ -164,137 +160,200 @@ std::unique_ptr<Module> Parser::parseModule() {
   return module;
 }
 
-std::unique_ptr<StructDecl> Parser::parseStruct(bool isPub) {
-  consume(TokenType::KwStruct, "Expected 'struct'");
-  Token name = consume(TokenType::Identifier, "Expected struct name");
-  consume(TokenType::LBrace, "Expected '{'");
+std::unique_ptr<MatchArm::Pattern> Parser::parsePattern() {
+  bool isMut = false;
+  bool isRef = false;
+  match(TokenType::KwAuto); // skip auto if present
 
-  std::vector<StructField> fields;
-  while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
-    Token fieldName = consume(TokenType::Identifier, "Expected field name");
-    consume(TokenType::Colon, "Expected ':' after field name");
-
-    bool hasPointer = match(TokenType::Caret);
-    std::string typeName = "";
-    while (!check(TokenType::Comma) && !check(TokenType::RBrace) &&
-           !check(TokenType::EndOfFile)) {
-      // For now simple type name parsing until we see comma or brace
-      // This is a bit loose but works for basic types
-      typeName += advance().Text;
-    }
-    match(TokenType::Comma); // optional comma
-
-    fields.push_back({fieldName.Text, typeName, hasPointer});
+  if (match(TokenType::Ampersand)) {
+    isRef = true;
+    if (match(TokenType::KwMut))
+      isMut = true;
   }
-  consume(TokenType::RBrace, "Expected '}'");
 
-  auto node = std::make_unique<StructDecl>(isPub, name.Text, std::move(fields));
-  node->setLocation(name, m_CurrentFile);
-  return node;
-}
-
-std::unique_ptr<OptionDecl> Parser::parseOptionDecl(bool isPub) {
-  consume(TokenType::KwOption, "Expected 'option'");
-  Token name = consume(TokenType::Identifier, "Expected option name");
-  consume(TokenType::LBrace, "Expected '{' after option name");
-
-  std::vector<OptionVariant> variants;
-  while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
-    Token varName = consume(TokenType::Identifier, "Expected variant name");
-    consume(TokenType::Equal, "Expected '=' after variant name");
-    consume(TokenType::LParen, "Expected '(' for variant fields");
-
-    std::vector<VariantField> fields;
-    while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
-      VariantField field;
-      if (check(TokenType::Identifier) && checkAt(1, TokenType::Colon)) {
-        field.Name = advance().Text;
-        consume(TokenType::Colon, "Expected ':' after field name");
-      }
-
-      // Handle decorators
-      if (match(TokenType::Star))
-        field.HasPointer = true;
-      else if (match(TokenType::Caret))
-        field.IsUnique = true;
-      else if (match(TokenType::Tilde))
-        field.IsShared = true;
-      else if (match(TokenType::Ampersand))
-        field.IsReference = true;
-
-      field.Type = consume(TokenType::Identifier, "Expected field type").Text;
-      fields.push_back(field);
-
-      if (!check(TokenType::RParen)) {
-        consume(TokenType::Comma, "Expected ',' between fields");
+  if (check(TokenType::Integer) || check(TokenType::String) ||
+      check(TokenType::KwTrue) || check(TokenType::KwFalse)) {
+    auto p = std::make_unique<MatchArm::Pattern>(MatchArm::Pattern::Literal);
+    p->Name = advance().Text;
+    if (previous().Kind == TokenType::Integer) {
+      try {
+        p->LiteralVal = std::stoll(previous().Text);
+      } catch (...) {
+        p->LiteralVal = 0;
       }
     }
-    consume(TokenType::RParen, "Expected ')' after variant fields");
-    variants.push_back({varName.Text, std::move(fields)});
-
-    if (!check(TokenType::RBrace)) {
-      match(TokenType::Comma); // Optional comma between variants
-    }
+    return p;
   }
-  consume(TokenType::RBrace, "Expected '}' after variants");
 
-  auto decl =
-      std::make_unique<OptionDecl>(isPub, name.Text, std::move(variants));
-  decl->setLocation(name, m_CurrentFile);
-  return decl;
+  if (check(TokenType::Identifier)) {
+    if (peek().Text == "_") {
+      advance();
+      return std::make_unique<MatchArm::Pattern>(MatchArm::Pattern::Wildcard);
+    }
+
+    Token nameTok = advance();
+    std::string name = nameTok.Text;
+
+    // Handle Path::Variant
+    if (check(TokenType::Colon) && checkAt(1, TokenType::Colon)) {
+      consume(TokenType::Colon, "");
+      consume(TokenType::Colon, "");
+      name +=
+          "::" + consume(TokenType::Identifier, "Expected variant name").Text;
+    }
+
+    if (match(TokenType::LParen)) {
+      std::vector<std::unique_ptr<MatchArm::Pattern>> subs;
+      while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+        subs.push_back(parsePattern());
+        if (!check(TokenType::RParen))
+          match(TokenType::Comma);
+      }
+      consume(TokenType::RParen, "Expected ')' after subpatterns");
+      auto p = std::make_unique<MatchArm::Pattern>(MatchArm::Pattern::Decons);
+      p->Name = name;
+      p->SubPatterns = std::move(subs);
+      p->IsReference = isRef;
+      return p;
+    }
+
+    auto p = std::make_unique<MatchArm::Pattern>(MatchArm::Pattern::Variable);
+    p->Name = name;
+    p->IsReference = isRef;
+    p->IsMutable = nameTok.HasWrite;
+    return p;
+  }
+
+  if (match(TokenType::KwDefault)) {
+    return std::make_unique<MatchArm::Pattern>(MatchArm::Pattern::Wildcard);
+  }
+
+  error(peek(), "Expected pattern");
+  return nullptr;
 }
 
-std::unique_ptr<Stmt> Parser::parseMatchStmt() {
-  consume(TokenType::KwMatch, "Expected 'match'");
+std::unique_ptr<Expr> Parser::parseMatchExpr() {
+  Token matchTok = previous(); // KwMatch or peek()
   auto target = parseExpr();
   consume(TokenType::LBrace, "Expected '{' after match expression");
 
-  std::vector<MatchCase> cases;
-
+  std::vector<std::unique_ptr<MatchArm>> arms;
   while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
-    MatchCase c;
+    auto pat = parsePattern();
+    std::unique_ptr<Expr> guard = nullptr;
+    if (match(TokenType::KwIf)) {
+      guard = parseExpr();
+    }
+    consume(TokenType::FatArrow, "Expected '=>'");
+    auto body = parseStmt();
+    arms.push_back(std::make_unique<MatchArm>(std::move(pat), std::move(guard),
+                                              std::move(body)));
+  }
+  consume(TokenType::RBrace, "Expected '}' after match arms");
+  auto matched =
+      std::make_unique<MatchExpr>(std::move(target), std::move(arms));
+  matched->setLocation(matchTok, m_CurrentFile);
+  return matched;
+}
 
-    if (match(TokenType::KwLet)) {
-      // let Variant(a, b)
-      Token varName = consume(TokenType::Identifier, "Expected variant name");
-      c.VariantName = varName.Text;
-      if (match(TokenType::LParen)) {
-        // Positional binding
-        while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
-          c.BindingNames.push_back(
-              consume(TokenType::Identifier, "Expected binding name").Text);
-          if (!check(TokenType::RParen))
-            consume(TokenType::Comma, "Expected ','");
-        }
-        consume(TokenType::RParen, "Expected ')'");
+std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
+  match(TokenType::KwShape); // Optional
+  match(TokenType::KwPacked);
+  bool packed = previous().Kind == TokenType::KwPacked;
+  if (packed)
+    consume(TokenType::KwShape, "Expected 'shape' after 'packed'");
+
+  Token name = consume(TokenType::Identifier, "Expected shape name");
+  ShapeKind kind = ShapeKind::Struct;
+  std::vector<ShapeMember> members;
+  int64_t arraySize = 0;
+
+  match(TokenType::Equal);
+
+  if (match(TokenType::LBracket)) {
+    kind = ShapeKind::Array;
+    std::string elemTy = advance().Text;
+    consume(TokenType::Semicolon, "Expected ';'");
+    arraySize = std::stoll(consume(TokenType::Integer, "Expected size").Text);
+    consume(TokenType::RBracket, "Expected ']'");
+    ShapeMember m;
+    m.Name = "0";
+    m.Type = elemTy;
+    members.push_back(std::move(m));
+  } else if (match(TokenType::LParen)) {
+    bool isEnum = false;
+    int depth = 0;
+    for (int i = 0;; ++i) {
+      TokenType t = peekAt(i).Kind;
+      if (t == TokenType::EndOfFile || (t == TokenType::RParen && depth == 0))
+        break;
+      if (depth == 0 && (t == TokenType::Pipe || t == TokenType::Equal)) {
+        isEnum = true;
+        break;
       }
-    } else if (match(TokenType::KwDefault)) {
-      c.IsWildcard = true;
-    } else if (check(TokenType::Identifier)) {
-      if (peek().Text == "_") {
-        advance();
-        c.IsWildcard = true;
-      } else {
-        c.VariantName = advance().Text;
+      if (t == TokenType::LParen)
+        depth++;
+      else if (t == TokenType::RParen)
+        depth--;
+    }
+
+    if (isEnum) {
+      kind = ShapeKind::Enum;
+      while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+        ShapeMember v;
+        v.Name = consume(TokenType::Identifier, "Expected variant").Text;
+        if (match(TokenType::LParen)) {
+          v.Type = advance().Text;
+          consume(TokenType::RParen, "Expected ')'");
+        }
+        if (match(TokenType::Equal)) {
+          v.TagValue =
+              std::stoll(consume(TokenType::Integer, "Expected tag").Text);
+        }
+        members.push_back(std::move(v));
+        if (!check(TokenType::RParen))
+          match(TokenType::Pipe);
       }
     } else {
-      // Stop if we don't see a pattern start (likely RBrace or error)
-      if (check(TokenType::RBrace))
-        break;
-      error(peek(), "Expected pattern in match case");
+      for (int i = 0;; ++i) {
+        if (peekAt(i).Kind == TokenType::EndOfFile ||
+            peekAt(i).Kind == TokenType::RParen)
+          break;
+        if (peekAt(i).Kind == TokenType::Colon) {
+          kind = ShapeKind::Struct;
+          break;
+        }
+        if (peekAt(i).Kind == TokenType::Comma) {
+          kind = ShapeKind::Tuple;
+          break;
+        }
+      }
+      int idx = 0;
+      while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+        ShapeMember m;
+        if (kind == ShapeKind::Struct) {
+          m.Name = consume(TokenType::Identifier, "Expected field name").Text;
+          consume(TokenType::Colon, "Expected ':'");
+        } else {
+          m.Name = std::to_string(idx++);
+        }
+        m.Type = advance().Text;
+        members.push_back(std::move(m));
+        if (!check(TokenType::RParen))
+          match(TokenType::Comma);
+      }
     }
-
-    if (match(TokenType::KwIf)) {
-      c.Guard = parseExpr();
-    }
-
-    consume(TokenType::FatArrow, "Expected '=>'");
-    c.Body = parseStmt();
-    cases.push_back(std::move(c));
+    match(TokenType::RParen);
+  } else {
+    error(peek(), "Expected '(' or '[' after shape name");
   }
 
-  consume(TokenType::RBrace, "Expected '}'");
-  return std::make_unique<MatchStmt>(std::move(target), std::move(cases));
+  auto decl = std::make_unique<ShapeDecl>(isPub, name.Text, kind,
+                                          std::move(members), packed);
+  decl->ArraySize = arraySize;
+  decl->FileName = m_CurrentFile;
+  decl->setLocation(name, m_CurrentFile);
+  return decl;
 }
 
 std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
@@ -380,7 +439,10 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
 }
 
 std::unique_ptr<Stmt> Parser::parseVariableDecl() {
-  consume(TokenType::KwLet, "Expected 'let'");
+  match(TokenType::KwLet);
+  if (previous().Kind != TokenType::KwLet)
+    match(TokenType::KwAuto);
+
   bool isRef = match(TokenType::Ampersand);
   bool hasPointer = false;
   bool isUnique = false;
@@ -466,8 +528,8 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     return parseBlock();
   if (check(TokenType::KwIf))
     return std::make_unique<ExprStmt>(parseIf());
-  if (check(TokenType::KwMatch))
-    return parseMatchStmt();
+  if (match(TokenType::KwMatch))
+    return std::make_unique<ExprStmt>(parseMatchExpr());
   if (check(TokenType::KwWhile))
     return std::make_unique<ExprStmt>(parseWhile());
   if (check(TokenType::KwLoop))
@@ -476,7 +538,7 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     return std::make_unique<ExprStmt>(parseForExpr());
   if (check(TokenType::KwReturn))
     return parseReturn();
-  if (check(TokenType::KwLet))
+  if (check(TokenType::KwLet) || check(TokenType::KwAuto))
     return parseVariableDecl();
   if (check(TokenType::KwDelete))
     return parseDeleteStmt();
@@ -553,18 +615,31 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
     return nullptr;
 
   while (true) {
-    if (check(TokenType::Colon)) {
-      advance(); // consume ':'
+    if (check(TokenType::Colon) || check(TokenType::KwAs) ||
+        (peek().Kind == TokenType::Identifier && peek().Text == "as")) {
+      advance(); // consume ':' or 'as'
       std::string typeName = "";
-      while (!check(TokenType::Comma) && !check(TokenType::RParen) &&
-             !isEndOfStatement() && !check(TokenType::Plus) &&
-             !check(TokenType::Minus) && !check(TokenType::Star) &&
-             !check(TokenType::Slash) && !check(TokenType::Equal) &&
-             !check(TokenType::DoubleEqual) && !check(TokenType::Neq) &&
-             !check(TokenType::Less) && !check(TokenType::Greater) &&
-             !check(TokenType::KwIs) && !check(TokenType::And) &&
-             !check(TokenType::Or) && !check(TokenType::EndOfFile)) {
-        typeName += advance().Text;
+      int depth = 0;
+      while (true) {
+        if (depth == 0) {
+          if (check(TokenType::Comma) || check(TokenType::RParen) ||
+              check(TokenType::RBrace) || isEndOfStatement() ||
+              check(TokenType::Plus) || check(TokenType::Minus) ||
+              check(TokenType::Star) || check(TokenType::Slash) ||
+              check(TokenType::Equal) || check(TokenType::DoubleEqual) ||
+              check(TokenType::Neq) || check(TokenType::Less) ||
+              check(TokenType::Greater) || check(TokenType::KwIs) ||
+              check(TokenType::And) || check(TokenType::Or) ||
+              check(TokenType::EndOfFile)) {
+            break;
+          }
+        }
+        Token t = advance();
+        typeName += t.Text;
+        if (t.Kind == TokenType::LBracket || t.Kind == TokenType::LParen)
+          depth++;
+        else if (t.Kind == TokenType::RBracket || t.Kind == TokenType::RParen)
+          depth--;
       }
       Token tok = previous();
       auto node = std::make_unique<CastExpr>(std::move(lhs), typeName);
@@ -660,6 +735,8 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     expr = parseLoop();
   } else if (match(TokenType::KwFor)) {
     expr = parseForExpr();
+  } else if (match(TokenType::KwMatch)) {
+    expr = parseMatchExpr();
   } else if (match(TokenType::KwBreak)) {
     expr = parseBreak();
   } else if (match(TokenType::KwContinue)) {
@@ -697,8 +774,21 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
           std::make_unique<InitStructExpr>(typeName.Text, std::move(fields));
       node->setLocation(typeName, m_CurrentFile);
       init = std::move(node);
+    } else if (check(TokenType::LParen)) {
+      // new Type(...) -> treat as CallExpr for constructor
+      consume(TokenType::LParen, "Expected '('");
+      std::vector<std::unique_ptr<Expr>> args;
+      if (!check(TokenType::RParen)) {
+        do {
+          args.push_back(parseExpr());
+        } while (match(TokenType::Comma));
+      }
+      consume(TokenType::RParen, "Expected ')'");
+      auto node = std::make_unique<CallExpr>(typeName.Text, std::move(args));
+      node->setLocation(typeName, m_CurrentFile);
+      init = std::move(node);
     } else {
-      error(kw, "Expected '{' initializer for new expression");
+      error(kw, "Expected '{' or '(' initializer for new expression");
       return nullptr;
     }
     auto node = std::make_unique<NewExpr>(typeName.Text, std::move(init));
@@ -856,10 +946,15 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         error(peek(), "Expected member name or index after '->'");
       }
     } else if (match(TokenType::LBracket)) {
-      std::unique_ptr<Expr> index = parseExpr();
+      std::vector<std::unique_ptr<Expr>> indices;
+      if (!check(TokenType::RBracket)) {
+        do {
+          indices.push_back(parseExpr());
+        } while (match(TokenType::Comma));
+      }
       consume(TokenType::RBracket, "Expected ']' after index");
       expr =
-          std::make_unique<ArrayIndexExpr>(std::move(expr), std::move(index));
+          std::make_unique<ArrayIndexExpr>(std::move(expr), std::move(indices));
     } else if (match(TokenType::PlusPlus)) {
       expr =
           std::make_unique<PostfixExpr>(TokenType::PlusPlus, std::move(expr));
@@ -979,6 +1074,8 @@ std::unique_ptr<Expr> Parser::parseForExpr() {
     tok = consume(TokenType::KwFor, "Expected 'for'");
 
   bool isMut = match(TokenType::KwLet);
+  if (!isMut)
+    match(TokenType::KwAuto); // Allow optional auto
   bool isRef = match(TokenType::Ampersand);
   Token varName =
       consume(TokenType::Identifier, "Expected variable name in for");

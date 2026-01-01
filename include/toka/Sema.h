@@ -99,7 +99,7 @@ private:
   std::vector<FunctionDecl *>
       GlobalFunctions; // All functions across all modules
   std::map<std::string, ExternDecl *> ExternMap;
-  std::map<std::string, StructDecl *> StructMap;
+  std::map<std::string, ShapeDecl *> ShapeMap;
   std::map<std::string, std::string> TypeAliasMap;
   // TypeName -> {MethodName -> ReturnType}
   std::map<std::string, std::map<std::string, std::string>> MethodMap;
@@ -129,6 +129,11 @@ private:
   void checkFunction(FunctionDecl *Fn);
   void checkStmt(Stmt *S);
   std::string checkExpr(Expr *E); // Returns type name
+  void checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
+                    bool SourceIsMutable);
+
+  // Type system helpers
+  std::string getCommonType(const std::string &T1, const std::string &T2);
 
   // Helpers
   std::string resolveType(const std::string &Type);

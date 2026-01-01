@@ -40,11 +40,11 @@ private:
   std::unique_ptr<ExternDecl> parseExternDecl();
   std::unique_ptr<ImportDecl> parseImport(bool isPub = false);
   std::unique_ptr<TypeAliasDecl> parseTypeAliasDecl(bool isPub = false);
-  std::unique_ptr<StructDecl> parseStruct(bool isPub = false);
-  std::unique_ptr<OptionDecl> parseOptionDecl(bool isPub = false); // ADT
+  std::unique_ptr<ShapeDecl> parseShape(bool isPub = false);
   std::unique_ptr<ImplDecl> parseImpl();
   std::unique_ptr<TraitDecl> parseTrait(bool isPub = false);
-  std::unique_ptr<Stmt> parseMatchStmt();
+  std::unique_ptr<Expr> parseMatchExpr();
+  std::unique_ptr<MatchArm::Pattern> parsePattern();
 
   std::unique_ptr<Stmt> parseStmt();
   std::unique_ptr<Expr> parseIf();

@@ -4,8 +4,9 @@
 namespace toka {
 
 static std::unordered_map<std::string, TokenType> Keywords = {
-    {"auto", TokenType::KwLet},       {"type", TokenType::KwType},
-    {"const", TokenType::KwConst},    {"struct", TokenType::KwStruct},
+    {"auto", TokenType::KwAuto},      {"mut", TokenType::KwMut},
+    {"type", TokenType::KwType},      {"const", TokenType::KwConst},
+    {"shape", TokenType::KwShape},    {"packed", TokenType::KwPacked},
     {"trait", TokenType::KwTrait},    {"impl", TokenType::KwImpl},
     {"fn", TokenType::KwFn},          {"new", TokenType::KwNew},
     {"dyn", TokenType::KwDyn},        {"move", TokenType::KwMove},
@@ -28,8 +29,7 @@ static std::unordered_map<std::string, TokenType> Keywords = {
     {"Self", TokenType::KwUpperSelf}, {"true", TokenType::KwTrue},
     {"false", TokenType::KwFalse},    {"none", TokenType::KwNone},
     {"null", TokenType::KwNull},      {"defer", TokenType::KwDefer},
-    {"main", TokenType::KwMain},      {"extern", TokenType::KwExtern},
-    {"option", TokenType::KwOption},  {"is", TokenType::KwIs}};
+    {"main", TokenType::KwMain},      {"extern", TokenType::KwExtern}};
 
 Lexer::Lexer(const char *source) : m_Source(source), m_Current(source) {}
 

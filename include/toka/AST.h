@@ -175,12 +175,20 @@ public:
 class ArrayIndexExpr : public Expr {
 public:
   std::unique_ptr<Expr> Array;
-  std::unique_ptr<Expr> Index;
+  std::vector<std::unique_ptr<Expr>> Indices;
 
-  ArrayIndexExpr(std::unique_ptr<Expr> arr, std::unique_ptr<Expr> idx)
-      : Array(std::move(arr)), Index(std::move(idx)) {}
+  ArrayIndexExpr(std::unique_ptr<Expr> arr,
+                 std::vector<std::unique_ptr<Expr>> idxs)
+      : Array(std::move(arr)), Indices(std::move(idxs)) {}
   std::string toString() const override {
-    return Array->toString() + "[" + Index->toString() + "]";
+    std::string s = Array->toString() + "[";
+    for (size_t i = 0; i < Indices.size(); ++i) {
+      if (i > 0)
+        s += ", ";
+      s += Indices[i]->toString();
+    }
+    s += "]";
+    return s;
   }
 };
 
@@ -220,13 +228,13 @@ public:
 
 class InitStructExpr : public Expr {
 public:
-  std::string StructName;
-  std::vector<std::pair<std::string, std::unique_ptr<Expr>>> Fields;
+  std::string ShapeName;
+  std::vector<std::pair<std::string, std::unique_ptr<Expr>>> Members;
   InitStructExpr(
       const std::string &name,
-      std::vector<std::pair<std::string, std::unique_ptr<Expr>>> flds)
-      : StructName(name), Fields(std::move(flds)) {}
-  std::string toString() const override { return "Init(" + StructName + ")"; }
+      std::vector<std::pair<std::string, std::unique_ptr<Expr>>> members)
+      : ShapeName(name), Members(std::move(members)) {}
+  std::string toString() const override { return "Init(" + ShapeName + ")"; }
 };
 
 class CallExpr : public Expr {
@@ -269,7 +277,65 @@ class PassExpr : public Expr {
 public:
   std::unique_ptr<Expr> Value;
   PassExpr(std::unique_ptr<Expr> val) : Value(std::move(val)) {}
-  std::string toString() const override { return "Pass"; }
+  std::string toString() const override {
+    return "Pass(" + (Value ? Value->toString() : "none") + ")";
+  }
+};
+
+class MatchArm {
+public:
+  struct Pattern : public ASTNode {
+    enum Kind { Literal, Variable, Decons, Wildcard };
+    Kind PatternKind;
+    std::string Name;       // For Variable/Decons (e.g., "Maybe::One")
+    int64_t LiteralVal = 0; // For Literal
+    bool IsReference = false;
+    bool IsMutable = false;
+    std::vector<std::unique_ptr<Pattern>> SubPatterns; // For Decons
+
+    Pattern(Kind k) : PatternKind(k) {}
+    std::string toString() const {
+      switch (PatternKind) {
+      case Literal:
+        return std::to_string(LiteralVal);
+      case Variable:
+        return (IsReference ? "&" : "") + Name + (IsMutable ? "#" : "");
+      case Decons: {
+        std::string s = Name + "(";
+        for (size_t i = 0; i < SubPatterns.size(); ++i) {
+          if (i > 0)
+            s += ", ";
+          s += SubPatterns[i]->toString();
+        }
+        s += ")";
+        return s;
+      }
+      case Wildcard:
+        return "_";
+      }
+      return "";
+    }
+  };
+
+  std::unique_ptr<Pattern> Pat;
+  std::unique_ptr<Expr> Guard;
+  std::unique_ptr<Stmt> Body;
+
+  MatchArm(std::unique_ptr<Pattern> p, std::unique_ptr<Expr> g,
+           std::unique_ptr<Stmt> b)
+      : Pat(std::move(p)), Guard(std::move(g)), Body(std::move(b)) {}
+};
+
+class MatchExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Target;
+  std::vector<std::unique_ptr<MatchArm>> Arms;
+
+  MatchExpr(std::unique_ptr<Expr> target,
+            std::vector<std::unique_ptr<MatchArm>> arms)
+      : Target(std::move(target)), Arms(std::move(arms)) {}
+
+  std::string toString() const override { return "Match(...)"; }
 };
 
 class BreakExpr : public Expr {
@@ -375,27 +441,9 @@ public:
   std::string toString() const override { return "For(" + VarName + ")"; }
 };
 
-struct MatchCase {
-  // Pattern info
-  std::string VariantName; // e.g. "Some" or "Data" or "None"
-  std::vector<std::string>
-      BindingNames; // For destructured vars: let Some(a, b) -> ["a", "b"]
-  bool IsWildcard = false; // _ => ...
-
-  std::unique_ptr<Expr> Guard; // if condition
-  std::unique_ptr<Stmt> Body;
-};
-
-class MatchStmt : public Stmt {
-public:
-  std::unique_ptr<Expr> Target; // match target
-  std::vector<MatchCase> Cases;
-
-  MatchStmt(std::unique_ptr<Expr> target, std::vector<MatchCase> cases)
-      : Target(std::move(target)), Cases(std::move(cases)) {}
-
-  std::string toString() const override { return "Match(...)"; }
-};
+// Deprecated: MatchStmt is replaced by MatchExpr since match is now an
+// expression.
+using MatchStmt = MatchExpr;
 
 struct DestructuredVar {
   std::string Name;
@@ -444,12 +492,6 @@ public:
 
 // --- High-level Declarations ---
 
-struct StructField {
-  std::string Name;
-  std::string Type;
-  bool HasPointer = false;
-};
-
 class TypeAliasDecl : public ASTNode {
 public:
   bool IsPub = false;
@@ -463,44 +505,44 @@ public:
   }
 };
 
-struct VariantField {
-  std::string Name; // Optional name
+enum class ShapeKind { Struct, Tuple, Array, Enum, Union };
+
+struct ShapeMember {
+  std::string Name; // Member or Variant name
   std::string Type;
+  int64_t TagValue = -1; // Specific value for Tagged Union variants (= 1)
   bool HasPointer = false;
   bool IsUnique = false;
   bool IsShared = false;
   bool IsReference = false;
+
+  // For Bare Union (as ...)
+  std::vector<ShapeMember> SubMembers;
+  ShapeKind SubKind = ShapeKind::Struct;
 };
 
-struct OptionVariant {
-  std::string Name;
-  std::vector<VariantField> Fields;
-};
-
-class OptionDecl : public ASTNode {
+class ShapeDecl : public ASTNode {
 public:
   bool IsPub = false;
+  bool IsPacked = false;
   std::string Name;
-  std::vector<OptionVariant> Variants;
-  OptionDecl(bool isPub, const std::string &name,
-             std::vector<OptionVariant> variants)
-      : IsPub(isPub), Name(name), Variants(std::move(variants)) {}
+  ShapeKind Kind;
+  std::vector<ShapeMember> Members;
+  int64_t ArraySize = 0; // For Array kind
+
+  ShapeDecl(bool isPub, const std::string &name, ShapeKind kind,
+            std::vector<ShapeMember> members, bool packed = false)
+      : IsPub(isPub), IsPacked(packed), Name(name), Kind(kind),
+        Members(std::move(members)) {}
+
   std::string toString() const override {
-    return std::string(IsPub ? "Pub" : "") + "Option(" + Name + ")";
+    return std::string(IsPub ? "Pub " : "") + "Shape(" + Name + ")";
   }
 };
 
-class StructDecl : public ASTNode {
-public:
-  bool IsPub = false;
-  std::string Name;
-  std::vector<StructField> Fields;
-  StructDecl(bool isPub, const std::string &name, std::vector<StructField> flds)
-      : IsPub(isPub), Name(name), Fields(std::move(flds)) {}
-  std::string toString() const override {
-    return std::string(IsPub ? "Pub" : "") + "Struct(" + Name + ")";
-  }
-};
+// Deprecated: Use ShapeDecl
+using StructDecl = ShapeDecl;
+using OptionDecl = ShapeDecl;
 
 struct ImportItem {
   std::string Symbol; // Name of symbol, or "*" for wildcard
@@ -622,8 +664,7 @@ class Module {
 public:
   std::vector<std::unique_ptr<ImportDecl>> Imports;
   std::vector<std::unique_ptr<TypeAliasDecl>> TypeAliases;
-  std::vector<std::unique_ptr<StructDecl>> Structs;
-  std::vector<std::unique_ptr<OptionDecl>> Options;
+  std::vector<std::unique_ptr<ShapeDecl>> Shapes;
   std::vector<std::unique_ptr<Stmt>> Globals;
   std::vector<std::unique_ptr<ImplDecl>> Impls;
   std::vector<std::unique_ptr<TraitDecl>> Traits;

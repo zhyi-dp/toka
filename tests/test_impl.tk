@@ -1,9 +1,9 @@
 import core/io::printf
 
-struct Rect {
+shape Rect (
     width: i32,
     height: i32
-}
+)
 
 impl Rect {
     fn area(self) -> i32 {
@@ -16,7 +16,7 @@ impl Rect {
 }
 
 fn main() -> i32 {
-    auto r = Rect { width = 10, height = 20 }
+    auto r = Rect(width = 10, height = 20)
     
     // Test method call
     auto a = r.area()

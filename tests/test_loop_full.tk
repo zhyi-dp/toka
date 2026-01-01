@@ -1,6 +1,6 @@
 import core/io::printf
 
-fn main() {
+fn main() -> i32 {
     auto i# = 0
     while i < 5 {
         printf("while: %d\n", i)
@@ -44,4 +44,5 @@ fn main() {
         pass 0
     }
     printf("while result: %d\n", res2)
+    return 0
 }

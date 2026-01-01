@@ -1,11 +1,11 @@
 import core/io::printf
 import core/memory
 
-struct Point {
+shape Point (
     x: i32,
     y: i32,
     z: i32,
-}
+)
 
 type PointTup = (i32, i32)
 
@@ -28,7 +28,7 @@ fn addtox_useref(&point#: Point, v: i32) {
 }
 
 fn main() -> i32 {
-    auto p# = Point { x = 1, y = 2, z = 111 }
+    auto p# = Point(x = 1, y = 2, z = 111)
     auto i# = 0
     auto logi# = 0
     while (i < 3) {
@@ -113,18 +113,18 @@ fn main() -> i32 {
 
     {
         printf("Testing Raw pointer...\n")
-        auto *ptr = new Point{x=999, y=111, z=0}
+        auto *ptr = new Point(x=999, y=111, z=0)
         printf("[%03d]Raw Heap Point: ptr.x=%d, address=%p\n", logi#++, ptr.x, *ptr)
         del *ptr
     }
 
     // Heap Allocation Test
-    auto ^heapNode = new Point{x = 777, y = 888, z = 0}
+    auto ^heapNode = new Point(x = 777, y = 888, z = 0)
     printf("[%03d]Heap Point is (%d, %d)\n", logi#++, heapNode.x, heapNode.y)
 
     {
         printf("Testing Move Semantics...\n")
-        auto ^p = new Point{x=999, y=111, z=0}
+        auto ^p = new Point(x=999, y=111, z=0)
         auto ^q = ^p
         printf("[%03d]Moved Heap Point: q.x=%d\n", logi#++, q.x)
     }

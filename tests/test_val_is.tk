@@ -1,7 +1,7 @@
 import core/io::printf
 
 fn main() -> i32 {
-    auto x! = 10; // Nullable integer (not typical in Toka but testing the mechanism)
+    auto x! = 10 // Nullable integer (not typical in Toka but testing the mechanism)
     if x! is x {
         printf("x is not null: %d\n", x)
     }

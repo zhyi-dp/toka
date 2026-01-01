@@ -1,11 +1,11 @@
 import core/io::printf
 import core/memory
 
-struct Point {
+shape Point (
     x: i32,
     y: i32,
     z: i32,
-}
+)
 
 type PointTup = (i32, i32)
 
@@ -28,7 +28,7 @@ fn addtox_useref(&point#: Point, v: i32) {
 }
 
 fn main() -> i32 {
-    auto p# = Point { x = 1, y = 2, z = 111 }
+    auto p# = Point(x = 1, y = 2, z = 111)
     auto i# = 0
     auto logi# = 0
     while (i < 3) {

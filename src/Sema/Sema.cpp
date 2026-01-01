@@ -76,11 +76,11 @@ void Sema::registerGlobals(Module &M) {
     }
   }
 
-  for (auto &St : M.Structs) {
-    if (StructMap.count(St->Name)) {
-      error(St.get(), "redefinition of struct '" + St->Name + "'");
+  for (auto &St : M.Shapes) {
+    if (ShapeMap.count(St->Name)) {
+      error(St.get(), "redefinition of shape '" + St->Name + "'");
     } else {
-      StructMap[St->Name] = St.get();
+      ShapeMap[St->Name] = St.get();
     }
   }
 
@@ -124,6 +124,78 @@ void Sema::registerGlobals(Module &M) {
                               Impl->TypeName + "'");
       }
     }
+  }
+}
+
+void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
+                        bool SourceIsMutable) {
+  if (!Pat)
+    return;
+
+  std::string T = resolveType(TargetType);
+
+  switch (Pat->PatternKind) {
+  case MatchArm::Pattern::Literal:
+    // Literal patterns don't bind variables
+    break;
+
+  case MatchArm::Pattern::Wildcard:
+    break;
+
+  case MatchArm::Pattern::Variable: {
+    SymbolInfo Info;
+    Info.Type = T;
+    Info.IsValueMutable = Pat->IsMutable | SourceIsMutable;
+    if (Pat->IsReference) {
+      Info.Morphology = "&";
+    }
+    CurrentScope->define(Pat->Name, Info);
+    break;
+  }
+
+  case MatchArm::Pattern::Decons: {
+    // Pat->Name might be "Ok" or "Result::Ok"
+    std::string variantName = Pat->Name;
+    std::string shapeName = T;
+
+    size_t pos = variantName.find("::");
+    if (pos != std::string::npos) {
+      shapeName = variantName.substr(0, pos);
+      variantName = variantName.substr(pos + 2);
+    }
+
+    if (ShapeMap.count(shapeName)) {
+      ShapeDecl *SD = ShapeMap[shapeName];
+      ShapeMember *foundMemb = nullptr;
+      for (auto &Memb : SD->Members) {
+        if (Memb.Name == variantName) {
+          foundMemb = &Memb;
+          break;
+        }
+      }
+
+      if (foundMemb) {
+        if (Pat->SubPatterns.size() > 0) {
+          if (foundMemb->Type.empty()) {
+            error(static_cast<ASTNode *>(Pat),
+                  "variant '" + variantName + "' takes no payload");
+          } else {
+            // For now assume single payload if not tuple
+            checkPattern(Pat->SubPatterns[0].get(), foundMemb->Type,
+                         SourceIsMutable);
+          }
+        }
+      } else {
+        error(static_cast<ASTNode *>(Pat), "variant '" + variantName +
+                                               "' not found in shape '" +
+                                               shapeName + "'");
+      }
+    } else {
+      error(static_cast<ASTNode *>(Pat),
+            "unknown shape '" + shapeName + "' in pattern deconstruction");
+    }
+    break;
+  }
   }
 }
 
@@ -192,12 +264,13 @@ void Sema::checkStmt(Stmt *S) {
     }
 
     // If type not specified, infer from init
-    if (Var->TypeName.empty()) {
-      if (InitType.empty()) {
+    if (Var->TypeName.empty() || Var->TypeName == "auto") {
+      if (InitType.empty() || InitType == "void") {
         error(Var, "variable '" + Var->Name + "' type must be specified");
         Var->TypeName = "unknown";
       } else {
         Var->TypeName = InitType;
+        // Strip ? if we want strict auto, but Toka often keeps it
       }
     } else {
       // Check compatibility
@@ -297,12 +370,12 @@ void Sema::checkStmt(Stmt *S) {
     // In a real compiler we'd check against the Struct/Tuple definition.
     // Real implementation needs to iterate Struct fields and assign types to
     // Variables by index.
-    if (StructMap.count(DeclType)) {
-      StructDecl *SD = StructMap[DeclType];
-      size_t Limit = std::min(SD->Fields.size(), Destruct->Variables.size());
+    if (ShapeMap.count(DeclType)) {
+      ShapeDecl *SD = ShapeMap[DeclType];
+      size_t Limit = std::min(SD->Members.size(), Destruct->Variables.size());
       for (size_t i = 0; i < Limit; ++i) {
         SymbolInfo Info;
-        Info.Type = SD->Fields[i].Type;
+        Info.Type = SD->Members[i].Type;
         Info.IsValueMutable = Destruct->Variables[i].IsMutable;
         Info.IsValueNullable = Destruct->Variables[i].IsNullable;
         Info.Morphology = "";
@@ -633,8 +706,11 @@ std::string Sema::checkExpr(Expr *E) {
                      RHS + "')");
       return "unknown";
     }
+    // Arithmetic
     if (Bin->Op == "+" || Bin->Op == "-" || Bin->Op == "*" || Bin->Op == "/") {
-      if (LHS != "i32" && LHS != "i64" && LHS != "f32" && LHS != "f64") {
+      if (LHS != "i32" && LHS != "i64" && LHS != "f32" && LHS != "f64" &&
+          LHS != "u32" && LHS != "u64" && LHS != "i8" && LHS != "u8" &&
+          LHS != "i16" && LHS != "u16") {
         error(Bin, "operands of '" + Bin->Op + "' must be numeric, got '" +
                        LHS + "'");
       }
@@ -642,6 +718,7 @@ std::string Sema::checkExpr(Expr *E) {
 
     return LHS;
   } else if (auto *ie = dynamic_cast<IfExpr *>(E)) {
+
     std::string condType = checkExpr(ie->Condition.get());
 
     // Type Narrowing for 'is' check
@@ -843,7 +920,33 @@ std::string Sema::checkExpr(Expr *E) {
     return "void";
   } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
     // Check GlobalFunctions
-    FunctionDecl *FoundFn = nullptr;
+    std::string CallName = Call->Callee;
+    std::string ShapeName = "";
+    std::string VariantName = "";
+
+    // Resolve Shape::Variant
+    size_t pos = CallName.find("::");
+    if (pos != std::string::npos) {
+      ShapeName = CallName.substr(0, pos);
+      VariantName = CallName.substr(pos + 2);
+
+      if (ShapeMap.count(ShapeName)) {
+        ShapeDecl *SD = ShapeMap[ShapeName];
+        if (SD->Kind == ShapeKind::Enum) {
+          for (auto &Memb : SD->Members) {
+            if (Memb.Name == VariantName) {
+              // It's a variant constructor
+              for (auto &Arg : Call->Args)
+                checkExpr(Arg.get());
+              return ShapeName;
+            }
+          }
+        }
+      }
+    }
+
+    // Regular call
+    FunctionDecl *Fn = nullptr;
     std::string FnName = Call->Callee;
 
     // 1. Check if name is namespaced (e.g. lib::foo)
@@ -920,7 +1023,7 @@ std::string Sema::checkExpr(Expr *E) {
             ImportStem = ImportStem.substr(0, iDot);
 
           if (Stem == ImportStem) {
-            FoundFn = GF;
+            Fn = GF;
             break;
           }
         }
@@ -978,19 +1081,38 @@ std::string Sema::checkExpr(Expr *E) {
           }
 
           if (isVisible) {
-            FoundFn = GF;
+            Fn = GF;
             break;
           }
         }
       }
     }
 
-    if (FoundFn) {
-      FunctionDecl *Fn = FoundFn;
+    if (Fn) {
 
       if (!Fn->IsPub && Fn->FileName != Call->FileName) {
-        error(Call, "Function '" + Fn->Name + "' is private to '" +
-                        Fn->FileName + "'");
+        // Relaxed privacy check: allow calls within the same module, regardless
+        // of file. This means if a function is private, it can still be called
+        // by other functions in the same module, even if they are in different
+        // files within that module. The original check was too strict,
+        // requiring the *exact* same file.
+        bool sameModule = false;
+        if (CurrentModule && !CurrentModule->Functions.empty()) {
+          // Check if the called function's file belongs to the current module
+          // This is a heuristic, assuming functions in the same module share a
+          // common base path or are explicitly listed. A more robust check
+          // would involve a module-level function registry.
+          for (const auto &funcInModule : CurrentModule->Functions) {
+            if (funcInModule->FileName == Fn->FileName) {
+              sameModule = true;
+              break;
+            }
+          }
+        }
+        if (!sameModule) {
+          error(Call, "Function '" + Fn->Name + "' is private to '" +
+                          Fn->FileName + "'");
+        }
       }
 
       if (Fn->Args.size() != Call->Args.size() && !Fn->IsVariadic) {
@@ -1044,15 +1166,126 @@ std::string Sema::checkExpr(Expr *E) {
         }
       }
       return Fn->ReturnType;
+      return Fn->ReturnType;
+    }
+    // Check for Shape Constructor (Struct Initialization via Call)
+    else if (ShapeMap.count(Call->Callee)) {
+      ShapeDecl *sh = ShapeMap[Call->Callee];
+      if (sh->Kind == ShapeKind::Struct || sh->Kind == ShapeKind::Tuple) {
+        // Validate arguments
+        // We allow named args matching fields, or positional args if Tuple.
+        // Or mixed? Toka seems to use named for internal fields.
+
+        size_t argIdx = 0;
+        for (auto &arg : Call->Args) {
+          // Check if argument is "Field = Value" (Named Argument)
+          bool isNamed = false;
+          std::string fieldName;
+          Expr *valueExpr = arg.get();
+
+          // We only support named args on the top level of the call arg
+          // Parsing produces BinaryExpr(=) for this.
+          if (auto *bin = dynamic_cast<BinaryExpr *>(arg.get())) {
+            if (bin->Op == "=") {
+              if (auto *var = dynamic_cast<VariableExpr *>(bin->LHS.get())) {
+                fieldName = var->Name;
+                valueExpr = bin->RHS.get();
+                isNamed = true;
+              }
+            }
+          }
+
+          if (isNamed) {
+            // Validate field name and type
+            bool found = false;
+            std::string fieldType;
+            for (auto &mem : sh->Members) {
+              if (mem.Name == fieldName) {
+                found = true;
+                fieldType = mem.Type;
+                break;
+              }
+            }
+            if (!found) {
+              error(arg.get(), "Shape '" + Call->Callee +
+                                   "' has no field named '" + fieldName + "'");
+            } else {
+              // Check value type
+              // We invoke checkExpr on the RHS, ignoring the LHS (label) to
+              // avoid undeclared var error
+              std::string valType = checkExpr(valueExpr);
+              if (!isTypeCompatible(fieldType, valType)) {
+                error(valueExpr, "Field '" + fieldName + "' expects type '" +
+                                     fieldType + "', got '" + valType + "'");
+              }
+            }
+          } else {
+            // Positional Argument
+            // Only valid for Tuples or if we decide to support positional
+            // struct init
+            if (sh->Kind == ShapeKind::Struct) {
+              // Actually, let's strictly require named args for Structs for now
+              // to match user expectation, OR check if user intends positional.
+              // test_shape_match.tk: Point(u8, u8...) uses positional?
+              // shape Point(u8, u8, u8, u8) is Tuple-like struct?
+              // If members are named "0", "1", etc. it is Tuple.
+              // If named, it is Struct.
+              // Parser sets Kind=Struct if it sees 'name :'.
+              // Parser sets Kind=Tuple if it sees comma separated types?
+              // Let's assume purely positional for Struct is risky unless
+              // defined order. But wait, test_shape_match.tk uses `RawBytes[1,
+              // 2, 3, 4]`. That's ArrayIndexExpr, not CallExpr. But `shape
+              // Point(u8, ....)` -> `auto p = Point(1, 2, 3, 4)` ? User changed
+              // `struct Point {x,y,z}` to `shape Point(x:i32...)`. They used
+              // `Point(x=1...)`. This is named.
+
+              // If Positional passed to Struct with named fields:
+              if (argIdx < sh->Members.size()) {
+                // Allow positional for struct too?
+                // For now, assume yes if no name provided.
+                std::string valType = checkExpr(valueExpr);
+                if (!isTypeCompatible(sh->Members[argIdx].Type, valType)) {
+                  error(valueExpr, "Field '" + sh->Members[argIdx].Name +
+                                       "' (arg " + std::to_string(argIdx) +
+                                       ") expects '" +
+                                       sh->Members[argIdx].Type + "', got '" +
+                                       valType + "'");
+                }
+              } else {
+                error(arg.get(),
+                      "Too many arguments for shape '" + Call->Callee + "'");
+              }
+            } else { // Tuple
+              if (argIdx < sh->Members.size()) {
+                std::string valType = checkExpr(valueExpr);
+                if (!isTypeCompatible(sh->Members[argIdx].Type, valType)) {
+                  error(valueExpr, "Tuple element " + std::to_string(argIdx) +
+                                       " expects '" + sh->Members[argIdx].Type +
+                                       "', got '" + valType + "'");
+                }
+              }
+            }
+          }
+          argIdx++;
+        }
+        return Call->Callee;
+      }
     }
     // Check Option Variants Name::Variant
     else if (Call->Callee.find("::") != std::string::npos) {
       size_t pos = Call->Callee.find("::");
       std::string optName = Call->Callee.substr(0, pos);
+      // Verify variant exists?
+      // For now assume yes or checked during codegen/parsing?
+      // Sema should check.
+      if (ShapeMap.count(optName)) {
+        // It's a valid shape. check variant?
+        // The variant name is in Call->Callee.
+      }
       return optName;
     }
 
-    error(Call, "call to undefined function '" + Call->Callee + "'");
+    error(Call, "call to undefined function or shape '" + Call->Callee + "'");
     return "unknown";
   } else if (auto *New = dynamic_cast<NewExpr *>(E)) {
     // Return the Type being created.
@@ -1087,23 +1320,36 @@ std::string Sema::checkExpr(Expr *E) {
           "method '" + Met->Method + "' not found on type '" + ObjType + "'");
     return "unknown";
   } else if (auto *Init = dynamic_cast<InitStructExpr *>(E)) {
-    // Validate fields against StructMap
-    if (StructMap.count(Init->StructName)) {
-      StructDecl *SD = StructMap[Init->StructName];
+    // Validate fields against ShapeMap
+    if (ShapeMap.count(Init->ShapeName)) {
+      ShapeDecl *SD = ShapeMap[Init->ShapeName];
 
       // Visibility Check:
       if (!SD->IsPub && SD->FileName != Init->FileName) {
-        error(Init, "Struct '" + Init->StructName + "' is private to '" +
-                        SD->FileName + "'");
+        // Relaxed privacy check: allow calls within the same module, regardless
+        // of file.
+        bool sameModule = false;
+        if (CurrentModule && !CurrentModule->Shapes.empty()) {
+          for (const auto &shapeInModule : CurrentModule->Shapes) {
+            if (shapeInModule->FileName == SD->FileName) {
+              sameModule = true;
+              break;
+            }
+          }
+        }
+        if (!sameModule) {
+          error(Init, "Struct '" + Init->ShapeName + "' is private to '" +
+                          SD->FileName + "'");
+        }
       }
 
       // Check fields exist and types match
       // Simplified check: just return the name
       // TODO: Check fields
     } else {
-      error(Init, "unknown struct '" + Init->StructName + "'");
+      error(Init, "unknown struct '" + Init->ShapeName + "'");
     }
-    return Init->StructName;
+    return Init->ShapeName;
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
     std::string ObjTypeFull = checkExpr(Memb->Object.get());
     if (ObjTypeFull.find('?') != std::string::npos) {
@@ -1125,9 +1371,9 @@ std::string Sema::checkExpr(Expr *E) {
     if (!ObjType.empty() && ObjType[0] == '?')
       ObjType = ObjType.substr(1);
 
-    if (StructMap.count(ObjType)) {
-      StructDecl *SD = StructMap[ObjType];
-      for (const auto &Field : SD->Fields) {
+    if (ShapeMap.count(ObjType)) {
+      ShapeDecl *SD = ShapeMap[ObjType];
+      for (const auto &Field : SD->Members) {
         if (Field.Name == Memb->Member) {
           return Field.Type;
         }
@@ -1158,14 +1404,38 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return lhsInfo;
   } else if (auto *Arr = dynamic_cast<ArrayIndexExpr *>(E)) {
-    // Array type usually [Type; Size] or just Type (if treated as slice/ptr).
-    // currently explicit array types are not well defined in my AST string
-    // representation for checks. Assuming variable type is "Type" (if it was
-    // decays to pointer) or handling it is tricky without richer Type system.
-    // Let's just return "i32" or something or try to strip "[]".
-    // Simple hack: if type is "i32[]", return "i32".
-    // But my parser/AST uses generic string types.
-    return "unknown"; // Placeholder
+    if (auto *Var = dynamic_cast<VariableExpr *>(Arr->Array.get())) {
+      if (ShapeMap.count(Var->Name)) {
+        ShapeDecl *SD = ShapeMap[Var->Name];
+        if (SD->Kind == ShapeKind::Array) {
+          if (Arr->Indices.size() != SD->ArraySize) {
+            error(Arr, "Array shape '" + Var->Name + "' expects " +
+                           std::to_string(SD->ArraySize) + " elements, got " +
+                           std::to_string(Arr->Indices.size()));
+          }
+          std::string ElemType = "unknown";
+          if (!SD->Members.empty())
+            ElemType = SD->Members[0].Type;
+
+          for (auto &idx : Arr->Indices) {
+            std::string ArgType = checkExpr(idx.get());
+            if (!isTypeCompatible(ElemType, ArgType)) {
+              error(idx.get(), "Array element type mismatch: expected '" +
+                                   ElemType + "', got '" + ArgType + "'");
+            }
+          }
+          return Var->Name;
+        }
+      }
+    }
+
+    // Normal Array Indexing
+    std::string arrType = checkExpr(Arr->Array.get());
+    if (Arr->Indices.size() != 1) {
+      error(Arr, "Array indexing expects exactly 1 index");
+    }
+    checkExpr(Arr->Indices[0].get());
+    return "unknown"; // Placeholder for element type derivation
   } else if (auto *Tup = dynamic_cast<TupleExpr *>(E)) {
     std::string s = "(";
     for (size_t i = 0; i < Tup->Elements.size(); ++i) {
@@ -1183,6 +1453,32 @@ std::string Sema::checkExpr(Expr *E) {
              "]";
     }
     return "[i32; 0]";
+  } else if (auto *me = dynamic_cast<MatchExpr *>(E)) {
+    std::string targetType = checkExpr(me->Target.get());
+    std::string resultType = "void";
+
+    for (auto &arm : me->Arms) {
+      enterScope();
+      checkPattern(arm->Pat.get(), targetType, false);
+      if (arm->Guard) {
+        if (checkExpr(arm->Guard.get()) != "bool")
+          error(arm->Guard.get(), "guard must be bool");
+      }
+      m_ControlFlowStack.push_back({"", "void", false});
+      checkStmt(arm->Body.get());
+      std::string armType = m_ControlFlowStack.back().ExpectedType;
+      m_ControlFlowStack.pop_back();
+
+      if (resultType == "void")
+        resultType = armType;
+      else if (armType != "void" && !isTypeCompatible(resultType, armType)) {
+        if (resultType != "unknown" && armType != "unknown")
+          error(me, "Match arms have incompatible types ('" + resultType +
+                        "' vs '" + armType + "')");
+      }
+      exitScope();
+    }
+    return resultType;
   }
 
   return "unknown";
@@ -1204,6 +1500,14 @@ bool Sema::isTypeCompatible(const std::string &Target,
     return true;
   if (T == "unknown" || S == "unknown")
     return true;
+
+  // Integer Literal Promotion
+  if ((T == "i32" || T == "u32" || T == "i64" || T == "u64" || T == "i8" ||
+       T == "u8" || T == "i16" || T == "u16") &&
+      (S == "i32" || S == "u32" || S == "i64" || S == "u64" || S == "i8" ||
+       S == "u8" || S == "i16" || S == "u16")) {
+    return true;
+  }
 
   // String literal conversion
   if (S == "str" && (T == "*i8" || T == "^i8" || T == "str"))

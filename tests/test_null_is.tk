@@ -1,11 +1,11 @@
 import core/io::printf
 
-struct Data {
+shape Data (
     v: i32
-}
+)
 
 fn main() -> i32 {
-    auto ^?p = new Data { v = 42 }
+    auto ^?p = new Data(v = 42)
     
     // Narrowing: ^?p is ^p
     if ^?p is ^p {

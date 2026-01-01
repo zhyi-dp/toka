@@ -8,5 +8,5 @@ fn main() {
     auto b2 = 1 < 2
 
     // 3. Valid If Condition
-    if (true) {}
+    if true {}
 }

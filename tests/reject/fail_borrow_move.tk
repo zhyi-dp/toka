@@ -1,7 +1,7 @@
-struct Point { x: i32 }
+shape Point (x: i32)
 
 fn main() -> i32 {
-    auto p = ^Point { x = 10 }
+    auto ^p = new Point(x = 10)
     auto &y = &p
     auto z = ^p; // Error: cannot move p while it is borrowed
     return 0

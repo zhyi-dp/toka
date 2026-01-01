@@ -16,7 +16,7 @@ Compiler parser should treat these as reserved.
 - `auto`: Variable declaration start.
 - `type`: Type alias.
 - `const`: Constant declaration.
-- `struct`: Structure definition.
+- `shape`: Unified structure/layout definition.
 - `trait`: Interface definition.
 - `impl`: Implementation block.
 - `fn`: Function/Method declaration.
@@ -30,7 +30,7 @@ Compiler parser should treat these as reserved.
 - `Fn`: Synchronous function type.
 
 **Control Flow**
-- `if`, `else`, `match`, `case`, `pass`
+- `if`, `else`, `match`, `pass`
 - `for`, `while`, `loop`, `break`, `continue`
 - `return`, `yield`
 
@@ -50,9 +50,9 @@ Compiler parser should treat these as reserved.
 - `main`: Entry point.
 
 ### 2.2 Symbols & Operators
-- `()`: Grouping, Arguments, Tuples.
+- `()`: Grouping, Arguments, Tuples, Object initialization.
 - `[]`: Arrays only.
-- `{}`: Blocks, Scopes, Object initialization.
+- `{}`: Blocks, Scopes.
 - `^`: Pointer prefix (e.g., `^Person`).
 - `#`: **Write Token** (Writable Content / Swappable Address).
 - `?`: **Null Token** (Nullable: `none` for objects, `null` for pointers).
@@ -112,77 +112,100 @@ Toka distinguishes between changing **where** a pointer points and **what** it p
 - `bool`, `char`, `str` (String)
 - `void` (Unit)
 
-### 3.3 Composite Types
-- **Tuple**: `(i32, str)`
-- **Array**: `[i32; 10]`
-- **Struct**:
+### 3.3 The Five-State Shape System
+Toka replaces separate `struct`, `enum`, and `option` keywords with a single **`shape`** keyword. A shape defines a physical memory layout and can represent five distinct forms.
+
+#### 3.3.1 Struct Shape (Named Fields)
+Standard record type with named fields.
+```scala
+shape Line(x: i32, y: i32)
+```
+**Initialization**: `auto l = Line(x=10, y=20)`
+
+#### 3.3.2 Tuple Shape (Positional Fields)
+Fields are accessed by index or destructuring.
+```scala
+shape Point(i32, i64)
+```
+**Initialization**: `auto p = Point(10, 20)`
+
+#### 3.3.3 Array Shape (Fixed Size)
+A fixed-length contiguous sequence.
+```scala
+shape Nums[i32; 5]
+```
+**Initialization**: `auto n = Nums[1, 2, 3, 4, 5]` (uses standard array index expr)
+
+#### 3.3.4 Tagged Union Shape (Enum / Option)
+Also known as an ADT. Each variant has a **Tag** (physical value) and an optional **Payload**.
+```scala
+shape Maybe(
+    One(i64) = 1 | 
+    None = 0
+)
+```
+- **Physical Layout (Scheme A: Natural Alignment)**:
+    - **Tag**: 1 byte (Offset 0).
+    - **Padding**: Variable (to align Payload).
+    - **Payload**: Starts at the next naturally aligned offset (e.g., Offset 8 for `i64`).
+    - **Total Size**: Determined by max alignment requirements (e.g., 16 bytes for `Maybe(One(i64))`).
+- **Access Rule**: MUST be accessed via `match` or `if auto`. No direct member access.
+
+#### 3.3.5 Bare Union Shape
+A C-style union where all members share the same memory. No tag is stored.
+```scala
+shape Bytes4(
+    as u32 |
+    as (u8, u8, u8, u8) |
+    as (head: u16, mid: u8, tail: u8)
+)
+```
+- **Physical Layout**: Size is `max(sizeof(members))`. Alignment is `max(alignof(members))`.
+- **Access Rule**: MUST specify the interpretation using `as`.
+- **Example**: `auto (&r, &g#, &b, &a) = val as shape(u8, u8, u8, u8)`.
+
+---
+
+### 3.4 Pattern Matching & Expressions
+
+#### 3.4.1 The `match` Expression
+`match` is an expression that yields a value via `pass`.
+
+**Binding Sovereignty (Physical Contract):**
+- `auto One(v)`: **Copy**. Creates a new stack variable and copies the payload.
+- `auto One(&v)`: **Reference (Read-only)**. `v` is an alias to the original payload memory.
+- `auto One(&v#)`: **Mutable Reference**. `v` provides write access to the original payload memory.
+- `auto One(v#)`: **Mutable Copy**. Copies payload to a new mutable stack variable.
+
+**Syntax Example:**
+```scala
+auto res = Maybe::One(12)
+match res {
+    auto Maybe::One(&v) => {
+        println("got One ref={}", v)
+    }
+    Maybe::None => println("got None")
+}
+```
+
+#### 3.4.2 The `pass` Keyword & Type Softening
+`pass` delivers a value from a block.
+- **Rules**: Must be the last effective action in a block. If one branch matches `T` and another matches `none`, the resulting type is "softened" to `T!` (Nullable).
+- **Example**:
   ```scala
-  struct Person {
-      name: str
-      age: i32
+  auto val = match res {
+      auto Maybe::One(v) => pass v
+      Maybe::None => pass none
   }
+  // val is inferred as i64!
   ```
-  ```
-- **Trait**:
-  ```scala
-  trait Run {
-      fn run(self) -> void
-  }
-  ```
-- **Algebraic Data Types (ADTs)**:
-    - **Syntax**:
-      ```scala
-      option Maybe<T, V> {
-          Some = (T, V),        // Named tuple variant
-          None = (),            // Unit variant
-          Data = (value: T, count: V), // Named fields tuple variant
-          OTHER = (),           // Pure tag (Enum-like)
-          type Inner = (T)      // Type alias (internal helper)
-      }
-      ```
-    - **Usage**:
-      - `auto opt = Maybe::Some(42, "Hello")`
-      - `use Maybe::*` allows `Some(42, "Hello")`
-    - **Pattern Matching (`match`)**:
-      ```scala
-      match opt {
-          // Destructuring binding
-          auto Some(st, sv) => { ... }
-          
-          // Guard clause
-          auto Some(st, sv) if sv > 10 => { ... }
-          
-          // Named field destructuring with partial match
-          auto Data{ st = .count, .. } => { ... }
-          
-          // Shorthand for named fields
-          Data{ .value, .count } => { ... }
-          
-          // Unit/Tag match
-          None => { ... }
-          
-          // No destructuring (access raw fields via dot)
-          Data as d => { print(d.value) }
-          
-          // Default
-          _ => { ... }
-      }
-      ```
-    - **Control Flow Sugar**:
-      - `if auto Some(x, y) = opt { ... }`
-      - `if opt is Some { print(opt.0) }`
 
-### 3.4 Control Flow Expressions
-
-In Toka, all control flow structures can be used as expressions to produce values.
-
-#### 3.4.1 Mechanics of Value Yielding
-- **`pass [value]`**: Used in `if` and `match` branches to yield a value.
-- **`break [to label] [value]`**: Used in `for`, `while`, and `loop` to terminate the loop and yield a value.
-- **`continue [to label]`**: Skips the rest of the loop body and starts the next iteration.
-- **Implicit Rules**:
-    - `break` and `pass` must be the **last statement** within their immediate block `{}` if they are intended to yield a value for that block.
-    - If a control flow structure is used as an expression (e.g., assigned to a variable), **all branches must provide a value** via `pass`, `break`, or `return`.
+#### 3.4.3 Expression-based `if`
+```scala
+auto x = if val > 0 { pass val } else { pass 1 }
+```
+- If the target variable (e.g., `x`) expects a value, all branches MUST end with `pass`.
+- `pass none` is required for optional branches to satisfy the type requirement.
 
 #### 3.4.2 Loop Expressions & `or` Fallback
 When a `for` or `while` loop is used as an expression, it must provide a fallback value in case the loop completes normally (without a `break`). This is done using the `or` block.
@@ -213,13 +236,13 @@ If no label is provided, `break` and `continue` target the innermost loop.
 ### 3.5 Traits & Implementation
 - **Definition**: Trait names are prefixed with `@` in definitions and usage.
   ```scala
-  trait @Shape {
-      fn area(self) -> i32
+  trait @Draw {
+      fn draw(self) -> i32
   }
   ```
 - **Implementation**:
   - **Inherent Methods**: `impl Type { ... }`
-  - **Trait Implementation**: `impl Type@Trait { ... }`
+  - **Trait Implementation**: `impl Line@Draw { ... }`
   - **Multiple Traits**: `impl Type@{Trait1, Trait2} { ... }` (Planned)
   - **Default/Delete**: Methods can be marked `= default` or `= delete` (Planned).
   
@@ -406,7 +429,7 @@ Sema must verify that:
 
 ## 7. Example Valid Code
 ```scala
-struct Data { v: i32 }
+shape Data (v: i32)
 
 fn process(d: Data) -> void {
     // d is immutable here
@@ -417,10 +440,10 @@ fn main() {
     auto x# = 10         // Mutable int
     x# = 11             // Mutation with token
     
-    auto ^p = new Data{v = 0} // Heap alloc
+    auto ^p = new Data(v = 0) // Heap alloc
     // p.v = 1 // Error: p points to immutable Data
     
-    auto ^p2# = new Data{v = 0}
+    auto ^p2# = new Data(v = 0)
     p2#.v = 1     // OK: p2 points to mutable Data
     
     process(p2)     // Implicit optimization to clean reference

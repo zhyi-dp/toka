@@ -1,6 +1,6 @@
-struct Data { v: i32 }
+shape Data (v: i32)
 fn main() -> i32 {
-    auto ^?p = new Data { v = 42 }
+    auto ^?p = new Data(v = 42)
     auto x = p.v; // Error: p is nullable
     return 0
 }

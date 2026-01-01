@@ -20,7 +20,7 @@ Toka eliminates hidden memory states by making properties explicit through ortho
 auto x# = 10;        // Mutable Integer
 x# = 11;            // OK
 
-auto ^p = new Rect;  // Unique Pointer to Rect
+auto ^p = new Rect;  // Unique Pointer to Rect (default init)
 auto ^#p2? = ...;    // Mutable (Swappable), Nullable, Unique Pointer
 ```
 
@@ -34,8 +34,8 @@ We are actively building the compiler self-hosting capabilities.
     - [x] LLVM IR Code Generation
 - [x] **Type System**
     - [x] Primitive Types (`i32`, `f64`, `bool`, etc.)
-    - [x] Structs & Member Access
-    - [x] **Algebraic Data Types (ADTs)** (`option`, `enum`)
+    - [x] Five-State Shapes (Struct, Tuple, Array)
+    - [x] **Algebraic Data Types (ADTs)** (via `shape`)
     - [x] Pattern Matching (`match` statement)
 - [x] **Memory Management**
     - [x] Unique Pointers (`^`) with Move Semantics
@@ -100,7 +100,7 @@ trait @Shape {
     fn area(self) -> i32
 }
 
-struct Rect { w: i32, h: i32 }
+shape Rect (w: i32, h: i32)
 
 impl Rect@Shape {
     fn area(self) -> i32 {
@@ -108,18 +108,18 @@ impl Rect@Shape {
     }
 }
 
-option State {
-    Running = (),
-    Stopped = (i32)
-}
+shape State (
+    Running |
+    Stopped(i32)
+)
 
 fn main() {
-    auto r = Rect { w = 10, h = 20 }
+    auto r = Rect(w = 10, h = 20)
     auto a = r.area()
     
     auto s = State::Stopped(404)
     match s {
-        Stopped(code) => printf("Stopped with %d\n", code),
+        auto Stopped(code) => printf("Stopped with %d\n", code),
         _ => printf("Running...\n")
     }
 }
