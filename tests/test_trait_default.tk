@@ -1,4 +1,4 @@
-import core/io::printf
+import core/io::println
 
 trait @Base {
     fn foo(self) -> i32 {
@@ -23,7 +23,7 @@ fn main() -> i32 {
     auto t = Test(val = 20)
     auto f = t.foo()
     auto b = t.bar()
-    printf("Foo: %d\n", f)
-    printf("Bar: %d\n", b)
+    println("Foo: {}", f)
+    println("Bar: {}", b)
     return 0
 }

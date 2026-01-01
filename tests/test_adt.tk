@@ -1,4 +1,4 @@
-import core/io::printf
+import core/io::println
 
 shape State (
     On |
@@ -11,23 +11,23 @@ fn main() -> i32 {
     
     match s {
         On => {
-            printf("Matched On!\n")
+            println("Matched On!\n")
         }
         Off => {
-            printf("Matched Off!\n")
+            println("Matched Off!\n")
         }
         _ => {
-            printf("Matched Default/Wildcard!\n")
+            println("Matched Default/Wildcard!\n")
         }
     }
     
     auto e = State::ErrCode(404)
     match e {
         auto ErrCode(code) => {
-            printf("Matched ErrCode: %d\n", code)
+            println("Matched ErrCode: {}", code)
         }
         _ => {
-            printf("Ignored\n")
+            println("Ignored\n")
         }
     }
     return 0

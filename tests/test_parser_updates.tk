@@ -1,4 +1,4 @@
-import core/io::printf
+import core/io::println
 
 shape Data (v: i32)
 
@@ -9,12 +9,12 @@ fn main() -> i32 {
     auto res = t && f || t
 
     if res {
-        printf("Logical ops work: result is true\n")
+        println("Logical ops work: result is true\n")
     }
 
     // Checking Parser Update for Attributes
     auto ^#p1 = new Data(v=10)
-    printf("Rebindable pointer p1->v: %d\n", p1.v)
+    println("Rebindable pointer p1->v: {}", p1.v)
 
     {
         // Nullable Pointer
@@ -22,8 +22,8 @@ fn main() -> i32 {
 
         // New syntax: 'is' operator for null check. 
         if ^?p2 is ^p2 {
-            printf("Nullable pointer is not null (is check)\n")
-            printf("p2->v: %d\n", p2.v)
+            println("Nullable pointer is not null (is check)\n")
+            println("p2->v: {}", p2.v)
         }
     }
     {
@@ -32,11 +32,11 @@ fn main() -> i32 {
 
         // New syntax: 'is' operator for null check. 
         if ^?p3 is ^p3 {
-            printf("Nullable pointer is not null (is check)\n")
+            println("Nullable pointer is not null (is check)\n")
         }
         else
         {
-            printf("Nullable pointer is null (is check)\n")
+            println("Nullable pointer is null (is check)\n")
         }
     }
     return 0

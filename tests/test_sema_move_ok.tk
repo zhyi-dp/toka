@@ -1,6 +1,6 @@
 shape Rect (w: i32, h: i32)
 
-import core/io::printf
+import core/io::println
 
 fn main() -> i32 {
     auto ^r1 = new Rect(w=1, h=1)
@@ -8,6 +8,6 @@ fn main() -> i32 {
     
     // r2 is valid
     auto x = r2.w // OK
-    printf("Move OK: x is %d\n", x)
+    println("Move OK: x is {}", x)
     return 0
 }

@@ -1,0 +1,22 @@
+import core/io::println
+
+fn main() -> i32 {
+    auto x = 10
+    auto b = true
+    auto f = 3.14
+    
+    // Test basic functionality
+    println("Hello World")
+    println("Value: {}", x)
+    println("Bool: {}", b)
+    println("Float: {}", f)
+    
+    // Test multiple args
+    println("x={}, b={}, f={}", x, b, f)
+    println("String Literal: {}", "literal works")
+
+    // Test weird formatting
+    println("Prefix {} Suffix", 123)
+    
+    return 0
+}

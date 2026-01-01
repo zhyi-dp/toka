@@ -118,20 +118,20 @@ fn main() {
     
     auto s = State::Stopped(404)
     match s {
-        auto Stopped(code) => printf("Stopped with %d\n", code)
-        _ => printf("Running...\n")
+        auto Stopped(code) => println("Stopped with {}", code)
+        _ => println("Running...")
     }
 }
 
 fn null_safety() {
     auto ^?p = null // 身份可空 (Identity is Nullable)
     if ^?p is ^p {
-        printf("Not Null!\n") // 只有在指针不为空时执行
+        println("Not Null!") // 只有在指针不为空时执行
     }
     
     auto obj! = none // 内容可空 (Value is Nullable)
     if obj! is obj {
-        printf("Object exists!\n")
+        println("Object exists!")
     }
 }
 ```

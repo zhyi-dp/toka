@@ -1,53 +1,53 @@
-import core/io::printf
+import core/io::println
 
 fn main() -> i32 {
-    printf("--- Stress Test: Nested Jump ---\n")
+    println("--- Stress Test: Nested Jump ---\n")
     // 1. Pressure Test: 5-level nested loop with long-jump yield
     auto res = loop { // Level 1 (Label: res)
-        printf("Entering Level 1\n")
+        println("Entering Level 1\n")
         loop { // Level 2
             loop { // Level 3
                 loop { // Level 4
                     for auto i in [1] { // Level 5
-                        printf("Deep in Level 5, initiating jump to res with 999\n")
+                        println("Deep in Level 5, initiating jump to res with 999\n")
                         break to res 999
                     }
-                    printf("Error: Level 4 not skipped\n")
+                    println("Error: Level 4 not skipped\n")
                 }
-                printf("Error: Level 3 not skipped\n")
+                println("Error: Level 3 not skipped\n")
             }
-            printf("Error: Level 2 not skipped\n")
+            println("Error: Level 2 not skipped\n")
         }
-        printf("Error: Level 1 body reaching end\n")
+        println("Error: Level 1 body reaching end\n")
     }
-    printf("Result of 5-level break: %d (expected 999)\n", res)
+    println("Result of 5-level break: {} (expected 999)", res)
 
-    printf("\n--- Empty Set Test: for + or block ---\n")
+    println("\n--- Empty Set Test: for + or block ---\n")
     // 2. Empty Set Test: empty array should hit or block
     auto empty_res = for auto x in [] {
-        printf("Error: Entered loop body for empty array\n")
+        println("Error: Entered loop body for empty array\n")
         break 0
     } or {
-        printf("Success: Entered or block for empty array\n")
+        println("Success: Entered or block for empty array\n")
         pass 777
     }
-    printf("Result of empty for: %d (expected 777)\n", empty_res)
+    println("Result of empty for: {} (expected 777)", empty_res)
 
-    printf("\n--- Sovereignty Test: Mutation + continue ---\n")
+    println("\n--- Sovereignty Test: Mutation + continue ---\n")
     // 3. Sovereignty Test: state modification across continue
     auto counter# = 0
     auto audit# = 0
     while counter < 5 {
         counter# += 1
         if counter == 3 {
-            printf("Counter is 3, continuing...\n")
+            println("Counter is 3, continuing...\n")
             continue
         }
         audit# += 10
-        printf("Counter: %d, Audit: %d\n", counter, audit)
+        println("Counter: {}, Audit: {}", counter, audit)
     }
-    printf("Final Counter: %d (expected 5)\n", counter)
-    printf("Final Audit: %d (expected 40)\n", audit)
+    println("Final Counter: {} (expected 5)", counter)
+    println("Final Audit: {} (expected 40)", audit)
 
     return 0
 }

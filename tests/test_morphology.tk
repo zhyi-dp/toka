@@ -1,4 +1,4 @@
-import core/io::printf
+import core/io::println
 import core/memory
 
 shape Point (x: i32, y: i32)
@@ -7,18 +7,18 @@ fn main() -> i32 {
     auto *ptr# = new Point(x = 10, y = 20)
     
     // 1. Point-Value Duality: ptr is the object
-    printf("ptr.x = %d (expected 10)\n", ptr.x)
+    println("ptr.x = {} (expected 10)", ptr.x)
     ptr#.x = 100
-    printf("After ptr#.x = 100, ptr.x = %d (expected 100)\n", ptr.x)
+    println("After ptr#.x = 100, ptr.x = {} (expected 100)", ptr.x)
     
     // 2. Identity access: *ptr is the pointer
-    printf("Address (*ptr) = %p\n", *ptr)
+    println("Address (*ptr) = {}", *ptr)
     
     // 3. Explicit pointer access: (*ptr)->y
-    printf("(*ptr)->y = %d (expected 20)\n", (*ptr)->y)
+    println("(*ptr)->y = {} (expected 20)", (*ptr)->y)
     
     del *ptr
     
-    printf("Morphology test done\n")
+    println("Morphology test done\n")
     return 0
 }

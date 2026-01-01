@@ -1,4 +1,4 @@
-import core/io::printf
+import core/io::println
 
 shape Rect (
     w: i32,
@@ -30,8 +30,8 @@ impl Rect@Fly {
 fn main() -> i32 {
     auto r = Rect(w = 10, h = 20)
     auto s = r.area()
-    printf("Shape Area: %d\n", s)
+    println("Shape Area: {}", s)
     auto f = r.fly()
-    printf("Fly: %d\n", f)
+    println("Fly: {}", f)
     return 0
 }

@@ -1,4 +1,4 @@
-import core/io::printf
+import core/io::println
 
 shape Rect (
     width: i32,
@@ -20,9 +20,9 @@ fn main() -> i32 {
     
     // Test method call
     auto a = r.area()
-    printf("Area: %d\n", a)
+    println("Area: {}", a)
     
     auto p = r.perimeter()
-    printf("Perimeter: %d\n", p)
+    println("Perimeter: {}", p)
     return 0
 }

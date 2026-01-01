@@ -921,6 +921,20 @@ std::string Sema::checkExpr(Expr *E) {
   } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
     // Check GlobalFunctions
     std::string CallName = Call->Callee;
+
+    // Intrinsic: println (Compiler Magic)
+    // Avoids strict function lookup and arg checking for this special intrinsic
+    if (CallName == "println") {
+      if (Call->Args.empty()) {
+        error(Call, "println requires at least a format string");
+      }
+      // Validate args are checkable
+      for (auto &Arg : Call->Args) {
+        checkExpr(Arg.get());
+      }
+      return "void";
+    }
+
     std::string ShapeName = "";
     std::string VariantName = "";
 

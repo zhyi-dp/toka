@@ -433,7 +433,7 @@ shape Data (v: i32)
 
 fn process(d: Data) -> void {
     // d is immutable here
-    println(d.v)
+    println("{}", d.v)
 }
 
 fn main() {

@@ -1149,6 +1149,106 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       }
     }
 
+    // Intrinsic: println (Compiler Magic)
+    // Generates a sequence of printf calls to simulate a formatted print with
+    // newlines
+    if (call->Callee == "println") {
+      if (call->Args.empty())
+        return nullptr;
+
+      // 1. Get format string (Expect first arg to be String literal)
+      // If not a literal, we can't parse it at compile time -> Fallback or
+      // Error? For "Magic", we assume usage is always println("fmt", ...)
+      auto *fmtExpr = dynamic_cast<const StringExpr *>(call->Args[0].get());
+      if (!fmtExpr) {
+        std::cerr << "Error: println intrinsic requires a string literal as "
+                     "first argument.\n";
+        return nullptr;
+      }
+
+      std::string fmt = fmtExpr->Value;
+      size_t lastPos = 0;
+      size_t pos = 0;
+      int argIndex = 1;
+
+      auto printfFunc = m_Module->getOrInsertFunction(
+          "printf", llvm::FunctionType::get(m_Builder.getInt32Ty(),
+                                            {m_Builder.getInt8PtrTy()}, true));
+
+      while ((pos = fmt.find("{}", lastPos)) != std::string::npos) {
+        // Print text segment
+        std::string text = fmt.substr(lastPos, pos - lastPos);
+        if (!text.empty()) {
+          std::vector<llvm::Value *> args;
+          args.push_back(m_Builder.CreateGlobalStringPtr(
+              text)); // Use as format string since it has no %
+          // Safety: if text contains %, printf will crash/read stack.
+          // Ideally we should escape or use "%s".
+          // Let's use "%s" pattern for safety.
+          std::vector<llvm::Value *> safeArgs;
+          safeArgs.push_back(m_Builder.CreateGlobalStringPtr("%s"));
+          safeArgs.push_back(m_Builder.CreateGlobalStringPtr(text));
+          m_Builder.CreateCall(printfFunc, safeArgs);
+        }
+
+        // Print argument
+        if (argIndex < (int)call->Args.size()) {
+          llvm::Value *val = genExpr(call->Args[argIndex].get());
+          if (val) {
+            llvm::Type *ty = val->getType();
+            std::string spec = "";
+            llvm::Value *pVal = val;
+            bool customPrint = false;
+
+            if (ty->isIntegerTy(1)) { // bool
+              llvm::Value *trueStr = m_Builder.CreateGlobalStringPtr("true");
+              llvm::Value *falseStr = m_Builder.CreateGlobalStringPtr("false");
+              pVal = m_Builder.CreateSelect(val, trueStr, falseStr);
+              spec = "%s";
+            } else if (ty->isIntegerTy(64)) {
+              spec = "%lld";
+            } else if (ty->isIntegerTy()) {
+              spec = "%d";
+            } else if (ty->isDoubleTy()) {
+              spec = "%f";
+            } else if (ty->isFloatTy()) {
+              spec = "%f";
+              pVal = m_Builder.CreateFPExt(val, m_Builder.getDoubleTy());
+            } else if (ty->isPointerTy()) {
+              // Opaque pointer check
+              // For StringExpr arg, assume string
+              if (dynamic_cast<const StringExpr *>(
+                      call->Args[argIndex].get())) {
+                spec = "%s";
+              } else {
+                spec = "%p"; // Default to address
+              }
+            } else {
+              spec = "?"; // Unknown
+            }
+
+            if (!spec.empty()) {
+              std::vector<llvm::Value *> pArgs;
+              pArgs.push_back(m_Builder.CreateGlobalStringPtr(spec));
+              pArgs.push_back(pVal);
+              m_Builder.CreateCall(printfFunc, pArgs);
+            }
+          }
+          argIndex++;
+        }
+        lastPos = pos + 2; // Skip {}
+      }
+
+      // Print remaining tail
+      std::string tail = fmt.substr(lastPos);
+      tail += "\n"; // Auto newline
+      std::vector<llvm::Value *> tailArgs;
+      tailArgs.push_back(m_Builder.CreateGlobalStringPtr("%s"));
+      tailArgs.push_back(m_Builder.CreateGlobalStringPtr(tail));
+      m_Builder.CreateCall(printfFunc, tailArgs);
+
+      return llvm::ConstantInt::get(m_Builder.getInt32Ty(), 0);
+    }
     llvm::Function *callee = m_Module->getFunction(call->Callee);
     if (!callee) {
       // Check for ADT Constructor (Type::Member)

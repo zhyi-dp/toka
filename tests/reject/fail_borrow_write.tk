@@ -1,9 +1,9 @@
-import core/io::printf
+import core/io::println
 
 fn main() -> i32 {
     auto x# = 10
     auto &y = &x
     x# = 20 // Error: x is borrowed by y (immutable borrow still blocks owner write)
-    printf("y is %d\n", y)
+    println("y is {}", y)
     return 0
 }
