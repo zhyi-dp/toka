@@ -1,5 +1,5 @@
-import "core/io";
-import "core/memory";
+import "core/io"
+import "core/memory"
 
 struct Point {
     x: i32,
@@ -7,56 +7,56 @@ struct Point {
     z: i32,
 }
 
-type PointTup = (i32, i32);
+type PointTup = (i32, i32)
 
 fn processPoint(p: PointTup) {
-    printf("Point is (%d, %d)\n", p.0, p.1);
-    return;
+    printf("Point is (%d, %d)\n", p.0, p.1)
+    return
 }
 
 fn addx(point: Point, v: i32) -> i32 {
-    auto tmp = point.x + v;
-    return tmp;
+    auto tmp = point.x + v
+    return tmp
 }
 
 fn addtox(point#: Point, v: i32) {
-    point#.x += v;
+    point#.x += v
 }
 
 fn addtox_useref(&point#: Point, v: i32) {
-    point#.x += v;
+    point#.x += v
 }
 
 fn main() -> i32 {
-    auto p# = Point { x = 1, y = 2, z = 111 };
-    auto i# = 0;
-    auto logi# = 0;
+    auto p# = Point { x = 1, y = 2, z = 111 }
+    auto i# = 0
+    auto logi# = 0
     while (i < 3) {
-        printf("[%03d]p.x is %d, loop %d\n", logi#++, p.x, i);
-        p#.x = p.x + 10;
-        i# = i + 1;
+        printf("[%03d]p.x is %d, loop %d\n", logi#++, p.x, i)
+        p#.x = p.x + 10
+        i# = i + 1
     }
-    printf("[%03d]p.x is %d, loop %d\n", logi#++, p.x, i);
-    p#.x = addx(p, 10);
-    printf("[%03d]p.x is %d (after addx, should be 41)\n", logi#++, p.x);
+    printf("[%03d]p.x is %d, loop %d\n", logi#++, p.x, i)
+    p#.x = addx(p, 10)
+    printf("[%03d]p.x is %d (after addx, should be 41)\n", logi#++, p.x)
     
-    addtox(p#, 10);
-    printf("[%03d]p.x is %d (after addtox, should be 51 because of In-place Capture)\n", logi#++, p.x);
+    addtox(p#, 10)
+    printf("[%03d]p.x is %d (after addtox, should be 51 because of In-place Capture)\n", logi#++, p.x)
     
-    addtox_useref(&p#, 10);
-    printf("[%03d]p.x is %d (after addtox_useref, should be 61)\n", logi#++, p.x);
+    addtox_useref(&p#, 10)
+    printf("[%03d]p.x is %d (after addtox_useref, should be 61)\n", logi#++, p.x)
 
-    auto b# = true;
+    auto b# = true
     if (b) {
-        printf("[%03d]bool true works\n", logi#++);
+        printf("[%03d]bool true works\n", logi#++)
     }
-    b# = false;
+    b# = false
     if (b) {
-        printf("[%03d]bool false error\n", logi#++);
+        printf("[%03d]bool false error\n", logi#++)
     } else {
-        printf("[%03d]bool false works\n", logi#++);
+        printf("[%03d]bool false works\n", logi#++)
     }
 
-    auto f# = 3.14;
-    return 0;
+    auto f# = 3.14
+    return 0
 }

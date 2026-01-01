@@ -1,8 +1,8 @@
 struct Data { v: i32 }
 fn main() -> i32 {
-    auto ^?p = new Data { v = 42 };
+    auto ^?p = new Data { v = 42 }
     if p is Data { // Error: Data is not a variable
-        return 0;
+        return 0
     }
-    return 0;
+    return 0
 }

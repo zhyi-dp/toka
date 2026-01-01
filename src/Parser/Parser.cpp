@@ -50,6 +50,66 @@ Token Parser::consume(TokenType type, const std::string &message) {
   return peek();
 }
 
+void Parser::expectEndOfStatement() {
+  if (isEndOfStatement()) {
+    if (match(TokenType::Semicolon)) {
+      // Consumed
+    }
+    return;
+  }
+  error(peek(), "Expected ';' or newline at end of statement");
+}
+
+bool Parser::isEndOfStatement() {
+  if (check(TokenType::Semicolon))
+    return true;
+  if (check(TokenType::RBrace))
+    return true;
+  if (check(TokenType::EndOfFile))
+    return true;
+
+  // Newline rule
+  if (peek().HasNewlineBefore) {
+    // If previous was an operator, it's not a terminator
+    TokenType prev = previous().Kind;
+    switch (prev) {
+    case TokenType::Plus:
+    case TokenType::Minus:
+    case TokenType::Star:
+    case TokenType::Slash:
+    case TokenType::Equal:
+    case TokenType::PlusEqual:
+    case TokenType::MinusEqual:
+    case TokenType::StarEqual:
+    case TokenType::SlashEqual:
+    case TokenType::DoubleEqual:
+    case TokenType::Neq:
+    case TokenType::Less:
+    case TokenType::Greater:
+    case TokenType::And:
+    case TokenType::Or:
+    case TokenType::Dot:
+    case TokenType::Arrow:
+    case TokenType::Comma:
+    case TokenType::Colon:
+    case TokenType::At:
+    case TokenType::Dependency:
+    case TokenType::LParen:
+    case TokenType::LBracket:
+    case TokenType::LBrace:
+    case TokenType::Ampersand:
+    case TokenType::Pipe:
+    case TokenType::Caret:
+    case TokenType::Tilde:
+      return false;
+    default:
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void Parser::error(const Token &tok, const std::string &message) {
   std::cerr << m_CurrentFile << ":" << tok.Line << ":" << tok.Column
             << ": error: " << message << "\n";
@@ -299,7 +359,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl() {
   if (check(TokenType::LBrace)) {
     body = parseBlock();
   } else {
-    match(TokenType::Semicolon);
+    expectEndOfStatement();
   }
   auto decl =
       std::make_unique<FunctionDecl>(name.Text, args, std::move(body), retType);
@@ -347,7 +407,7 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl() {
     consume(TokenType::RParen, "Expected ')' after destructuring");
     consume(TokenType::Equal, "Expected '=' for destructuring");
     auto init = parseExpr();
-    consume(TokenType::Semicolon, "Expected ';' after destructuring");
+    expectEndOfStatement();
     auto node = std::make_unique<DestructuringDecl>(
         typeName.Text, std::move(vars), std::move(init));
     node->setLocation(typeName, m_CurrentFile);
@@ -358,7 +418,7 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl() {
 
   std::string typeName = "";
   if (match(TokenType::Colon)) {
-    while (!check(TokenType::Semicolon) && !check(TokenType::Equal) &&
+    while (!isEndOfStatement() && !check(TokenType::Equal) &&
            !check(TokenType::EndOfFile) && !check(TokenType::Comma) &&
            !check(TokenType::RParen)) {
       typeName += advance().Text;
@@ -385,7 +445,7 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl() {
   node->IsPointerNullable = isPtrNullable;
   node->TypeName = typeName;
 
-  consume(TokenType::Semicolon, "Expected ';' after variable declaration");
+  expectEndOfStatement();
   return node;
 }
 
@@ -408,7 +468,7 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
   // ExprStmt
   auto expr = parseExpr();
   if (expr) {
-    consume(TokenType::Semicolon, "Expected ';' after expression statement");
+    expectEndOfStatement();
     return std::make_unique<ExprStmt>(std::move(expr));
   }
   return nullptr;
@@ -433,10 +493,10 @@ std::unique_ptr<BlockStmt> Parser::parseBlock() {
 std::unique_ptr<ReturnStmt> Parser::parseReturn() {
   Token tok = consume(TokenType::KwReturn, "Expected 'return'");
   std::unique_ptr<Expr> val;
-  if (!check(TokenType::Semicolon)) {
+  if (!isEndOfStatement()) {
     val = parseExpr();
   }
-  consume(TokenType::Semicolon, "Expected ';' after return value");
+  expectEndOfStatement();
   auto node = std::make_unique<ReturnStmt>(std::move(val));
   node->setLocation(tok, m_CurrentFile);
   return node;
@@ -481,7 +541,7 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
       advance(); // consume ':'
       std::string typeName = "";
       while (!check(TokenType::Comma) && !check(TokenType::RParen) &&
-             !check(TokenType::Semicolon) && !check(TokenType::Plus) &&
+             !isEndOfStatement() && !check(TokenType::Plus) &&
              !check(TokenType::Minus) && !check(TokenType::Star) &&
              !check(TokenType::Slash) && !check(TokenType::Equal) &&
              !check(TokenType::DoubleEqual) && !check(TokenType::Neq) &&
@@ -499,6 +559,10 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
 
     int prec = getPrecedence(peek().Kind);
     if (prec < minPrec)
+      break;
+
+    // Rule: Binary operators must be on the previous line to continue
+    if (peek().HasNewlineBefore)
       break;
 
     Token op = advance();
@@ -812,11 +876,11 @@ std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
   std::string retType = "void";
   if (match(TokenType::Arrow)) {
     retType = "";
-    while (!check(TokenType::Semicolon) && !check(TokenType::EndOfFile)) {
+    while (!isEndOfStatement() && !check(TokenType::EndOfFile)) {
       retType += advance().Text;
     }
   }
-  consume(TokenType::Semicolon, "Expected ';' after extern declaration");
+  expectEndOfStatement();
 
   auto node = std::make_unique<ExternDecl>(name.Text, std::move(args), retType);
   node->setLocation(name, m_CurrentFile);
@@ -855,7 +919,7 @@ std::unique_ptr<Stmt> Parser::parseWhile() {
 std::unique_ptr<ImportDecl> Parser::parseImport() {
   consume(TokenType::KwImport, "Expected 'import'");
   Token path = consume(TokenType::String, "Expected string path for import");
-  consume(TokenType::Semicolon, "Expected ';' after import");
+  expectEndOfStatement();
   return std::make_unique<ImportDecl>(path.Text);
 }
 
@@ -866,8 +930,7 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl() {
 
   std::string targetType = "";
   int depth = 0;
-  while ((depth > 0 || !check(TokenType::Semicolon)) &&
-         !check(TokenType::EndOfFile)) {
+  while ((depth > 0 || !isEndOfStatement()) && !check(TokenType::EndOfFile)) {
     Token t = advance();
     targetType += t.Text;
     if (t.Kind == TokenType::LBracket || t.Kind == TokenType::LParen)
@@ -875,7 +938,7 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl() {
     else if (t.Kind == TokenType::RBracket || t.Kind == TokenType::RParen)
       depth--;
   }
-  match(TokenType::Semicolon);
+  expectEndOfStatement();
 
   auto node = std::make_unique<TypeAliasDecl>(name.Text, targetType);
   node->setLocation(name, m_CurrentFile);
@@ -885,7 +948,7 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl() {
 std::unique_ptr<Stmt> Parser::parseDeleteStmt() {
   Token kw = consume(TokenType::KwDelete, "Expected 'del' or 'delete'");
   auto expr = parseExpr();
-  consume(TokenType::Semicolon, "Expected ';' after delete statement");
+  expectEndOfStatement();
   auto node = std::make_unique<DeleteStmt>(std::move(expr));
   node->setLocation(kw, m_CurrentFile);
   return node;

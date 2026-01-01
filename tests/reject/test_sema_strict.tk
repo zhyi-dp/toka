@@ -9,7 +9,7 @@ fn main() {
     if (1) {} // Error: condition must be bool
 
     // 4. Dereference Non-Pointer
-    auto x = 10;
+    auto x = 10
     auto y = *x; // Error: cannot dereference non-pointer
 
     // 5. Variable Type Mismatch

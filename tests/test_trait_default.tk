@@ -1,11 +1,11 @@
-extern fn printf(*fmt: i8, ...) -> i32;
+extern fn printf(*fmt: i8, ...) -> i32
 
 trait @Base {
     fn foo(self) -> i32 {
-        return 100;
+        return 100
     }
     
-    fn bar(self) -> i32;
+    fn bar(self) -> i32
 }
 
 struct Test {
@@ -14,16 +14,16 @@ struct Test {
 
 impl Test@Base {
     fn bar(self) -> i32 {
-       return self.val + 1;
+       return self.val + 1
     }
     // foo is using default implementation
 }
 
 fn main() -> i32 {
-    auto t = Test { val = 20 };
-    auto f = t.foo();
-    auto b = t.bar();
-    printf("Foo: %d\n", f);
-    printf("Bar: %d\n", b);
-    return 0;
+    auto t = Test { val = 20 }
+    auto f = t.foo()
+    auto b = t.bar()
+    printf("Foo: %d\n", f)
+    printf("Bar: %d\n", b)
+    return 0
 }

@@ -1,7 +1,7 @@
 struct Rect { w: i32, h: i32 }
 
 fn main() {
-    auto ^r1 = new Rect{};
+    auto ^r1 = new Rect{}
     auto ^r2 = ^r1; // Moves r1 to r2
     
     auto x = r1.w; // Error: use of moved value

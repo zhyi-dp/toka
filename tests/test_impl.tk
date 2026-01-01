@@ -1,4 +1,4 @@
-extern fn printf(*fmt: i8, ...) -> i32;
+extern fn printf(*fmt: i8, ...) -> i32
 
 struct Rect {
     width: i32,
@@ -7,22 +7,22 @@ struct Rect {
 
 impl Rect {
     fn area(self) -> i32 {
-        return self.width * self.height;
+        return self.width * self.height
     }
     
     fn perimeter(self) -> i32 {
-        return (self.width + self.height) * 2;
+        return (self.width + self.height) * 2
     }
 }
 
 fn main() -> i32 {
-    auto r = Rect { width = 10, height = 20 };
+    auto r = Rect { width = 10, height = 20 }
     
     // Test method call
-    auto a = r.area();
-    printf("Area: %d\n", a);
+    auto a = r.area()
+    printf("Area: %d\n", a)
     
-    auto p = r.perimeter();
-    printf("Perimeter: %d\n", p);
-    return 0;
+    auto p = r.perimeter()
+    printf("Perimeter: %d\n", p)
+    return 0
 }

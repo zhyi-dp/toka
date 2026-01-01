@@ -43,9 +43,12 @@ std::vector<Token> Lexer::tokenize() {
 }
 
 void Lexer::skipWhitespace() {
+  m_HasNewline = false;
   while (true) {
     char c = peek();
     if (c == ' ' || c == '\r' || c == '\t' || c == '\n') {
+      if (c == '\n')
+        m_HasNewline = true;
       advance();
     } else if (c == '/' && peekNext() == '/') {
       // Comment
@@ -60,20 +63,21 @@ void Lexer::skipWhitespace() {
 Token Lexer::nextToken() {
   skipWhitespace();
 
+  Token t;
+  bool hadNewline = m_HasNewline;
+
   if (peek() == '\0') {
-    return Token{TokenType::EndOfFile, "", m_Line, m_Column};
+    t = Token{TokenType::EndOfFile, "", m_Line, m_Column};
+  } else if (isDigit(peek())) {
+    t = number();
+  } else if (isAlpha(peek())) {
+    t = identifier();
+  } else {
+    t = punctuation();
   }
 
-  // Numbers
-  if (isDigit(peek()))
-    return number();
-
-  // Identifiers & Keywords
-  if (isAlpha(peek()))
-    return identifier();
-
-  // Punctuation & Operators & Caret
-  return punctuation();
+  t.HasNewlineBefore = hadNewline;
+  return t;
 }
 
 Token Lexer::identifier() {

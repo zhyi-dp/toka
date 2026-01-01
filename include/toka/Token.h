@@ -128,7 +128,8 @@ struct Token {
   // Attribute flags for identifiers (e.g. if identifier is "x#")
   bool HasWrite = false;
   bool HasNull = false;
-  bool IsSwappablePtr = false; // "swappable" property for pointers
+  bool IsSwappablePtr = false;   // "swappable" property for pointers
+  bool HasNewlineBefore = false; // Support optional semicolons
 
   std::string toString() const {
     // Debug helper

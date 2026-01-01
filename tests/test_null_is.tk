@@ -1,25 +1,25 @@
-extern fn printf(fmt: str, ...) -> i32;
+extern fn printf(fmt: str, ...) -> i32
 
 struct Data {
     v: i32
 }
 
 fn main() -> i32 {
-    auto ^?p = new Data { v = 42 };
+    auto ^?p = new Data { v = 42 }
     
     // Narrowing: ^?p is ^p
     if ^?p is ^p {
-        printf("Success: p.v = %d\n", p.v);
+        printf("Success: p.v = %d\n", p.v)
     } else {
-        printf("Failure: p is null\n");
+        printf("Failure: p is null\n")
     }
 
-    auto ^?q# = null;
+    auto ^?q# = null
     if ^?q is ^q {
-        printf("Error: q should be null\n");
+        printf("Error: q should be null\n")
     } else {
-        printf("Success: q confirmed null\n");
+        printf("Success: q confirmed null\n")
     }
 
-    return 0;
+    return 0
 }

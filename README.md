@@ -86,14 +86,14 @@ Currently, `tokac` compiles `.tk` source files into LLVM IR (`.ll`). You can exe
 **Traits & ADTs:**
 ```scala
 trait @Shape {
-    fn area(self) -> i32;
+    fn area(self) -> i32
 }
 
 struct Rect { w: i32, h: i32 }
 
 impl Rect@Shape {
     fn area(self) -> i32 {
-        return self.w * self.h;
+        return self.w * self.h
     }
 }
 
@@ -103,26 +103,25 @@ option State {
 }
 
 fn main() {
-    auto r = Rect { w = 10, h = 20 };
-    auto a = r.area();
+    auto r = Rect { w = 10, h = 20 }
+    auto a = r.area()
     
-    auto s = State::Stopped(404);
+    auto s = State::Stopped(404)
     match s {
         Stopped(code) => printf("Stopped with %d\n", code),
         _ => printf("Running...\n")
-    }
     }
 }
 
 fn null_safety() {
     auto ^?p = null; // Identity is Nullable
     if ^?p is ^p {
-        printf("Not Null!\n"); 
+        printf("Not Null!\n")
     }
     
     auto obj! = none; // Value is Nullable (Option)
     if obj! is obj {
-        printf("Object exists!\n");
+        printf("Object exists!\n")
     }
 }
 ```

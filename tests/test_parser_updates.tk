@@ -1,43 +1,43 @@
-extern fn printf(fmt: str, ...) -> i32;
+extern fn printf(fmt: str, ...) -> i32
 
 struct Data { v: i32 }
 
 fn main() -> i32 {
     // Parsing check for Logical Operators
-    auto t = true;
-    auto f = false;
-    auto res = t && f || t; 
+    auto t = true
+    auto f = false
+    auto res = t && f || t
 
     if res {
-        printf("Logical ops work: result is true\n");
+        printf("Logical ops work: result is true\n")
     }
 
     // Checking Parser Update for Attributes
-    auto ^#p1 = new Data{v=10};
-    printf("Rebindable pointer p1->v: %d\n", p1.v);
+    auto ^#p1 = new Data{v=10}
+    printf("Rebindable pointer p1->v: %d\n", p1.v)
 
     {
         // Nullable Pointer
-        auto ^?p2 = new Data{v=99};
+        auto ^?p2 = new Data{v=99}
 
         // New syntax: 'is' operator for null check. 
         if ^?p2 is ^p2 {
-            printf("Nullable pointer is not null (is check)\n");
-            printf("p2->v: %d\n", p2.v);
+            printf("Nullable pointer is not null (is check)\n")
+            printf("p2->v: %d\n", p2.v)
         }
     }
     {
         // Nullable Pointer
-        auto ^?p3# = null;
+        auto ^?p3# = null
 
         // New syntax: 'is' operator for null check. 
         if ^?p3 is ^p3 {
-            printf("Nullable pointer is not null (is check)\n");
+            printf("Nullable pointer is not null (is check)\n")
         }
         else
         {
-            printf("Nullable pointer is null (is check)\n");
+            printf("Nullable pointer is null (is check)\n")
         }
     }
-    return 0;
+    return 0
 }

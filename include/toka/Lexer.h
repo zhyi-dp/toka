@@ -18,6 +18,7 @@ private:
   const char *m_Current;
   int m_Line = 1;
   int m_Column = 1;
+  bool m_HasNewline = false;
 
   void skipWhitespace();
   Token nextToken();

@@ -616,7 +616,9 @@ std::string Sema::checkExpr(Expr *E) {
           // FOR POINTER TYPES: ANY assignment to the variable itself is a
           // Reseat. Because changing the view 'p' of a pointer variable means
           // changing what it points to.
-          if (!InfoPtr->Morphology.empty()) {
+          // EXCEPTION: References (&) cannot be reseated, so assignment is
+          // value mutation.
+          if (!InfoPtr->Morphology.empty() && InfoPtr->Morphology != "&") {
             if (!InfoPtr->IsRebindable) {
               error(LHSExpr,
                     "cannot reassign fixed pointer '" + Var->Name +

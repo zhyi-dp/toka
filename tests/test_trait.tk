@@ -1,4 +1,4 @@
-extern fn printf(*fmt: i8, ...) -> i32;
+extern fn printf(*fmt: i8, ...) -> i32
 
 struct Rect {
     w: i32,
@@ -11,27 +11,27 @@ trait @Shape {
 
 trait @Fly {
     fn fly(self) -> i32 {
-        return 111;
+        return 111
     }
 }
 
 impl Rect@Shape {
     fn area(self) -> i32 {
-        return self.w * self.h;
+        return self.w * self.h
     }
 }
 
 impl Rect@Fly {
     fn fly(self) -> i32 {
-        return 222;
+        return 222
     }
 }
 
 fn main() -> i32 {
-    auto r = Rect { w = 10, h = 20 };
-    auto s = r.area();
-    printf("Shape Area: %d\n", s);
-    auto f = r.fly();
-    printf("Fly: %d\n", f);
-    return 0;
+    auto r = Rect { w = 10, h = 20 }
+    auto s = r.area()
+    printf("Shape Area: %d\n", s)
+    auto f = r.fly()
+    printf("Fly: %d\n", f)
+    return 0
 }

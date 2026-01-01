@@ -1,4 +1,4 @@
-extern fn printf(*fmt: i8, ...) -> i32;
+extern fn printf(*fmt: i8, ...) -> i32
 
 option State {
     On = (),
@@ -7,28 +7,28 @@ option State {
 }
 
 fn main() -> i32 {
-    auto s = State::On();
+    auto s = State::On()
     
     match s {
         On => {
-            printf("Matched On!\n");
+            printf("Matched On!\n")
         }
         Off => {
-            printf("Matched Off!\n");
+            printf("Matched Off!\n")
         }
         _ => {
-            printf("Matched Default/Wildcard!\n");
+            printf("Matched Default/Wildcard!\n")
         }
     }
     
-    auto e = State::ErrCode(404);
+    auto e = State::ErrCode(404)
     match e {
         auto ErrCode(code) => {
-            printf("Matched ErrCode: %d\n", code);
+            printf("Matched ErrCode: %d\n", code)
         }
         _ => {
-            printf("Ignored\n");
+            printf("Ignored\n")
         }
     }
-    return 0;
+    return 0
 }

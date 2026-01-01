@@ -29,6 +29,8 @@ private:
   bool checkAt(int offset, TokenType type) const;
   bool match(TokenType type);
   Token consume(TokenType type, const std::string &message);
+  void expectEndOfStatement();
+  bool isEndOfStatement();
   void error(const Token &tok, const std::string &message);
 
   // Recursive Descent Methods

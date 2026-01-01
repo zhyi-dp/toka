@@ -1,22 +1,22 @@
-import "core/io";
+import "core/io"
 
 fn main() -> i32 {
-    auto x# = 10;
+    auto x# = 10
     
     {
-        auto &y1 = &x;
-        auto &y2 = &x;
-        printf("y1=%d, y2=%d\n", y1, y2);
+        auto &y1 = &x
+        auto &y2 = &x
+        printf("y1=%d, y2=%d\n", y1, y2)
     }
     
     // After y1, y2 go out of scope, we can mutably borrow
     {
-        auto &z# = &x#;
-        z# = 20;
-        printf("z=%d\n", z);
+        auto &z# = &x#
+        z# = 20
+        printf("z=%d\n", z)
         // printf("x=%d\n", x); // This would be an error
     }
     
-    printf("final x=%d\n", x);
-    return 0;
+    printf("final x=%d\n", x)
+    return 0
 }

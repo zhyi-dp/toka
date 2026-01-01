@@ -1,13 +1,13 @@
 struct Rect { w: i32, h: i32 }
 
-extern fn printf(*fmt: i8, ...) -> i32;
+extern fn printf(*fmt: i8, ...) -> i32
 
 fn main() -> i32 {
-    auto ^r1 = new Rect{w=1, h=1};
+    auto ^r1 = new Rect{w=1, h=1}
     auto ^r2 = ^r1; // Move
     
     // r2 is valid
     auto x = r2.w; // OK
-    printf("Move OK: x is %d\n", x);
-    return 0;
+    printf("Move OK: x is %d\n", x)
+    return 0
 }

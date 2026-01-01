@@ -66,6 +66,18 @@ Compiler parser should treat these as reserved.
 - `++` / `--`: **Increment/Decrement** (Prefix and Postfix).
 - `.`: Access.
 - `:`: Type annotation.
+- `;`: **Optional Statement Terminator**.
+
+### 2.3 Semicolon Rules (Optional Semicolons)
+Toka supports semicolon-less syntax. A semicolon is required ONLY to separate multiple statements on the same line.
+- **Statement Termination**: A newline acts as a terminator unless the previous token is an operator or delimiter that expects continuation.
+- **Continuation Rule**: If a line ends with an operator (e.g., `+`, `-`, `*`, `/`, `=`, `,`, `.`, `->`, `::`, `(`, `[`, `{`), the next line is considered a continuation of the same statement.
+- **Example**:
+  ```scala
+  auto x = 10    // OK: Newline terminates
+  auto y = 1 +   // OK: '+' at end means continuation
+           2
+  ```
 
 ## 3. Type System & Attribute Tokens
 

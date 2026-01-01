@@ -1,4 +1,4 @@
-import "core/io";
+import "core/io"
 
 struct Point {
     x: i32,
@@ -6,38 +6,38 @@ struct Point {
 }
 
 fn takes_i32(a: i32) {
-    return;
+    return
 }
 
 fn modify(arg: i32) {
     // arg# = 20; // Error: arg is not mutable
-    return;
+    return
 }
 
 fn main() {
     // 1. Type mismatch in assignment (Implicit conversion disabled)
-    auto a: i64 = 10;
+    auto a: i64 = 10
     auto b: i32 = a; // Error: i64 to i32
 
     // 2. Type mismatch in function call
     takes_i32(a); // Error: expected i32, got i64
 
     // 3. Mutability violation (Assigning to immutable)
-    auto c = 5;
+    auto c = 5
     c# = 10; // Error: c is immutable
 
     // 4. Mutation without token
-    auto d# = 10;
+    auto d# = 10
     d = 20; // Error: Missing # at usage site (If we enforce this at usage site)
 
     // 5. Binary operation type mismatch
     // (We will use explicit types to trigger it until parser supports : annotation in expressions)
-    auto e1: i32 = 10;
-    auto e2: i64 = 20;
+    auto e1: i32 = 10
+    auto e2: i64 = 20
     auto e3 = e1 + e2; // Error: i32 + i64
 
     // 6. Struct initialization type mismatch
     auto p = Point { x = a, y = 20 }; // Error: x expects i32, a is i64
 
-    return;
+    return
 }
