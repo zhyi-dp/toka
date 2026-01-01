@@ -1,0 +1,7 @@
+import core/io::printf
+
+fn main() -> i32 {
+    // This should fail because 'io' namespace is not imported, only symbol 'printf' is.
+    io::printf("This should fail compile\n")
+    return 0
+}

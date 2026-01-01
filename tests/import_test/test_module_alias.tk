@@ -1,0 +1,12 @@
+import core/io as sys
+import tests/import_test/lib
+
+fn main() -> i32 {
+    // 1. Alias Usage
+    sys::printf("Hello via sys alias\n")
+    
+    // 2. Default Module Name Usage (from physical path stem)
+    lib::foo()
+    
+    return 0
+}

@@ -511,11 +511,13 @@ class ImportDecl : public ASTNode {
 public:
   bool IsPub = false;
   std::string PhysicalPath;
+  std::string Alias;             // Module alias (e.g. import path as alias)
   std::vector<ImportItem> Items; // If empty, it's a module import (import path)
 
-  ImportDecl(bool isPub, const std::string &path,
+  ImportDecl(bool isPub, const std::string &path, const std::string &alias = "",
              std::vector<ImportItem> items = {})
-      : IsPub(isPub), PhysicalPath(path), Items(std::move(items)) {}
+      : IsPub(isPub), PhysicalPath(path), Alias(alias),
+        Items(std::move(items)) {}
 
   std::string toString() const override {
     std::string s = IsPub ? "PubImport(" : "Import(";

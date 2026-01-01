@@ -852,12 +852,51 @@ std::string Sema::checkExpr(Expr *E) {
       std::string ModName = FnName.substr(0, scopePos);
       std::string FuncName = FnName.substr(scopePos + 2);
 
+      // Verify ModName is bound in CurrentModule->Imports
+      const ImportDecl *BoundImport = nullptr;
+      if (CurrentModule) {
+        for (const auto &Imp : CurrentModule->Imports) {
+          // Rule: To access Mod::Func, 'Mod' must be bound.
+          // Only module imports (empty items) bind the module name.
+          if (!Imp->Items.empty())
+            continue;
+
+          std::string BoundName;
+          if (!Imp->Alias.empty()) {
+            BoundName = Imp->Alias;
+          } else {
+            // Derive from path stem
+            std::string Stem = Imp->PhysicalPath;
+            size_t lastSlash = Stem.find_last_of('/');
+            if (lastSlash != std::string::npos)
+              Stem = Stem.substr(lastSlash + 1);
+            size_t dot = Stem.find_last_of('.');
+            if (dot != std::string::npos)
+              Stem = Stem.substr(0, dot);
+            BoundName = Stem;
+          }
+
+          if (BoundName == ModName) {
+            BoundImport = Imp.get();
+            break;
+          }
+        }
+      }
+
+      if (!BoundImport) {
+        error(Call, "Module '" + ModName +
+                        "' is not imported or bound in this scope");
+        return "";
+      }
+
       // Find matching function
       for (auto *GF : GlobalFunctions) {
         if (GF->Name == FuncName) {
-          // Check if Module matches.
-          // We use FileName stem for now.
-          // Assumes /path/to/lib.tk -> lib.
+          // Check if Module matches the BoundImport's path.
+          // We assume physical path stem matches function file stem.
+          // Ideally we should compare full resolved paths, but for now strict
+          // stem matching + bound check is enough.
+
           std::string Stem = GF->FileName;
           size_t lastSlash = Stem.find_last_of('/');
           if (lastSlash != std::string::npos)
@@ -866,7 +905,21 @@ std::string Sema::checkExpr(Expr *E) {
           if (dot != std::string::npos)
             Stem = Stem.substr(0, dot);
 
-          if (Stem == ModName) {
+          // IMPORTANT: If we used an alias (import core/io as sys), ModName is
+          // "sys". But the Function's native module name is "io". We must
+          // ensure that the function we found actually belongs to the file
+          // pointed to by BoundImport.
+
+          // Let's derive the stem from BoundImport->PhysicalPath
+          std::string ImportStem = BoundImport->PhysicalPath;
+          size_t iSlash = ImportStem.find_last_of('/');
+          if (iSlash != std::string::npos)
+            ImportStem = ImportStem.substr(iSlash + 1);
+          size_t iDot = ImportStem.find_last_of('.');
+          if (iDot != std::string::npos)
+            ImportStem = ImportStem.substr(0, iDot);
+
+          if (Stem == ImportStem) {
             FoundFn = GF;
             break;
           }

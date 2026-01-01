@@ -1053,6 +1053,7 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
   }
 
   std::vector<ImportItem> items;
+  std::string moduleAlias;
 
   // 2. Parse Logical Items (::)
   // Check for :: (colon colon)
@@ -1082,10 +1083,13 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
       }
       items.push_back({sym.Text, alias});
     }
+  } else {
+    // 3. Optional Module Alias (only if no logical items were parsed)
+    if (match(TokenType::KwAs)) {
+      moduleAlias =
+          consume(TokenType::Identifier, "Expected module alias").Text;
+    }
   }
-
-  // Module alias handling could go here if needed, but spec says import
-  // std/json treats filename as namespace.
 
   // Special handling: 'import ... :: *' ends with *, which isEndOfStatement
   // thinks is a binary op. We manually allow newline or semicolon here to avoid
@@ -1097,7 +1101,7 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
     expectEndOfStatement();
   }
 
-  return std::make_unique<ImportDecl>(isPub, physicalPath, items);
+  return std::make_unique<ImportDecl>(isPub, physicalPath, moduleAlias, items);
 }
 
 std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
