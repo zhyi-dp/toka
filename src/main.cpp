@@ -10,12 +10,33 @@
 
 void parseSource(const std::string &filename,
                  std::vector<std::unique_ptr<toka::Module>> &astModules,
-                 std::set<std::string> &visited) {
+                 std::set<std::string> &visited,
+                 std::vector<std::string> &recursionStack) {
+  // Check recursion stack for circular dependency
+  for (const auto &f : recursionStack) {
+    if (f == filename) {
+      std::cerr << "Circular dependency detected: ";
+      for (const auto &s : recursionStack)
+        std::cerr << s << " -> ";
+      std::cerr << filename << "\n";
+      exit(1);
+    }
+  }
+
   if (visited.count(filename))
     return;
   visited.insert(filename);
+  recursionStack.push_back(filename);
 
   std::ifstream file(filename);
+  if (!file.is_open()) {
+    // Check if filename is missing extension and try adding .tk
+    if (filename.find(".tk") == std::string::npos) {
+      std::string withExt = filename + ".tk";
+      file.open(withExt);
+    }
+  }
+
   if (!file.is_open()) {
     // Try relative to lib/ or ../lib/
     std::string paths[] = {"lib/", "../lib/"};
@@ -50,10 +71,16 @@ void parseSource(const std::string &filename,
 
   // Recursively parse imports
   for (const auto &imp : module->Imports) {
-    parseSource(imp->Path, astModules, visited);
+    if (!imp->Items.empty()) {
+      // TODO: Handle logic import symbol filtering if we add per-module symbol
+      // tables. For now, we just parse the file to register its globals.
+    }
+    parseSource(imp->PhysicalPath, astModules, visited, recursionStack);
   }
 
   astModules.push_back(std::move(module));
+  recursionStack.pop_back(); // Pop after finishing processing logic for this
+                             // module's imports
 }
 
 int main(int argc, char **argv) {
@@ -65,8 +92,9 @@ int main(int argc, char **argv) {
   std::vector<std::unique_ptr<toka::Module>> astModules;
   std::set<std::string> visited;
 
+  std::vector<std::string> recursionStack;
   for (int i = 1; i < argc; ++i) {
-    parseSource(argv[i], astModules, visited);
+    parseSource(argv[i], astModules, visited, recursionStack);
   }
 
   if (astModules.empty())

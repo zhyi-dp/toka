@@ -48,6 +48,10 @@ We are actively building the compiler self-hosting capabilities.
     - [x] Value yielding via `pass` and `break`
     - [x] `or` Fallback for loops
     - [x] Targeted labels for `break`/`continue`
+- [x] **Modules & Visibility**
+    - [x] File-based Modules
+    - [x] `import` system (Physical & Logical)
+    - [x] `pub` visibility modifier
 - [ ] **Semantic Analysis (Sema)** *(In Progress)*
     - [x] Infrastructure Scaffolding
     - [x] **Strict Mutability Enforcement** (`#` Check)
@@ -90,6 +94,8 @@ Currently, `tokac` compiles `.tk` source files into LLVM IR (`.ll`). You can exe
 
 **Traits & ADTs:**
 ```scala
+import core/io::printf
+
 trait @Shape {
     fn area(self) -> i32
 }

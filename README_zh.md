@@ -48,6 +48,10 @@ auto ^#p2? = ...;    // 可交换(指向可变)、可空、独占指针
     - [x] 通过 `pass` 和 `break` 产生值
     - [x] 循环的 `or` 回退块
     - [x] `break`/`continue` 的定向标签 (Target Labels)
+- [x] **模块与可见性 (Modules & Visibility)**
+    - [x] 文件级模块 (File-based Modules)
+    - [x] `import` 导入系统 (物理路径与逻辑导入)
+    - [x] `pub` 可见性修饰符
 - [ ] **语义分析 (Sema)** *(进行中)*
     - [x] 基础设施脚手架 (Infrastructure Scaffolding)
     - [x] **严格的可变性强制检查** (`#` 检查)

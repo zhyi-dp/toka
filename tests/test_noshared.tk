@@ -1,5 +1,5 @@
-import "core/io"
-import "core/memory"
+import core/io::printf
+import core/memory
 
 struct Point {
     x: i32,

@@ -20,9 +20,9 @@ fn main() -> i32 {
     
     // Test method call
     auto a = r.area()
-    printf("Area: %d\n", a)
+    io::printf("Area: %d\n", a)
     
     auto p = r.perimeter()
-    printf("Perimeter: %d\n", p)
+    io::printf("Perimeter: %d\n", p)
     return 0
 }

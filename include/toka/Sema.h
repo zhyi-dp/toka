@@ -96,7 +96,8 @@ public:
 private:
   bool HasError = false;
   Scope *CurrentScope = nullptr;
-  std::map<std::string, FunctionDecl *> FunctionMap;
+  std::vector<FunctionDecl *>
+      GlobalFunctions; // All functions across all modules
   std::map<std::string, ExternDecl *> ExternMap;
   std::map<std::string, StructDecl *> StructMap;
   std::map<std::string, std::string> TypeAliasMap;
@@ -107,6 +108,7 @@ private:
   std::string m_LastBorrowSource;
   // {VarName, IsMutable}
   std::vector<std::pair<std::string, bool>> m_CurrentStmtBorrows;
+  Module *CurrentModule = nullptr;
 
   struct ControlFlowInfo {
     std::string Label;

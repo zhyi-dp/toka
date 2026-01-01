@@ -1,4 +1,4 @@
-import "core/io"
+import core/io::printf
 
 struct Point {
     x: i32,

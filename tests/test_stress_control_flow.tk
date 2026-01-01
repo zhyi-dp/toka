@@ -1,15 +1,15 @@
 extern fn printf(fmt: str, ...) -> i32
 
 fn main() -> i32 {
-    printf("--- Stress Test: Nested Jump ---\n")
+    io::printf("--- Stress Test: Nested Jump ---\n")
     // 1. Pressure Test: 5-level nested loop with long-jump yield
     auto res = loop { // Level 1 (Label: res)
-        printf("Entering Level 1\n")
+        io::printf("Entering Level 1\n")
         loop { // Level 2
             loop { // Level 3
                 loop { // Level 4
                     for auto i in [1] { // Level 5
-                        printf("Deep in Level 5, initiating jump to res with 999\n")
+                        io::printf("Deep in Level 5, initiating jump to res with 999\n")
                         break to res 999
                     }
                     printf("Error: Level 4 not skipped\n")

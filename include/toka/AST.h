@@ -452,12 +452,14 @@ struct StructField {
 
 class TypeAliasDecl : public ASTNode {
 public:
+  bool IsPub = false;
   std::string Name;
   std::string TargetType;
-  TypeAliasDecl(const std::string &name, const std::string &target)
-      : Name(name), TargetType(target) {}
+  TypeAliasDecl(bool isPub, const std::string &name, const std::string &target)
+      : IsPub(isPub), Name(name), TargetType(target) {}
   std::string toString() const override {
-    return "TypeAlias(" + Name + " = " + TargetType + ")";
+    return std::string(IsPub ? "Pub" : "") + "TypeAlias(" + Name + " = " +
+           TargetType + ")";
   }
 };
 
@@ -477,27 +479,61 @@ struct OptionVariant {
 
 class OptionDecl : public ASTNode {
 public:
+  bool IsPub = false;
   std::string Name;
   std::vector<OptionVariant> Variants;
-  OptionDecl(const std::string &name, std::vector<OptionVariant> variants)
-      : Name(name), Variants(std::move(variants)) {}
-  std::string toString() const override { return "Option(" + Name + ")"; }
+  OptionDecl(bool isPub, const std::string &name,
+             std::vector<OptionVariant> variants)
+      : IsPub(isPub), Name(name), Variants(std::move(variants)) {}
+  std::string toString() const override {
+    return std::string(IsPub ? "Pub" : "") + "Option(" + Name + ")";
+  }
 };
 
 class StructDecl : public ASTNode {
 public:
+  bool IsPub = false;
   std::string Name;
   std::vector<StructField> Fields;
-  StructDecl(const std::string &name, std::vector<StructField> flds)
-      : Name(name), Fields(std::move(flds)) {}
-  std::string toString() const override { return "Struct(" + Name + ")"; }
+  StructDecl(bool isPub, const std::string &name, std::vector<StructField> flds)
+      : IsPub(isPub), Name(name), Fields(std::move(flds)) {}
+  std::string toString() const override {
+    return std::string(IsPub ? "Pub" : "") + "Struct(" + Name + ")";
+  }
+};
+
+struct ImportItem {
+  std::string Symbol; // Name of symbol, or "*" for wildcard
+  std::string Alias;  // Optional alias
 };
 
 class ImportDecl : public ASTNode {
 public:
-  std::string Path;
-  ImportDecl(const std::string &path) : Path(path) {}
-  std::string toString() const override { return "Import(" + Path + ")"; }
+  bool IsPub = false;
+  std::string PhysicalPath;
+  std::vector<ImportItem> Items; // If empty, it's a module import (import path)
+
+  ImportDecl(bool isPub, const std::string &path,
+             std::vector<ImportItem> items = {})
+      : IsPub(isPub), PhysicalPath(path), Items(std::move(items)) {}
+
+  std::string toString() const override {
+    std::string s = IsPub ? "PubImport(" : "Import(";
+    s += PhysicalPath;
+    if (!Items.empty()) {
+      s += " :: {";
+      for (size_t i = 0; i < Items.size(); ++i) {
+        if (i > 0)
+          s += ", ";
+        s += Items[i].Symbol;
+        if (!Items[i].Alias.empty())
+          s += " as " + Items[i].Alias;
+      }
+      s += "}";
+    }
+    s += ")";
+    return s;
+  }
 };
 
 class FunctionDecl : public ASTNode {
@@ -513,17 +549,20 @@ public:
     bool IsNullable = false;
   };
 
+  bool IsPub = false;
   std::string Name;
   std::vector<Arg> Args;
   std::string ReturnType;
   std::unique_ptr<BlockStmt> Body;
   bool IsVariadic = false;
 
-  FunctionDecl(const std::string &name, std::vector<Arg> args,
+  FunctionDecl(bool isPub, const std::string &name, std::vector<Arg> args,
                std::unique_ptr<BlockStmt> body, const std::string &retType)
-      : Name(name), Args(std::move(args)), ReturnType(retType),
+      : IsPub(isPub), Name(name), Args(std::move(args)), ReturnType(retType),
         Body(std::move(body)) {}
-  std::string toString() const override { return "Fn(" + Name + ")"; }
+  std::string toString() const override {
+    return std::string(IsPub ? "Pub" : "") + "Fn(" + Name + ")";
+  }
 };
 
 class ExternDecl : public ASTNode {
@@ -565,13 +604,16 @@ public:
 
 class TraitDecl : public ASTNode {
 public:
+  bool IsPub = false;
   std::string Name;
   std::vector<std::unique_ptr<FunctionDecl>> Methods;
 
-  TraitDecl(const std::string &name,
+  TraitDecl(bool isPub, const std::string &name,
             std::vector<std::unique_ptr<FunctionDecl>> methods)
-      : Name(name), Methods(std::move(methods)) {}
-  std::string toString() const override { return "Trait(" + Name + ")"; }
+      : IsPub(isPub), Name(name), Methods(std::move(methods)) {}
+  std::string toString() const override {
+    return std::string(IsPub ? "Pub" : "") + "Trait(" + Name + ")";
+  }
 };
 
 class Module {

@@ -1,8 +1,8 @@
-import "core/io"
+import core/io::printf
 
 fn main() -> i32 {
     auto x# = 10
     auto &y# = &x#
-    printf("x is %d\n", x); // Error: x is mutably borrowed by y
+    io::printf("x is %d\n", x); // Error: x is mutably borrowed by y
     return 0
 }

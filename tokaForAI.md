@@ -222,6 +222,19 @@ If no label is provided, `break` and `continue` target the innermost loop.
   - **Trait Implementation**: `impl Type@Trait { ... }`
   - **Multiple Traits**: `impl Type@{Trait1, Trait2} { ... }` (Planned)
   - **Default/Delete**: Methods can be marked `= default` or `= delete` (Planned).
+  
+### 3.6 Modules System
+- **Module Identity**: File path based. E.g., `tests/lib.tk` is module `lib` (or fully qualified via path).
+- **Import Syntax**:
+  - `import path/to/file`: Imports the module. Symbols are accessed via namespace `file::symbol`.
+  - `import path/to/file::*`: Imports the module and brings all `pub` symbols into current scope.
+  - `import path/to/file::Symbol`: Imports specific symbol.
+  - `import path/to/file::{A, B}`: Destructuring import.
+- **Visibility**:
+  - `pub`: Makes a top-level declaration (fn, struct, type, trait) visible to importers.
+  - **Private by default**: Without `pub`, symbols are only visible within the declaring file.
+- **Resolution**:
+ [Physical Path] --resolve--> [Module] --filter--> [Visibility] --bind--> [Scope]
 
 ## 4. Memory Model
 

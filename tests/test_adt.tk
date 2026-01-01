@@ -11,23 +11,23 @@ fn main() -> i32 {
     
     match s {
         On => {
-            printf("Matched On!\n")
+            io::printf("Matched On!\n")
         }
         Off => {
-            printf("Matched Off!\n")
+            io::printf("Matched Off!\n")
         }
         _ => {
-            printf("Matched Default/Wildcard!\n")
+            io::printf("Matched Default/Wildcard!\n")
         }
     }
     
     auto e = State::ErrCode(404)
     match e {
         auto ErrCode(code) => {
-            printf("Matched ErrCode: %d\n", code)
+            io::printf("Matched ErrCode: %d\n", code)
         }
         _ => {
-            printf("Ignored\n")
+            io::printf("Ignored\n")
         }
     }
     return 0

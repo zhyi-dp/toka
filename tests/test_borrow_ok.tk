@@ -1,4 +1,4 @@
-import "core/io"
+import core/io::printf
 
 fn main() -> i32 {
     auto x# = 10
@@ -6,17 +6,17 @@ fn main() -> i32 {
     {
         auto &y1 = &x
         auto &y2 = &x
-        printf("y1=%d, y2=%d\n", y1, y2)
+        io::printf("y1=%d, y2=%d\n", y1, y2)
     }
     
     // After y1, y2 go out of scope, we can mutably borrow
     {
         auto &z# = &x#
         z# = 20
-        printf("z=%d\n", z)
-        // printf("x=%d\n", x); // This would be an error
+        io::printf("z=%d\n", z)
+        // io::printf("x=%d\n", x); // This would be an error
     }
     
-    printf("final x=%d\n", x)
+    io::printf("final x=%d\n", x)
     return 0
 }

@@ -8,6 +8,6 @@ fn main() -> i32 {
     
     // r2 is valid
     auto x = r2.w; // OK
-    printf("Move OK: x is %d\n", x)
+    io::printf("Move OK: x is %d\n", x)
     return 0
 }

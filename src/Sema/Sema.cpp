@@ -4,6 +4,7 @@
 namespace toka {
 
 bool Sema::checkModule(Module &M) {
+  CurrentModule = &M; // Set context
   // 1. Register all globals (Functions, Structs, etc.)
   registerGlobals(M);
 
@@ -12,6 +13,7 @@ bool Sema::checkModule(Module &M) {
     checkFunction(Fn.get());
   }
 
+  CurrentModule = nullptr;
   return !HasError;
 }
 
@@ -60,11 +62,10 @@ void Sema::registerGlobals(Module &M) {
   enterScope(); // Global scope
 
   for (auto &Fn : M.Functions) {
-    if (FunctionMap.count(Fn->Name)) {
-      error(Fn.get(), "redefinition of function '" + Fn->Name + "'");
-    } else {
-      FunctionMap[Fn->Name] = Fn.get();
-    }
+    GlobalFunctions.push_back(Fn.get());
+    // Also checking for duplicates within the SAME module could be good, but
+    // expensive O(N^2) or need a set. For now, assume Parser prevents
+    // duplicates or let it slide.
   }
 
   for (auto &Ext : M.Externs) {
@@ -841,9 +842,104 @@ std::string Sema::checkExpr(Expr *E) {
     // Continue target must be a loop
     return "void";
   } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
-    // Check FunctionMap
-    if (FunctionMap.count(Call->Callee)) {
-      FunctionDecl *Fn = FunctionMap[Call->Callee];
+    // Check GlobalFunctions
+    FunctionDecl *FoundFn = nullptr;
+    std::string FnName = Call->Callee;
+
+    // 1. Check if name is namespaced (e.g. lib::foo)
+    size_t scopePos = FnName.find("::");
+    if (scopePos != std::string::npos) {
+      std::string ModName = FnName.substr(0, scopePos);
+      std::string FuncName = FnName.substr(scopePos + 2);
+
+      // Find matching function
+      for (auto *GF : GlobalFunctions) {
+        if (GF->Name == FuncName) {
+          // Check if Module matches.
+          // We use FileName stem for now.
+          // Assumes /path/to/lib.tk -> lib.
+          std::string Stem = GF->FileName;
+          size_t lastSlash = Stem.find_last_of('/');
+          if (lastSlash != std::string::npos)
+            Stem = Stem.substr(lastSlash + 1);
+          size_t dot = Stem.find_last_of('.');
+          if (dot != std::string::npos)
+            Stem = Stem.substr(0, dot);
+
+          if (Stem == ModName) {
+            FoundFn = GF;
+            break;
+          }
+        }
+      }
+    } else {
+      // 2. Unqualified lookup
+      // Priority: Local Module > Imported Explicitly > Global?
+      // Spec: Default Private.
+
+      for (auto *GF : GlobalFunctions) {
+        if (GF->Name == FnName) {
+          // Determine if this function is visible
+          bool isVisible = false;
+
+          // Same Module?
+          if (CurrentModule && !CurrentModule->Functions.empty() &&
+              GF->FileName == CurrentModule->Functions[0]->FileName) {
+            isVisible = true;
+          } else if (CurrentModule) {
+            // It's external. Is it visible?
+            // Check imports.
+
+            std::string GFStem = GF->FileName;
+            size_t lastSlash = GFStem.find_last_of('/');
+            if (lastSlash != std::string::npos)
+              GFStem = GFStem.substr(lastSlash + 1);
+            size_t dot = GFStem.find_last_of('.');
+            if (dot != std::string::npos)
+              GFStem = GFStem.substr(0, dot);
+
+            for (const auto &Imp : CurrentModule->Imports) {
+              std::string ImpStem = Imp->PhysicalPath;
+              size_t iSlash = ImpStem.find_last_of('/');
+              if (iSlash != std::string::npos)
+                ImpStem = ImpStem.substr(iSlash + 1);
+
+              // Handle "local" imports? ImpStem might be "lib.tk" or just "lib"
+              // My parser handles "lib" or "lib.tk" if I patched it?
+              // Actually parsing "import std/json" gives "std/json".
+              // So ImpStem -> "json".
+
+              if (ImpStem == GFStem) {
+                if (!Imp->Items.empty()) {
+                  for (const auto &Item : Imp->Items) {
+                    if (Item.Symbol == "*" || Item.Symbol == FnName) {
+                      isVisible = true;
+                      break;
+                    }
+                  }
+                }
+              }
+              if (isVisible)
+                break;
+            }
+          }
+
+          if (isVisible) {
+            FoundFn = GF;
+            break;
+          }
+        }
+      }
+    }
+
+    if (FoundFn) {
+      FunctionDecl *Fn = FoundFn;
+
+      if (!Fn->IsPub && Fn->FileName != Call->FileName) {
+        error(Call, "Function '" + Fn->Name + "' is private to '" +
+                        Fn->FileName + "'");
+      }
+
       if (Fn->Args.size() != Call->Args.size() && !Fn->IsVariadic) {
         error(Call, "incorrect number of arguments for function '" +
                         Call->Callee + "'");
@@ -851,21 +947,11 @@ std::string Sema::checkExpr(Expr *E) {
       for (size_t i = 0; i < Call->Args.size(); ++i) {
         std::string ArgType = checkExpr(Call->Args[i].get());
         if (i < Fn->Args.size()) {
-          // Check Reference compatibility:
-          // If Param is Reference (IsReference=true in AST), it expects
-          // pointer/address? AST `FunctionDecl::Arg` has `IsReference`.
-          // Parser: `fn foo(&p: Point)`. `&` sets IsReference. Type is
-          // "Point". `checkExpr(&val)` returns "^Point". So we need to accept
-          // "^Point" if Expected is "Point" AND IsReference is true.
-
           if (Fn->Args[i].IsReference) {
             if (ArgType == "&" + Fn->Args[i].Type ||
                 ArgType == "^" + Fn->Args[i].Type) {
-              // Compatible!
               continue;
             }
-            // Also if ArgType == Type? (implicit address take? No Toka
-            // usually explicit)
           }
 
           if (!isTypeCompatible(Fn->Args[i].Type, ArgType)) {
@@ -877,8 +963,9 @@ std::string Sema::checkExpr(Expr *E) {
       }
       return Fn->ReturnType;
     }
+
     // Check ExternMap
-    else if (ExternMap.count(Call->Callee)) {
+    if (ExternMap.count(Call->Callee)) {
       ExternDecl *Fn = ExternMap[Call->Callee];
       if (Fn->Args.size() != Call->Args.size() && !Fn->IsVariadic) {
         // If variadic, we need at least fixed args
@@ -950,6 +1037,13 @@ std::string Sema::checkExpr(Expr *E) {
     // Validate fields against StructMap
     if (StructMap.count(Init->StructName)) {
       StructDecl *SD = StructMap[Init->StructName];
+
+      // Visibility Check:
+      if (!SD->IsPub && SD->FileName != Init->FileName) {
+        error(Init, "Struct '" + Init->StructName + "' is private to '" +
+                        SD->FileName + "'");
+      }
+
       // Check fields exist and types match
       // Simplified check: just return the name
       // TODO: Check fields

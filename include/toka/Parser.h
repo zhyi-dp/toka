@@ -35,15 +35,15 @@ private:
   void error(const Token &tok, const std::string &message);
 
   // Recursive Descent Methods
-  std::unique_ptr<FunctionDecl> parseFunctionDecl();
+  std::unique_ptr<FunctionDecl> parseFunctionDecl(bool isPub = false);
   std::unique_ptr<Stmt> parseVariableDecl();
   std::unique_ptr<ExternDecl> parseExternDecl();
-  std::unique_ptr<ImportDecl> parseImport();
-  std::unique_ptr<TypeAliasDecl> parseTypeAliasDecl();
-  std::unique_ptr<StructDecl> parseStruct();
-  std::unique_ptr<OptionDecl> parseOptionDecl(); // ADT
+  std::unique_ptr<ImportDecl> parseImport(bool isPub = false);
+  std::unique_ptr<TypeAliasDecl> parseTypeAliasDecl(bool isPub = false);
+  std::unique_ptr<StructDecl> parseStruct(bool isPub = false);
+  std::unique_ptr<OptionDecl> parseOptionDecl(bool isPub = false); // ADT
   std::unique_ptr<ImplDecl> parseImpl();
-  std::unique_ptr<TraitDecl> parseTrait();
+  std::unique_ptr<TraitDecl> parseTrait(bool isPub = false);
   std::unique_ptr<Stmt> parseMatchStmt();
 
   std::unique_ptr<Stmt> parseStmt();

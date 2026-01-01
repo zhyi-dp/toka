@@ -409,17 +409,8 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     if (!var->TypeName.empty()) {
       type = resolveType(var->TypeName, var->HasPointer || var->IsReference ||
                                             var->IsUnique || var->IsShared);
-      std::cerr << "[DEBUG] VariableDecl " << var->Name
-                << ": Type from TypeName (Unique=" << var->IsUnique
-                << ", Shared=" << var->IsShared << "), type=" << type << "\n";
     } else if (initVal) {
       type = initVal->getType();
-      std::string typeStr;
-      llvm::raw_string_ostream typeOS(typeStr);
-      type->print(typeOS);
-      std::cerr << "[DEBUG] VariableDecl " << var->Name
-                << ": Type from initVal, initVal=" << initVal
-                << ", type=" << typeOS.str() << "\n";
     }
 
     llvm::Type *elemTy = nullptr;
@@ -1099,6 +1090,27 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       if (delim != std::string::npos) {
         std::string optName = callName.substr(0, delim);
         std::string varName = callName.substr(delim + 2);
+
+        // Try to handle as function call lib::foo -> foo if foo is global?
+        // Or if we need to mangle it?
+        // For now, if we can't find exact match, try stripping module prefix?
+        // CodeGen::generate only sees local functions.
+        // We need to support externs or merging.
+        // Assuming we fix CodeGen linkage downstream, let's try to find
+        // function "varName" if "optName" looks like a module. Quick hack:
+        std::string simpleName = varName;
+        if (auto *f = m_Module->getFunction(simpleName)) {
+          // Found it (maybe implied global naming)
+          std::vector<llvm::Value *> args;
+          for (auto &arg : call->Args) {
+            args.push_back(genExpr(arg.get()));
+          }
+          if (!args.empty() && !args.back())
+            return nullptr;
+
+          return m_Builder.CreateCall(
+              f, args, f->getReturnType()->isVoidTy() ? "" : "calltmp");
+        }
 
         if (m_Options.count(optName)) {
           const OptionDecl *opt = m_Options[optName];
