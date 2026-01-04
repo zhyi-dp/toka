@@ -1,0 +1,35 @@
+{
+  "name": "toka-vscode",
+  "displayName": "Toka Language Support",
+  "description": "Syntax highlighting for the Toka programming language",
+  "version": "0.1.0",
+  "publisher": "zhyi",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "toka",
+        "aliases": [
+          "Toka",
+          "toka"
+        ],
+        "extensions": [
+          ".tk"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "toka",
+        "scopeName": "source.toka",
+        "path": "./syntaxes/toka.tmLanguage.json"
+      }
+    ]
+  }
+}
