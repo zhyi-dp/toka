@@ -2,15 +2,18 @@
 // Core compiler traits and markers.
 
 pub trait @Drop {
-    /**
-     * Called when an object is about to be destroyed.
-     * This is the place to release resources like memory, file handles, etc.
-     */
     fn drop(self)
 }
 
-/**
- * Marker trait for types that can be safely moved.
- * Most types in Toka are Movable by default.
- */
+// Marker trait for types that can be safely moved.
 pub trait @Move {}
+
+// Trait for types that can create a copy of themselves.
+pub trait @Clone {
+    fn clone(self)
+}
+
+// Trait for types that have a default value.
+pub trait @Default {
+    fn init(self)
+}

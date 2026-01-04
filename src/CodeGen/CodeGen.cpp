@@ -14,6 +14,10 @@ void CodeGen::generate(const Module &ast) {
   for (const auto &alias : ast.TypeAliases) {
     m_TypeAliases[alias->Name] = alias->TargetType;
   }
+  // Register Traits
+  for (const auto &trait : ast.Traits) {
+    m_Traits[trait->Name] = trait.get();
+  }
 
   // Generate Shapes
   for (const auto &sh : ast.Shapes) {
@@ -2618,13 +2622,10 @@ void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
   }
 
   // Handle Trait Defaults and Missing Methods
-  if (!decl->TraitName.empty() && m_AST) {
+  if (!decl->TraitName.empty()) {
     const TraitDecl *trait = nullptr;
-    for (const auto &t : m_AST->Traits) {
-      if (t->Name == decl->TraitName) {
-        trait = t.get();
-        break;
-      }
+    if (m_Traits.count(decl->TraitName)) {
+      trait = m_Traits[decl->TraitName];
     }
 
     if (trait) {
@@ -2704,9 +2705,9 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
   llvm::Function *callee = m_Module->getFunction(funcName);
 
   // Check Traits if inherent not found
-  if (!callee && m_AST) {
-    for (const auto &trait : m_AST->Traits) {
-      std::string traitFunc = trait->Name + "_" + typeName + "_" + expr->Method;
+  if (!callee) {
+    for (auto const &[traitName, traitDecl] : m_Traits) {
+      std::string traitFunc = traitName + "_" + typeName + "_" + expr->Method;
       callee = m_Module->getFunction(traitFunc);
       if (callee)
         break;

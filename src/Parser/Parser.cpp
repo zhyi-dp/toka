@@ -1162,6 +1162,9 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
       items.push_back({"*", ""});
     } else if (match(TokenType::LBrace)) {
       while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+        if (match(TokenType::At)) {
+          // Optional @ for traits
+        }
         Token sym = consume(TokenType::Identifier, "Expected symbol name");
         std::string alias;
         if (match(TokenType::KwAs)) {
@@ -1173,6 +1176,9 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
       }
       consume(TokenType::RBrace, "Expected '}'");
     } else {
+      if (match(TokenType::At)) {
+        // Optional @ for traits
+      }
       Token sym = consume(TokenType::Identifier, "Expected symbol name");
       std::string alias;
       if (match(TokenType::KwAs)) {

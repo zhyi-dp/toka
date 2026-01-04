@@ -58,6 +58,7 @@ private:
   std::map<std::string, bool> m_ValueIsShared;     // Tracks ~Type for variables
   std::map<std::string, bool> m_ValueIsRawPointer; // Tracks *Type for variables
   std::map<std::string, const ShapeDecl *> m_Shapes;
+  std::map<std::string, const TraitDecl *> m_Traits;
   std::map<llvm::Type *, std::string> m_TypeToName;
 
   struct CFInfo {

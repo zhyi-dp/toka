@@ -1,4 +1,7 @@
 // lib/core/memory.tk
-// Core memory traits and intrinsics.
+// Core memory management traits.
 
-// Future: Define Allocator trait here.
+pub trait @Allocator {
+    fn alloc(self, size: u64) -> *void
+    fn dealloc(self, ptr: *void)
+}
