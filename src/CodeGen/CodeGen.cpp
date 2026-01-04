@@ -215,7 +215,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     if (func->ReturnType == "void" || func->Name == "main") {
       // Main usually returns int, but here we treat it as void/default 0 if
       // u32? Actually main should return i32 0 if not void.
-      if (func->Name == "main") {
+      if (func->Name == "main" && !f->getReturnType()->isVoidTy()) {
         m_Builder.CreateRet(
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
       } else {
