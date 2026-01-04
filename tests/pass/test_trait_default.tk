@@ -1,11 +1,11 @@
 import std/io::println
 
 trait @Base {
-    fn foo(self) -> i32 {
+    pub fn foo(self) -> i32 {
         return 100
     }
     
-    fn bar(self) -> i32
+    pub fn bar(self) -> i32
 }
 
 shape Test (

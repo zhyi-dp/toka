@@ -6,11 +6,11 @@ shape Rect (
 )
 
 trait @Shape {
-    fn area(self) -> i32
+    pub fn area(self) -> i32
 }
 
 trait @Fly {
-    fn fly(self) -> i32 {
+    pub fn fly(self) -> i32 {
         return 111
     }
 }

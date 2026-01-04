@@ -337,7 +337,20 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
         } else {
           m.Name = std::to_string(idx++);
         }
-        m.Type = advance().Text;
+        m.Type = "";
+        int bracketDepth = 0;
+        while (!check(TokenType::EndOfFile)) {
+          if (check(TokenType::LBracket))
+            bracketDepth++;
+          if (check(TokenType::RBracket))
+            bracketDepth--;
+
+          if (bracketDepth == 0 &&
+              (check(TokenType::Comma) || check(TokenType::RParen)))
+            break;
+
+          m.Type += advance().Text;
+        }
         members.push_back(std::move(m));
         if (!check(TokenType::RParen))
           match(TokenType::Comma);
@@ -357,6 +370,8 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
 }
 
 std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
+  if (match(TokenType::KwPub))
+    isPub = true;
   consume(TokenType::KwFn, "Expected 'fn'");
   Token name;
   if (check(TokenType::KwMain)) {
@@ -492,9 +507,16 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl() {
 
   std::string typeName = "";
   if (match(TokenType::Colon)) {
-    while (!isEndOfStatement() && !check(TokenType::Equal) &&
-           !check(TokenType::EndOfFile) && !check(TokenType::Comma) &&
-           !check(TokenType::RParen)) {
+    int depth = 0;
+    while (!check(TokenType::EndOfFile)) {
+      if (check(TokenType::LBracket))
+        depth++;
+      if (check(TokenType::RBracket))
+        depth--;
+
+      if (depth == 0 && (isEndOfStatement() || check(TokenType::Equal) ||
+                         check(TokenType::Comma) || check(TokenType::RParen)))
+        break;
       typeName += advance().Text;
     }
   }
@@ -1133,8 +1155,12 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
 
   // 1. Parse Physical Path (Segments)
   while (true) {
+    if (peek().HasNewlineBefore)
+      break;
+
     bool consumed = false;
-    if (check(TokenType::Identifier)) {
+    if (check(TokenType::Identifier) || (peek().Kind >= TokenType::KwLet &&
+                                         peek().Kind <= TokenType::KwCrate)) {
       physicalPath += advance().Text;
       consumed = true;
     } else if (match(TokenType::Dot)) {
@@ -1264,16 +1290,70 @@ std::unique_ptr<ImplDecl> Parser::parseImpl() {
   consume(TokenType::LBrace, "Expected '{'");
 
   std::vector<std::unique_ptr<FunctionDecl>> methods;
-  while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
-    if (check(TokenType::KwFn)) {
-      methods.push_back(parseFunctionDecl());
-    } else {
-      error(peek(), "Expected method in impl block");
+  std::vector<EncapEntry> encapEntries;
+
+  if (traitName == "encap") {
+    while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+      if (match(TokenType::KwPub)) {
+        EncapEntry entry;
+        entry.Level = EncapEntry::Global;
+
+        if (match(TokenType::LParen)) {
+          if (match(TokenType::KwCrate)) {
+            entry.Level = EncapEntry::Crate;
+          } else {
+            entry.Level = EncapEntry::Path;
+            // Parse targeted path (simple logic for now)
+            while (check(TokenType::Identifier) || check(TokenType::Slash) ||
+                   check(TokenType::Colon)) {
+              if (match(TokenType::Slash)) {
+                entry.TargetPath += "/";
+              } else if (match(TokenType::Colon)) {
+                entry.TargetPath += ":";
+              } else {
+                entry.TargetPath += advance().Text;
+              }
+            }
+          }
+          consume(TokenType::RParen, "Expected ')'");
+        }
+
+        if (match(TokenType::Star)) {
+          entry.IsExclusion = true;
+          match(TokenType::Bang); // Optional !
+          while (check(TokenType::Identifier)) {
+            entry.Fields.push_back(advance().Text);
+            if (!match(TokenType::Comma))
+              break;
+          }
+        } else {
+          // One or more fields
+          while (check(TokenType::Identifier)) {
+            entry.Fields.push_back(advance().Text);
+            if (!match(TokenType::Comma))
+              break;
+          }
+        }
+        encapEntries.push_back(std::move(entry));
+      } else {
+        error(peek(), "Expected 'pub' inside @encap block");
+        advance();
+      }
+    }
+  } else {
+    while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+      if (check(TokenType::KwFn) || check(TokenType::KwPub)) {
+        methods.push_back(parseFunctionDecl());
+      } else {
+        error(peek(), "Expected method in impl block");
+      }
     }
   }
   consume(TokenType::RBrace, "Expected '}'");
+
   auto decl =
       std::make_unique<ImplDecl>(typeName, std::move(methods), traitName);
+  decl->EncapEntries = std::move(encapEntries);
   decl->setLocation(firstIdent, m_CurrentFile);
   return decl;
 }
@@ -1288,8 +1368,12 @@ std::unique_ptr<TraitDecl> Parser::parseTrait(bool isPub) {
 
   std::vector<std::unique_ptr<FunctionDecl>> methods;
   while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+    bool isPub = false;
+    if (match(TokenType::KwPub)) {
+      isPub = true;
+    }
     if (check(TokenType::KwFn)) {
-      methods.push_back(parseFunctionDecl());
+      methods.push_back(parseFunctionDecl(isPub));
     } else {
       error(peek(), "Expected method prototype in trait");
     }

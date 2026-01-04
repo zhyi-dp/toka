@@ -72,6 +72,7 @@ enum class TokenType {
   KwDefer,
   KwMain,
   KwExtern,
+  KwCrate,
 
   // Attribute Tokens (When separate, though usually parsed as part of Ident or
   // Type)

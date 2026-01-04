@@ -2606,6 +2606,8 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
 }
 
 void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
+  if (decl->TraitName == "encap")
+    return;
   m_CurrentSelfType = decl->TypeName;
   std::set<std::string> implementedMethods;
 

@@ -29,7 +29,8 @@ static std::unordered_map<std::string, TokenType> Keywords = {
     {"Self", TokenType::KwUpperSelf}, {"true", TokenType::KwTrue},
     {"false", TokenType::KwFalse},    {"none", TokenType::KwNone},
     {"null", TokenType::KwNull},      {"defer", TokenType::KwDefer},
-    {"main", TokenType::KwMain},      {"extern", TokenType::KwExtern}};
+    {"main", TokenType::KwMain},      {"extern", TokenType::KwExtern},
+    {"crate", TokenType::KwCrate}};
 
 Lexer::Lexer(const char *source) : m_Source(source), m_Current(source) {}
 
@@ -103,7 +104,8 @@ Token Lexer::identifier() {
   // Check for Attributes suffix (ONLY for identifiers, NOT keywords generally,
   // although Val might be special but usually Val doesn't have suffix.
   // Identifier does). Spec: "val x# = ..."
-  if (kind == TokenType::Identifier) {
+  if (kind == TokenType::Identifier || kind == TokenType::KwSelf ||
+      kind == TokenType::KwUpperSelf) {
     if (match('#'))
       t.HasWrite = true;
     else if (match('?'))

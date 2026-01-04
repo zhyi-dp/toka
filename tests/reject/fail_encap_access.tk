@@ -1,0 +1,13 @@
+// tests/reject/fail_encap_access.tk
+import tests/import_test/encap_lib::Data
+
+fn main() -> i32 {
+    auto d = Data(
+        public_val = 1,
+        private_val = 2
+    )
+    
+    // This should fail: private_val is not public in encap_lib.tk
+    println("Private val: {}", d.private_val)
+    return 0
+}

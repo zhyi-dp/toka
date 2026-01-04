@@ -630,11 +630,20 @@ public:
   std::string toString() const override { return "Extern(" + Name + ")"; }
 };
 
+struct EncapEntry {
+  enum Visibility { Global, Crate, Path, Private };
+  Visibility Level;
+  std::string TargetPath;
+  std::vector<std::string> Fields;
+  bool IsExclusion = false; // For pub * ! ...
+};
+
 class ImplDecl : public ASTNode {
 public:
   std::string TypeName;
   std::string TraitName;
   std::vector<std::unique_ptr<FunctionDecl>> Methods;
+  std::vector<EncapEntry> EncapEntries;
 
   ImplDecl(const std::string &name,
            std::vector<std::unique_ptr<FunctionDecl>> methods,

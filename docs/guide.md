@@ -87,6 +87,47 @@ fn process(s: State) {
 }
 ```
 
+### Encapsulation and Visibility
+Toka uses a granular encapsulation system via the `@encap` block.
+
+#### Default Visibility
+By default, all fields in a `shape` are **public**. You can access them freely from any module.
+
+#### Enabling Encapsulation
+To restrict access, define an `@encap` block (`impl Shape@encap`).
+**Once declared, all fields become private by default.** You must explicitly expose fields using keywords like `pub`.
+
+```toka
+shape Config (
+    api_key: str,
+    port: i32
+)
+
+// Activates encapsulation. 'port' is exposed, 'api_key' becomes private.
+impl Config@encap {
+    pub port            // Public everywhere
+    // api_key is omitted, so it is private
+}
+```
+
+#### Advanced Rules
+- **Exclusion**: You can make everything public *except* specific fields.
+  ```toka
+  impl Data@encap {
+      pub * ! secret_key  // All public except secret_key
+  }
+  ```
+- **Path-Based**: `pub(path/to/module)` grants access to specific modules.
+
+#### Trait Visibility
+Trait methods can now be explicitly marked as `pub` to ensuring they are callable from outside the defining module.
+
+```toka
+trait @Drawable {
+    pub fn draw(self)
+}
+```
+
 ---
 
 ## 4. Object Morphology & Memory

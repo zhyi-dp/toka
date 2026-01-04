@@ -104,6 +104,7 @@ private:
   // TypeName -> {MethodName -> ReturnType}
   std::map<std::string, std::map<std::string, std::string>> MethodMap;
   std::map<std::string, TraitDecl *> TraitMap;
+  std::map<std::string, std::vector<EncapEntry>> EncapMap;
   std::string CurrentFunctionReturnType;
   std::string m_LastBorrowSource;
   // {VarName, IsMutable}

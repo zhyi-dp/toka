@@ -1,0 +1,56 @@
+// tests/pass/test_encap_syntax.tk
+// This file serves as a syntax specification for the @encap system.
+
+import std/io::println
+
+// 1. Physical Layout
+pub shape Device (
+    id: i32,
+    internal_state: i32,
+    secret_key: [i32; 4],
+    public_config: i32,
+    crate_shared: i32
+)
+
+// 2. Access Control (The @encap block)
+impl Device@encap {
+    // Global public
+    pub public_config
+    
+    // Crate-level visibility
+    pub(crate) crate_shared
+    
+    // Path-targeted visibility (Simulated path for test)
+    // pub(os/driver::uart) internal_state
+    
+    // Exclusion syntax: everything is public EXCEPT secret_key
+    // Note: This would conflict with specific declarations above, 
+    // but shown here for syntax verification.
+    // pub * ! secret_key, id
+}
+
+// 3. Behavior (God-eye View: same file as shape definition)
+impl Device {
+    pub fn reset(self#) {
+        // Same file: can access everything
+        self#.internal_state = 0
+        self#.secret_key[0] = 0
+    }
+}
+
+fn main() -> i32 {
+    auto d# = Device(
+        id = 1,
+        internal_state = 0,
+        secret_key = [0, 0, 0, 0],
+        public_config = 100,
+        crate_shared = 50
+    )
+    
+    d#.reset()
+    d#.public_config = 200
+    d#.crate_shared = 60
+    //d#.internal_state = 10 // Error: internal_state is not public
+    println("Encap syntax test parsed successfully.")
+    return 0
+}

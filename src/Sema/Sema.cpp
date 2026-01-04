@@ -101,6 +101,10 @@ void Sema::registerGlobals(Module &M) {
   }
 
   for (auto &Impl : M.Impls) {
+    if (Impl->TraitName == "encap") {
+      EncapMap[Impl->TypeName] = Impl->EncapEntries;
+      continue;
+    }
     std::set<std::string> implemented;
     for (auto &Method : Impl->Methods) {
       MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
@@ -1389,6 +1393,59 @@ std::string Sema::checkExpr(Expr *E) {
       ShapeDecl *SD = ShapeMap[ObjType];
       for (const auto &Field : SD->Members) {
         if (Field.Name == Memb->Member) {
+          // Visibility Check: God-eye view (same file)
+          if (Memb->FileName == SD->FileName) {
+            return Field.Type;
+          }
+
+          // Check EncapMap
+          if (EncapMap.count(ObjType)) {
+            bool accessible = false;
+            for (const auto &entry : EncapMap[ObjType]) {
+              bool fieldMatches = false;
+              if (entry.IsExclusion) {
+                fieldMatches = true;
+                for (const auto &f : entry.Fields) {
+                  if (f == Memb->Member) {
+                    fieldMatches = false;
+                    break;
+                  }
+                }
+              } else {
+                for (const auto &f : entry.Fields) {
+                  if (f == Memb->Member) {
+                    fieldMatches = true;
+                    break;
+                  }
+                }
+              }
+
+              if (fieldMatches) {
+                if (entry.Level == EncapEntry::Global) {
+                  accessible = true;
+                } else if (entry.Level == EncapEntry::Crate) {
+                  // For now, assume same physical directory is same crate
+                  // (Needs more robust crate system later)
+                  accessible = true;
+                } else if (entry.Level == EncapEntry::Path) {
+                  // Path check (simplified)
+                  if (Memb->FileName.find(entry.TargetPath) !=
+                      std::string::npos) {
+                    accessible = true;
+                  }
+                }
+              }
+              if (accessible)
+                break;
+            }
+
+            if (!accessible) {
+              error(Memb,
+                    "field '" + Memb->Member + "' of struct '" + ObjType +
+                        "' is private and not accessible from this context");
+            }
+          }
+
           return Field.Type;
         }
       }
@@ -1463,8 +1520,7 @@ std::string Sema::checkExpr(Expr *E) {
     // Infer from first element
     if (!ArrLit->Elements.empty()) {
       std::string ElemTy = checkExpr(ArrLit->Elements[0].get());
-      return "[" + ElemTy + "; " + std::to_string(ArrLit->Elements.size()) +
-             "]";
+      return "[" + ElemTy + ";" + std::to_string(ArrLit->Elements.size()) + "]";
     }
     return "[i32; 0]";
   } else if (auto *me = dynamic_cast<MatchExpr *>(E)) {
@@ -1492,6 +1548,22 @@ std::string Sema::checkExpr(Expr *E) {
       }
       exitScope();
     }
+
+    // Check for private variants if @encap is active
+    if (EncapMap.count(targetType)) {
+      bool hasWildcard = false;
+      for (auto &arm : me->Arms) {
+        if (arm->Pat->PatternKind == MatchArm::Pattern::Wildcard) {
+          hasWildcard = true;
+          break;
+        }
+      }
+      if (!hasWildcard) {
+        error(me, "match on encapsulated type '" + targetType +
+                      "' requires a default '_' branch (Rule 412)");
+      }
+    }
+
     return resultType;
   }
 

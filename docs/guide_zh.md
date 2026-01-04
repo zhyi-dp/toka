@@ -68,22 +68,44 @@ fn main() {
 }
 ```
 
-### 代数数据类型 (ADTs)
-Shape 还支持和类型（枚举），可以使用 `match` 进行模式匹配。
+### 封装与可见性 (Encapsulation and Visibility)
+Toka 通过 `@encap` 块提供细粒度的封装控制系统。
+
+#### 默认可见性
+默认情况下，`shape` 的所有字段都是 **公开（Public）** 的。你可以在任何地方访问它们。
+
+#### 启用封装
+要限制访问权限，你需要定义一个 `@encap` 块 (`impl Shape@encap`)。
+**一旦定义了该块，所有字段默认变为私有。** 你必须在块内显式地列出需要公开的字段。
 
 ```toka
-shape State (
-    On |
-    Off |
-    ErrCode(i32)
+shape Config (
+    api_key: str,
+    port: i32
 )
 
-fn process(s: State) {
-    match s {
-        On => println("Active")
-        Off => println("Inactive")
-        auto ErrCode(code) => println("Error: {}", code)
-    }
+// 启用封装。'port' 被公开，'api_key' 变为私有。
+impl Config@encap {
+    pub port            // 全局公开
+    // api_key 未被列出，因此变为私有
+}
+```
+
+#### 高级规则
+- **排除法**: 你可以将所有字段设为公有，但排除特定字段。
+  ```toka
+  impl Data@encap {
+      pub * ! secret_key  // 除 secret_key 外全部公开
+  }
+  ```
+- **基于路径**: `pub(path/to/module)` 授予特定模块访问权限。
+
+#### Trait 可见性
+Trait 方法现在可以显式标记为 `pub`，以确保它们可以从定义模块的外部被调用。
+
+```toka
+trait @Drawable {
+    pub fn draw(self)
 }
 ```
 
