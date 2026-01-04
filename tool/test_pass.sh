@@ -2,7 +2,7 @@
 
 # Configuration
 TOKAC="./build/src/tokac"
-LLI="lli"
+LLI=$(which lli || which lli-17 || echo "/usr/local/Cellar/llvm@17/17.0.6/bin/lli")
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'

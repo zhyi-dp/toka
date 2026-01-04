@@ -1,0 +1,16 @@
+// lib/core/marker.tk
+// Core compiler traits and markers.
+
+pub trait @Drop {
+    /**
+     * Called when an object is about to be destroyed.
+     * This is the place to release resources like memory, file handles, etc.
+     */
+    fn drop(self)
+}
+
+/**
+ * Marker trait for types that can be safely moved.
+ * Most types in Toka are Movable by default.
+ */
+pub trait @Move {}

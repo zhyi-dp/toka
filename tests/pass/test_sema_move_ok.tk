@@ -1,6 +1,6 @@
 shape Rect (w: i32, h: i32)
 
-import core/io::println
+import std/io::println
 
 fn main() -> i32 {
     auto ^r1 = new Rect(w=1, h=1)

@@ -1,4 +1,4 @@
-import core/io::println
+import std/io::println
 
 shape State (
     On |

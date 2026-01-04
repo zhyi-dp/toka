@@ -1,4 +1,4 @@
-import core/io::println
+import std/io::println
 
 fn main() -> i32 {
     auto i# = 0

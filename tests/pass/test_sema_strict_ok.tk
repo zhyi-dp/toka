@@ -1,4 +1,4 @@
-fn main() {
+fn main() -> i32 {
     // 1. Valid Arithmetic
     auto i = 1 + 2
     // auto f = 1.0 + 2.0
@@ -9,4 +9,5 @@ fn main() {
 
     // 3. Valid If Condition
     if true {}
+    return 0
 }

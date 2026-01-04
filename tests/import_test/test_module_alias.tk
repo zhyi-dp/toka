@@ -1,4 +1,4 @@
-import core/io as sys
+import std/io as sys
 import tests/import_test/lib
 
 fn main() -> i32 {

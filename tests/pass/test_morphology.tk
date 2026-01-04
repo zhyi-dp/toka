@@ -1,5 +1,5 @@
-import core/io::println
-import core/memory
+import std/io::println
+import std/memory
 
 shape Point (x: i32, y: i32)
 
