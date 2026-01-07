@@ -59,7 +59,7 @@
                 },
                 {
                     "name": "keyword.other.toka",
-                    "match": "\\b(fn|auto|shape|extern|import|pub|mut|new|dyn|move|where|default|delete|del|final|as|is)\\b"
+                    "match": "\\b(fn|auto|shape|extern|import|pub|mut|new|dyn|move|where|default|delete|del|final|as|is|alloc|free|unsafe)\\b"
                 },
                 {
                     "name": "constant.language.toka",

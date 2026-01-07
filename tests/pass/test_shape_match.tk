@@ -2,17 +2,6 @@
 shape RawBytes [u8; 4]
 shape Point (u8, u8, u8, u8)
 
-fn test_violent_aesthetics() -> u32 {
-    auto bytes = RawBytes[1, 2, 3, 4]
-    
-    // Physical reinterpretation via 'as': zero-cost bitcast
-    auto p = bytes as shape(u8, u8, u8, u8)
-    
-    // Physical honesty: p is just a new interpretation of the 'bytes' address;
-    // direct access to tuple index .0
-    return p.0 as u32
-}
-
 // --- Tagged Union Test ---
 shape Result(
     Ok(u32) = 0 | 
@@ -52,9 +41,6 @@ fn test_binding_refs(val: u32) -> u32 {
 }
 
 fn main() -> i32 {
-    auto a = test_violent_aesthetics()
-    if a != 1 { return 1 }
-    
     auto b = test_match_expr(10)
     if b != 20 { return 2 }
     

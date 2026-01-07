@@ -1,0 +1,85 @@
+import std/io::println
+import std/memory
+
+shape Hero (
+    id: i32,
+    hp: i32
+)
+
+fn main() -> i32 {
+    // 1. 堆分配与初始化 (Scalar Heap Alloc)
+    // 根据 1.1: alloc i32(42)
+    auto *p = unsafe alloc i32(42)
+    
+    unsafe {
+        // 根据 4: 访问必须通过下标，p[0] 代表实体内容
+        println("Scalar Value: {} (expected 42)", p[0])
+        println("Address: 0x{}", *p as u64)
+        
+        // 根据 7: 手动释放
+        free *p
+    }
+
+    // 2. 数组分配与算术 (Array Alloc & Stride)
+    // 根据 1.2: alloc [5]i32(0) 映射为 memset 0
+    auto *arr# = unsafe alloc [5]i32(0)
+    unsafe {
+        arr#[0] = 10
+        arr#[1] = 20
+        
+        // 根据 5: 轨道 B - 元素偏移 (Item Stride)
+        // *arr[1] 获取第二个元素的地址
+        auto *p_second = *arr[1] 
+        println("Stride Access: {} (expected 20)", p_second[0])
+        
+        // 根据 5: 轨道 A - 字节偏移 (Byte Offset)
+        // *arr + 4 偏移 4 字节（即一个 i32 的宽度）
+        auto *p_offset = (*arr + 4) as *i16
+        println("Byte Offset Access: {} (expected 20)", p_offset[0])
+        
+        free *arr
+    }
+
+    // 3. 结构体访问 (Struct Access)
+    unsafe {
+        // 根据 1.3: 结构体分配
+        auto *h# = alloc Hero(id = 7, hp = 100)
+        // 根据 4: 成员直接访问
+        println("Hero ID: {} (expected 7)", h.id)
+        
+        h#.hp = 80
+        println("Hero HP: {} (expected 80)", h.hp)
+        
+        free *h
+    }
+
+    // 4. 栈地址获取 (Stack Address)
+    // 根据 3: *variable 获取栈地址，属于 SAFE
+    auto stack_val = 123:i32
+    auto *p_stack# = *stack_val
+    
+    unsafe {
+        p_stack#[0] = 456
+        println("Stack Modified: {} (expected 456)", stack_val)
+    }
+
+    // 5. 权限管理 (Permissions)
+    // 根据 8: 允许权限升级 (Trust the Human)
+    auto val = 1:i32
+    auto *px = *val
+    auto *px_mut# = *px // 权限升级: Const -> Mut
+    
+    unsafe {
+        px_mut#[0] = 2
+        println("Permission Upgrade: val={} (expected 2)", val)
+    }
+
+    // 6. 空值检查 (Null Check)
+    // 根据 7: *ptr == null 属于 SAFE
+    auto *empty = null
+    if null == *empty {
+        println("Null pointer confirmed")
+    }
+
+    return 0
+}

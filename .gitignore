@@ -2,6 +2,7 @@ toka.md
 *.ll
 *.lli
 *.log
+*.err
 build/
 # Prerequisites
 *.d

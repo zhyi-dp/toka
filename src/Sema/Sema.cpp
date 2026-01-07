@@ -211,8 +211,11 @@ void Sema::checkFunction(FunctionDecl *Fn) {
   for (auto &Arg : Fn->Args) {
     SymbolInfo Info;
     Info.Type = Arg.Type;
-    Info.IsValueMutable = Arg.IsMutable;
-    Info.IsValueNullable = Arg.IsNullable;
+    Info.IsValueMutable = Arg.IsValueMutable || Arg.IsMutable;
+    Info.IsValueNullable = Arg.IsValueNullable || Arg.IsNullable;
+    Info.IsRebindable = Arg.IsRebindable;
+    Info.IsPointerNullable = Arg.IsPointerNullable;
+
     if (Arg.IsReference)
       Info.Morphology = "&";
     else if (Arg.IsUnique)
@@ -273,13 +276,47 @@ void Sema::checkStmt(Stmt *S) {
         error(Var, "variable '" + Var->Name + "' type must be specified");
         Var->TypeName = "unknown";
       } else {
-        Var->TypeName = InitType;
-        // Strip ? if we want strict auto, but Toka often keeps it
+        std::string Inferred = InitType;
+        // If the variable declaration HAS morphology, and the initializer ALSO
+        // has it, we must strip it from the inferred type to avoid redundancy
+        // (e.g. *i32 -> i32)
+        if (Var->HasPointer || Var->IsUnique || Var->IsShared ||
+            Var->IsReference) {
+          if (!Inferred.empty() && (Inferred[0] == '*' || Inferred[0] == '^' ||
+                                    Inferred[0] == '~' || Inferred[0] == '&')) {
+            Inferred = Inferred.substr(1);
+            // Also strip attributes from the inferred prefix
+            if (!Inferred.empty() &&
+                (Inferred[0] == '?' || Inferred[0] == '!')) {
+              Inferred = Inferred.substr(1);
+            }
+          }
+        }
+        Var->TypeName = Inferred;
       }
     } else {
       // Check compatibility
-      if (!InitType.empty() && !isTypeCompatible(Var->TypeName, InitType)) {
-        error(Var, "cannot initialize variable of type '" + Var->TypeName +
+      std::string DeclFullTy = Var->TypeName;
+      std::string Morph = "";
+      if (Var->HasPointer)
+        Morph = "*";
+      else if (Var->IsUnique)
+        Morph = "^";
+      else if (Var->IsShared)
+        Morph = "~";
+      else if (Var->IsReference)
+        Morph = "&";
+
+      if (!Morph.empty()) {
+        if (Var->IsPointerNullable)
+          Morph += "?";
+        else if (Var->IsRebindable)
+          Morph += "!";
+        DeclFullTy = Morph + DeclFullTy;
+      }
+
+      if (!InitType.empty() && !isTypeCompatible(DeclFullTy, InitType)) {
+        error(Var, "cannot initialize variable of type '" + DeclFullTy +
                        "' with '" + InitType + "'");
       }
     }
@@ -425,6 +462,32 @@ std::string Sema::checkExpr(Expr *E) {
     if (inner == "unknown")
       return "unknown";
     return "&" + inner;
+  } else if (auto *Idx = dynamic_cast<ArrayIndexExpr *>(E)) {
+    std::string ArrType = checkExpr(Idx->Array.get());
+    for (auto &idxExpr : Idx->Indices) {
+      checkExpr(idxExpr.get());
+    }
+
+    if (ArrType.size() > 1 && ArrType[0] == '*') {
+      if (!m_InUnsafeContext) {
+        error(Idx, "raw pointer indexing requires unsafe context");
+      }
+      return ArrType.substr(1);
+    }
+    // For now simple array access
+    if (ArrType.size() > 1 && (ArrType[0] == '[' || ArrType[0] == '^' ||
+                               ArrType[0] == '~' || ArrType[0] == '&')) {
+      if (ArrType[0] == '[' && ArrType.find(';') != std::string::npos) {
+        // [ElemTy; Size] -> ElemTy
+        return ArrType.substr(1, ArrType.find(';') - 1);
+      }
+      if (ArrType[0] == '[' && ArrType.find(']') != std::string::npos) {
+        // [Size]ElemTy or [ElemTy] -> ElemTy
+        return ArrType.substr(ArrType.find(']') + 1);
+      }
+      return ArrType.substr(1);
+    }
+    return ArrType;
   } else if (auto *Deref = dynamic_cast<DereferenceExpr *>(E)) {
     std::string inner = checkExpr(Deref->Expression.get());
     if (inner == "unknown")
@@ -505,9 +568,16 @@ std::string Sema::checkExpr(Expr *E) {
             Morph = "&";
 
           bool isNullable = Info->IsPointerNullable || Info->IsValueNullable;
+          if (Unary->Op == TokenType::Star && Info->Morphology == "*")
+            return (Info->IsPointerNullable ? "*?" : "*") + Info->Type;
+
           return Morph + (isNullable ? "?" : "") + Info->Type;
         }
       }
+      if (Unary->Op == TokenType::Star && rhsInfo.size() > 0 &&
+          rhsInfo[0] == '*')
+        return rhsInfo;
+
       return (Unary->Op == TokenType::Star
                   ? "*"
                   : (Unary->Op == TokenType::Caret
@@ -639,24 +709,20 @@ std::string Sema::checkExpr(Expr *E) {
             error(Bin,
                   "cannot modify '" + Var->Name + "' while it is borrowed");
           }
-          if (!InfoPtr->Morphology.empty() && InfoPtr->Morphology != "&") {
-            if (!InfoPtr->IsRebindable) {
-              error(LHSExpr,
-                    "cannot reassign fixed pointer '" + Var->Name +
-                        "' (requires morphology # or !, e.g. ^# or ^!)");
-            }
-          } else {
-            if (!InfoPtr->IsValueMutable) {
-              error(LHSExpr, "cannot assign to immutable variable '" +
-                                 Var->Name + "' (# required)");
-            }
+
+          // Value Assignment (to the object the variable represents)
+          if (!InfoPtr->IsValueMutable) {
+            error(LHSExpr, "cannot assign to immutable variable '" + Var->Name +
+                               "' (# required)");
           }
+
           if (!Var->IsMutable) {
             error(Var, "cannot modify variable '" + Var->Name +
                            "' without # suffix");
           }
         }
       } else if (auto *Un = dynamic_cast<UnaryExpr *>(LHSExpr)) {
+        // Identity Assignment (*ptr = ..., ^ptr = ...)
         if (Un->Op == TokenType::Star || Un->Op == TokenType::Caret ||
             Un->Op == TokenType::Tilde) {
           if (auto *Var = dynamic_cast<VariableExpr *>(Un->RHS.get())) {
@@ -692,6 +758,14 @@ std::string Sema::checkExpr(Expr *E) {
         error(Bin, "operands of '" + Bin->Op + "' must be bool");
       }
       return "bool";
+    }
+
+    // Pointer arithmetic
+    if (LHS.size() > 1 && LHS[0] == '*' && (Bin->Op == "+" || Bin->Op == "-")) {
+      if (!m_InUnsafeContext) {
+        error(Bin, "pointer arithmetic requires unsafe context");
+      }
+      return LHS;
     }
 
     // Comparison
@@ -925,6 +999,17 @@ std::string Sema::checkExpr(Expr *E) {
   } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
     // Check GlobalFunctions
     std::string CallName = Call->Callee;
+
+    // Primitives as constructors: i32(42)
+    if (CallName == "i32" || CallName == "u32" || CallName == "i64" ||
+        CallName == "u64" || CallName == "f32" || CallName == "f64" ||
+        CallName == "i16" || CallName == "u16" || CallName == "i8" ||
+        CallName == "u8" || CallName == "usize" || CallName == "isize" ||
+        CallName == "bool") {
+      for (auto &Arg : Call->Args)
+        checkExpr(Arg.get());
+      return CallName;
+    }
 
     // Intrinsic: println (Compiler Magic)
     // Avoids strict function lookup and arg checking for this special intrinsic
@@ -1209,6 +1294,14 @@ std::string Sema::checkExpr(Expr *E) {
                 fieldName = var->Name;
                 valueExpr = bin->RHS.get();
                 isNamed = true;
+              } else if (auto *un = dynamic_cast<UnaryExpr *>(bin->LHS.get())) {
+                // Handle label with prefix: *ptr = ...
+                if (auto *labelVar =
+                        dynamic_cast<VariableExpr *>(un->RHS.get())) {
+                  fieldName = labelVar->Name;
+                  valueExpr = bin->RHS.get();
+                  isNamed = true;
+                }
               }
             }
           }
@@ -1322,6 +1415,28 @@ std::string Sema::checkExpr(Expr *E) {
     // 'new' usually returns a pointer or the type itself depending on
     // context. AST just says Type. The variable decl usually says ^Type.
     return New->Type;
+  } else if (auto *UnsafeE = dynamic_cast<UnsafeExpr *>(E)) {
+    bool oldUnsafe = m_InUnsafeContext;
+    m_InUnsafeContext = true;
+    std::string type = checkExpr(UnsafeE->Expression.get());
+    m_InUnsafeContext = oldUnsafe;
+    return type;
+  } else if (auto *AllocE = dynamic_cast<AllocExpr *>(E)) {
+    if (!m_InUnsafeContext) {
+      error(AllocE, "alloc operation requires unsafe context");
+    }
+    // Mapping to __toka_alloc
+    // Returning raw pointer identity: *Type
+    std::string baseType = AllocE->TypeName;
+    if (AllocE->IsArray) {
+      if (AllocE->ArraySize) {
+        checkExpr(AllocE->ArraySize.get());
+      }
+    }
+    if (AllocE->Initializer) {
+      checkExpr(AllocE->Initializer.get());
+    }
+    return "*" + baseType;
   } else if (auto *Met = dynamic_cast<MethodCallExpr *>(E)) {
     std::string ObjType = resolveType(checkExpr(Met->Object.get()));
     if (MethodMap.count(ObjType) && MethodMap[ObjType].count(Met->Method)) {
@@ -1391,59 +1506,85 @@ std::string Sema::checkExpr(Expr *E) {
 
     if (ShapeMap.count(ObjType)) {
       ShapeDecl *SD = ShapeMap[ObjType];
+      std::string requestedMember = Memb->Member;
+      std::string requestedPrefix = "";
+      if (!requestedMember.empty() &&
+          (requestedMember[0] == '*' || requestedMember[0] == '^' ||
+           requestedMember[0] == '~' || requestedMember[0] == '&')) {
+        requestedPrefix = requestedMember.substr(0, 1);
+        requestedMember = requestedMember.substr(1);
+      }
+
       for (const auto &Field : SD->Members) {
-        if (Field.Name == Memb->Member) {
+        if (Field.Name == requestedMember) {
           // Visibility Check: God-eye view (same file)
-          if (Memb->FileName == SD->FileName) {
-            return Field.Type;
+          if (Memb->FileName != SD->FileName) {
+            // Check EncapMap
+            if (EncapMap.count(ObjType)) {
+              bool accessible = false;
+              for (const auto &entry : EncapMap[ObjType]) {
+                bool fieldMatches = false;
+                if (entry.IsExclusion) {
+                  fieldMatches = true;
+                  for (const auto &f : entry.Fields) {
+                    if (f == requestedMember) {
+                      fieldMatches = false;
+                      break;
+                    }
+                  }
+                } else {
+                  for (const auto &f : entry.Fields) {
+                    if (f == requestedMember) {
+                      fieldMatches = true;
+                      break;
+                    }
+                  }
+                }
+
+                if (fieldMatches) {
+                  if (entry.Level == EncapEntry::Global) {
+                    accessible = true;
+                  } else if (entry.Level == EncapEntry::Crate) {
+                    accessible = true;
+                  } else if (entry.Level == EncapEntry::Path) {
+                    if (Memb->FileName.find(entry.TargetPath) !=
+                        std::string::npos) {
+                      accessible = true;
+                    }
+                  }
+                }
+                if (accessible)
+                  break;
+              }
+
+              if (!accessible) {
+                error(Memb,
+                      "field '" + requestedMember + "' of struct '" + ObjType +
+                          "' is private and not accessible from this context");
+              }
+            }
           }
 
-          // Check EncapMap
-          if (EncapMap.count(ObjType)) {
-            bool accessible = false;
-            for (const auto &entry : EncapMap[ObjType]) {
-              bool fieldMatches = false;
-              if (entry.IsExclusion) {
-                fieldMatches = true;
-                for (const auto &f : entry.Fields) {
-                  if (f == Memb->Member) {
-                    fieldMatches = false;
-                    break;
-                  }
-                }
-              } else {
-                for (const auto &f : entry.Fields) {
-                  if (f == Memb->Member) {
-                    fieldMatches = true;
-                    break;
-                  }
-                }
-              }
+          // Return type based on point-value duality
+          std::string fieldType = Field.Type;
+          std::string fieldPrefix = "";
+          if (fieldType.size() > 1 &&
+              (fieldType[0] == '*' || fieldType[0] == '^' ||
+               fieldType[0] == '~' || fieldType[0] == '&')) {
+            fieldPrefix = fieldType.substr(0, 1);
+            fieldType = fieldType.substr(1);
+          }
 
-              if (fieldMatches) {
-                if (entry.Level == EncapEntry::Global) {
-                  accessible = true;
-                } else if (entry.Level == EncapEntry::Crate) {
-                  // For now, assume same physical directory is same crate
-                  // (Needs more robust crate system later)
-                  accessible = true;
-                } else if (entry.Level == EncapEntry::Path) {
-                  // Path check (simplified)
-                  if (Memb->FileName.find(entry.TargetPath) !=
-                      std::string::npos) {
-                    accessible = true;
-                  }
-                }
-              }
-              if (accessible)
-                break;
-            }
-
-            if (!accessible) {
-              error(Memb,
-                    "field '" + Memb->Member + "' of struct '" + ObjType +
-                        "' is private and not accessible from this context");
-            }
+          if (requestedPrefix == fieldPrefix) {
+            // Exact match or both empty (value access)
+            return fieldType;
+          } else if (requestedPrefix.empty()) {
+            // Accessed as .field, but it's a pointer. return value (pointee
+            // type)
+            return fieldType;
+          } else if (requestedPrefix == "*") {
+            // Accessed as .*field. return pointer identity
+            return "*" + fieldType;
           }
 
           return Field.Type;
@@ -1565,6 +1706,9 @@ std::string Sema::checkExpr(Expr *E) {
     }
 
     return resultType;
+  } else if (auto *Cast = dynamic_cast<CastExpr *>(E)) {
+    checkExpr(Cast->Expression.get());
+    return Cast->TargetType;
   }
 
   return "unknown";
@@ -1599,14 +1743,49 @@ bool Sema::isTypeCompatible(const std::string &Target,
   if (S == "str" && (T == "*i8" || T == "^i8" || T == "str"))
     return true;
 
-  if (S == "null") {
-    // Identity nulling: Requires the morphology to be nullable (^? or ^!)
-    if (T.size() >= 2 &&
-        (T[0] == '^' || T[0] == '*' || T[0] == '~' || T[0] == '&')) {
-      return (T[1] == '?' || T[1] == '!');
+  if (S == "null" || T == "null") {
+    std::string Other = (S == "null" ? T : S);
+    if (Other == "null")
+      return true;
+    if (Other.size() >= 1) {
+      if (Other[0] == '*')
+        return true; // Raw pointers are always nullable in identity space
+      if (Other.size() >= 2 &&
+          (Other[0] == '^' || Other[0] == '~' || Other[0] == '&')) {
+        return (Other[1] == '?' || Other[1] == '!');
+      }
     }
     return false;
   }
+
+  // Morphology Compatibility (ignore attributes like ! or ? for base match,
+  // but enforce nullable rules)
+  if (!T.empty() && !S.empty() &&
+      (T[0] == '^' || T[0] == '*' || T[0] == '~' || T[0] == '&') &&
+      (S[0] == '^' || S[0] == '*' || S[0] == '~' || S[0] == '&')) {
+
+    if (T[0] != S[0])
+      return false;
+
+    std::string TBase = T.substr(1);
+    if (!TBase.empty() && (TBase[0] == '?' || TBase[0] == '!'))
+      TBase = TBase.substr(1);
+
+    std::string SBase = S.substr(1);
+    if (!SBase.empty() && (SBase[0] == '?' || SBase[0] == '!'))
+      SBase = SBase.substr(1);
+
+    // If S is nullable and T is not, they are NOT compatible (save for null
+    // literal)
+    bool SIsNullable = (S.size() > 1 && S[1] == '?');
+    bool TIsNullable = (T.size() > 1 && T[1] == '?');
+
+    if (SIsNullable && !TIsNullable)
+      return false;
+
+    return isTypeCompatible(TBase, SBase);
+  }
+
   if (S == "none") {
     // Value nulling: Requires the value type to have a nullable suffix
     // But we must distinguish between ^?T (pointer nullable) and ^T? (value

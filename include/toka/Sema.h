@@ -110,6 +110,7 @@ private:
   // {VarName, IsMutable}
   std::vector<std::pair<std::string, bool>> m_CurrentStmtBorrows;
   Module *CurrentModule = nullptr;
+  bool m_InUnsafeContext = false;
 
   struct ControlFlowInfo {
     std::string Label;

@@ -6,6 +6,7 @@
 namespace toka {
 
 void CodeGen::generate(const Module &ast) {
+  // std::cerr << "Generating Module\n";
   m_AST = &ast;
   if (!m_Module) {
     m_Module = std::make_unique<llvm::Module>("toka_module", m_Context);
@@ -109,6 +110,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                                      const std::string &overrideName,
                                      bool declOnly) {
   std::string funcName = overrideName.empty() ? func->Name : overrideName;
+  if (!declOnly)
+    std::cerr << "  Generating Function: " << funcName << "\n";
   m_NamedValues.clear();
   m_ValueTypes.clear();
   m_ValueElementTypes.clear();
@@ -606,6 +609,20 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     return lastVal;
   } else if (auto *me = dynamic_cast<const MatchExpr *>(stmt)) {
     return genMatchExpr(me);
+  } else if (auto *us = dynamic_cast<const UnsafeStmt *>(stmt)) {
+    return genStmt(us->Statement.get());
+  } else if (auto *fs = dynamic_cast<const FreeStmt *>(stmt)) {
+    llvm::Function *freeHook = m_Module->getFunction("__toka_free");
+    if (freeHook) {
+      llvm::Value *ptrAddr = genAddr(fs->Expression.get());
+      if (ptrAddr) {
+        llvm::Value *casted = m_Builder.CreateBitCast(
+            ptrAddr, llvm::PointerType::getUnqual(llvm::PointerType::getUnqual(
+                         llvm::Type::getInt8Ty(m_Context))));
+        m_Builder.CreateCall(freeHook, casted);
+      }
+    }
+    return nullptr;
   } else if (auto *es = dynamic_cast<const ExprStmt *>(stmt)) {
     return genExpr(es->Expression.get());
   }
@@ -615,6 +632,7 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
 llvm::Value *CodeGen::genExpr(const Expr *expr) {
   if (!expr)
     return nullptr;
+  // std::cerr << "genExpr: " << expr->toString() << "\n";
 
   // Dead Instruction Probes: If the current block is terminated, no more
   // instructions can be added. This check prevents LLVM assertion failures.
@@ -948,6 +966,50 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     return nullptr;
   }
 
+  if (auto *ue = dynamic_cast<const UnsafeExpr *>(expr)) {
+    return genExpr(ue->Expression.get());
+  }
+
+  if (auto *ae = dynamic_cast<const AllocExpr *>(expr)) {
+    llvm::Function *allocHook = m_Module->getFunction("__toka_alloc");
+    if (!allocHook) {
+      // Declare it if not present
+      llvm::Type *sizeTy = llvm::Type::getInt64Ty(m_Context);
+      llvm::Type *retTy =
+          llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context));
+      llvm::FunctionType *ft = llvm::FunctionType::get(retTy, {sizeTy}, false);
+      allocHook = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
+                                         "__toka_alloc", m_Module.get());
+    }
+
+    llvm::Type *elemTy = resolveType(ae->TypeName, false);
+    llvm::DataLayout dl(m_Module.get());
+    uint64_t size = dl.getTypeAllocSize(elemTy);
+    llvm::Value *sizeVal =
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), size);
+
+    if (ae->IsArray && ae->ArraySize) {
+      llvm::Value *count = genExpr(ae->ArraySize.get());
+      count = m_Builder.CreateIntCast(count, llvm::Type::getInt64Ty(m_Context),
+                                      false);
+      sizeVal = m_Builder.CreateMul(sizeVal, count);
+    }
+
+    llvm::Value *rawPtr = m_Builder.CreateCall(allocHook, sizeVal);
+    llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
+    llvm::Value *castedPtr = m_Builder.CreateBitCast(rawPtr, ptrTy);
+
+    if (ae->Initializer) {
+      llvm::Value *initVal = genExpr(ae->Initializer.get());
+      if (initVal) {
+        if (initVal->getType() == elemTy) {
+          m_Builder.CreateStore(initVal, castedPtr);
+        }
+      }
+    }
+    return castedPtr;
+  }
+
   if (auto *ce = dynamic_cast<const ContinueExpr *>(expr)) {
     CFInfo *target = nullptr;
     if (ce->TargetLabel.empty()) {
@@ -1001,33 +1063,20 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       return newVal;
     }
 
-    // Morphology symbols: *p, ^p, ~p, &p
-    if (unary->Op == TokenType::Star || unary->Op == TokenType::Caret ||
-        unary->Op == TokenType::Tilde || unary->Op == TokenType::Ampersand) {
+    // Identity and address-of: *p, &p
+    if (unary->Op == TokenType::Star || unary->Op == TokenType::Ampersand) {
+      return genAddr(unary->RHS.get());
+    }
+
+    // Morphology symbols: ^p, ~p
+    if (unary->Op == TokenType::Caret || unary->Op == TokenType::Tilde) {
       if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
         llvm::Value *alloca = m_NamedValues[v->Name];
         if (alloca) {
-          // If asking for address-of (&), return the alloca itself
-          if (unary->Op == TokenType::Ampersand) {
-            return alloca;
-          }
-
-          llvm::Value *handle = m_Builder.CreateLoad(
-              m_ValueTypes[v->Name], alloca, v->Name + "_handle");
-          // If the variable is Shared/Unique and we ask for Star (*), extract
-          // only the data pointer.
-          if (unary->Op == TokenType::Star &&
-              (m_ValueIsShared[v->Name] || m_ValueIsUnique[v->Name])) {
-            return m_Builder.CreateExtractValue(handle, 0,
-                                                v->Name + "_raw_ptr");
-          }
-          return handle;
+          return m_Builder.CreateLoad(m_ValueTypes[v->Name], alloca,
+                                      v->Name + "_handle");
         }
       }
-      // Fallback: genAddr if it's & or *
-      if (unary->Op == TokenType::Ampersand || unary->Op == TokenType::Star)
-        return genAddr(unary->RHS.get());
-
       return genExpr(unary->RHS.get());
     }
 
@@ -1093,6 +1142,35 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
   }
 
   if (auto *call = dynamic_cast<const CallExpr *>(expr)) {
+    // Primitives as constructors: i32(42)
+    if (call->Callee == "i32" || call->Callee == "u32" ||
+        call->Callee == "i64" || call->Callee == "u64" ||
+        call->Callee == "f32" || call->Callee == "f64" ||
+        call->Callee == "i16" || call->Callee == "u16" ||
+        call->Callee == "i8" || call->Callee == "u8" ||
+        call->Callee == "usize" || call->Callee == "isize" ||
+        call->Callee == "bool") {
+      llvm::Type *targetTy = resolveType(call->Callee, false);
+      if (call->Args.empty())
+        return llvm::Constant::getNullValue(targetTy);
+      llvm::Value *val = genExpr(call->Args[0].get());
+      if (!val)
+        return nullptr;
+      if (val->getType() != targetTy) {
+        if (val->getType()->isIntegerTy() && targetTy->isIntegerTy()) {
+          return m_Builder.CreateIntCast(val, targetTy, true);
+        } else if (val->getType()->isPointerTy() && targetTy->isIntegerTy()) {
+          return m_Builder.CreatePtrToInt(val, targetTy);
+        } else if (val->getType()->isIntegerTy() && targetTy->isPointerTy()) {
+          return m_Builder.CreateIntToPtr(val, targetTy);
+        } else if (val->getType()->isFloatingPointTy() &&
+                   targetTy->isFloatingPointTy()) {
+          return m_Builder.CreateFPCast(val, targetTy);
+        }
+      }
+      return val;
+    }
+
     // Check if it is a Shape/Struct Constructor
     if (m_Shapes.count(call->Callee)) {
       const ShapeDecl *sh = m_Shapes[call->Callee];
@@ -1253,7 +1331,11 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
 
       return llvm::ConstantInt::get(m_Builder.getInt32Ty(), 0);
     }
-    llvm::Function *callee = m_Module->getFunction(call->Callee);
+    std::string calleeName = call->Callee;
+    if (calleeName.size() > 5 && calleeName.substr(0, 5) == "libc_") {
+      calleeName = calleeName.substr(5);
+    }
+    llvm::Function *callee = m_Module->getFunction(calleeName);
     if (!callee) {
       // Check for ADT Constructor (Type::Member)
       // Format: OptionName::MemberName
@@ -1433,20 +1515,30 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     return m_Builder.CreateCall(callee, argsV);
   }
   if (auto *var = dynamic_cast<const VariableExpr *>(expr)) {
-    llvm::Value *addr = genAddr(var);
-    if (!addr) {
+    llvm::Value *varAddr = getVarAddr(var->Name);
+    if (!varAddr) {
       return nullptr;
     }
+
     llvm::Type *ety = m_ValueElementTypes[var->Name];
     if (!ety) {
-      // Try to recover from alloca if possible
-      if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(addr)) {
+      if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(varAddr)) {
         ety = ai->getAllocatedType();
       } else {
         return nullptr;
       }
     }
-    return m_Builder.CreateLoad(ety, addr, var->Name);
+
+    if (m_ValueIsRawPointer[var->Name]) {
+      // Entity (p) is dereference: load(load(varAddr))
+      // Identity (*p) is load(varAddr).
+      // genExpr(p) should return Entity.
+      llvm::Value *ptrVal = m_Builder.CreateLoad(m_ValueTypes[var->Name],
+                                                 varAddr, var->Name + "_ptr");
+      return m_Builder.CreateLoad(ety, ptrVal, var->Name);
+    }
+
+    return m_Builder.CreateLoad(ety, varAddr, var->Name);
   }
   if (auto *bin = dynamic_cast<const BinaryExpr *>(expr)) {
     if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" ||
@@ -1478,6 +1570,11 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
           destType = m_ValueElementTypes[varLHS->Name];
         else
           destType = m_ValueTypes[varLHS->Name];
+      } else if (auto *unaryLHS =
+                     dynamic_cast<const UnaryExpr *>(bin->LHS.get())) {
+        if (auto *v = dynamic_cast<const VariableExpr *>(unaryLHS->RHS.get())) {
+          destType = m_ValueTypes[v->Name];
+        }
       } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
         destType = gep->getResultElementType();
       } else if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
@@ -1635,9 +1732,15 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     llvm::Type *lhsType = lhs->getType();
     llvm::Type *rhsType = rhs->getType();
 
-    if (lhsType != rhsType) {
+    bool isPtrArith =
+        (lhsType->isPointerTy() && rhsType->isIntegerTy()) ||
+        (rhsType->isPointerTy() && lhsType->isIntegerTy() && bin->Op == "+");
+
+    if (lhsType != rhsType && !isPtrArith) {
       if (lhsType->isPointerTy() && rhsType->isPointerTy()) {
         rhs = m_Builder.CreateBitCast(rhs, lhsType);
+      } else if (lhsType->isIntegerTy() && rhsType->isIntegerTy()) {
+        // Allow different integer widths for now, will cast later in op logic
       } else {
         error(bin, "Type mismatch in binary expression");
         return nullptr;
@@ -1653,7 +1756,7 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     std::cerr << "[DEBUG] LHS type pointer: " << lhsType2 << "\n";
     std::cerr << "[DEBUG] Calling isIntegerTy...\n";
     bool isInt = lhsType2->isIntegerTy();
-    std::cerr << "[DEBUG] isIntegerTy=" << isInt << "\n";
+    std::cerr << "[DEBUG] isIntOrIntVectorTy=" << isInt << "\n";
     std::cerr << "[DEBUG] Calling isIntOrIntVectorTy...\n";
     bool isIntOrVec = lhsType2->isIntOrIntVectorTy();
     std::cerr << "[DEBUG] isIntOrIntVectorTy=" << isIntOrVec << "\n";
@@ -1686,10 +1789,34 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       return nullptr;
     }
 
-    if (bin->Op == "+")
+    if (bin->Op == "+") {
+      if (lhs->getType()->isPointerTy()) {
+        // Find elemTy
+        llvm::Type *elemTy = nullptr;
+        if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
+          elemTy = m_ValueElementTypes[ve->Name];
+        } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(lhs)) {
+          elemTy = gep->getResultElementType();
+        }
+        if (!elemTy)
+          elemTy = llvm::Type::getInt8Ty(m_Context);
+        return m_Builder.CreateGEP(elemTy, lhs, {rhs}, "ptradd");
+      }
       return m_Builder.CreateAdd(lhs, rhs, "addtmp");
-    if (bin->Op == "-")
+    }
+    if (bin->Op == "-") {
+      if (lhs->getType()->isPointerTy()) {
+        llvm::Type *elemTy = nullptr;
+        if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
+          elemTy = m_ValueElementTypes[ve->Name];
+        }
+        if (!elemTy)
+          elemTy = llvm::Type::getInt8Ty(m_Context);
+        llvm::Value *negR = m_Builder.CreateNeg(rhs);
+        return m_Builder.CreateGEP(elemTy, lhs, {negR}, "ptrsub");
+      }
       return m_Builder.CreateSub(lhs, rhs, "subtmp");
+    }
     if (bin->Op == "*")
       return m_Builder.CreateMul(lhs, rhs, "multmp");
     if (bin->Op == "/")
@@ -1742,6 +1869,17 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       return m_Builder.CreateLoad(targetType, castPtr);
     }
     return val;
+  }
+
+  if (auto *idx = dynamic_cast<const ArrayIndexExpr *>(expr)) {
+    llvm::Value *addr = genAddr(idx);
+    if (!addr)
+      return nullptr;
+    // Determine element type from GEP or recursive check
+    if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+      return m_Builder.CreateLoad(gep->getResultElementType(), addr, "idxval");
+    }
+    return nullptr;
   }
   if (auto *newExpr = dynamic_cast<const NewExpr *>(expr)) {
     llvm::Type *type = resolveType(newExpr->Type, false);
@@ -2040,37 +2178,49 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
   return nullptr;
 }
 
+llvm::Value *CodeGen::getVarAddr(const std::string &name) {
+  llvm::Value *alloca = m_NamedValues[name];
+  if (!alloca)
+    return nullptr;
+  if (m_ValueIsReference[name]) {
+    return m_Builder.CreateLoad(m_ValueTypes[name], alloca, name + "_ref");
+  }
+  return alloca;
+}
+
 llvm::Value *CodeGen::genAddr(const Expr *expr) {
   if (auto *var = dynamic_cast<const VariableExpr *>(expr)) {
-    llvm::Value *alloca = m_NamedValues[var->Name];
-    if (alloca) {
+    llvm::Value *varAddr = getVarAddr(var->Name);
+    if (varAddr) {
       if (m_ValueIsShared[var->Name]) {
-        llvm::Value *sh = m_Builder.CreateLoad(m_ValueTypes[var->Name], alloca,
+        llvm::Value *sh = m_Builder.CreateLoad(m_ValueTypes[var->Name], varAddr,
                                                var->Name + "_handle");
-        // Extract data pointer (Index 0)
         llvm::Value *soulPtr =
             m_Builder.CreateExtractValue(sh, 0, var->Name + "_ptr");
-        // Re-cast to the actual soul type pointer to be safe for GEP
         return m_Builder.CreateBitCast(
             soulPtr,
             llvm::PointerType::getUnqual(m_ValueElementTypes[var->Name]));
-      } else if (m_ValueIsUnique[var->Name] || m_ValueIsReference[var->Name] ||
-                 m_ValueIsRawPointer[var->Name]) {
-        return m_Builder.CreateLoad(m_ValueTypes[var->Name], alloca,
-                                    var->Name + "_val");
+      } else if (m_ValueIsRawPointer[var->Name]) {
+        // Identity (*p) is the address stored in the variable.
+        return m_Builder.CreateLoad(m_ValueTypes[var->Name], varAddr,
+                                    var->Name + "_ptr");
+      } else if (m_ValueIsUnique[var->Name]) {
+        return m_Builder.CreateLoad(m_ValueTypes[var->Name], varAddr,
+                                    var->Name + "_handle");
       }
-      return alloca;
+      return varAddr;
     }
   }
   if (auto *unary = dynamic_cast<const UnaryExpr *>(expr)) {
-    if (unary->Op == TokenType::Star) {
-      // Toka Morphology: *ptr is the pointer storage identity
+    if (unary->Op == TokenType::Star || unary->Op == TokenType::Ampersand) {
       if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-        return m_NamedValues[v->Name];
+        return getVarAddr(
+            v->Name); // Address of the pointer variable (Identity target)
       }
+      return genAddr(unary->RHS.get());
     }
-    return genAddr(unary->RHS.get());
   }
+
   if (auto *idxExpr = dynamic_cast<const ArrayIndexExpr *>(expr)) {
     if (idxExpr->Indices.empty())
       return nullptr;
@@ -2102,6 +2252,7 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
     }
     return nullptr;
   }
+
   if (auto *mem = dynamic_cast<const MemberExpr *>(expr)) {
     llvm::Value *objAddr = nullptr;
     llvm::Type *objType = nullptr;
@@ -2121,7 +2272,6 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
         }
       }
       if (objAddr && !objType) {
-        // Try to infer type from objAddr pointer
         if (auto *ptrTy =
                 llvm::dyn_cast<llvm::PointerType>(objAddr->getType())) {
           if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
@@ -2143,7 +2293,6 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
     }
 
     if (!st) {
-      // Fallback: Find struct by field name
       std::string foundStruct;
       for (const auto &pair : m_StructFieldNames) {
         for (int i = 0; i < (int)pair.second.size(); ++i) {
@@ -2189,6 +2338,7 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
 
     return m_Builder.CreateStructGEP(st, objAddr, idx, mem->Member);
   }
+
   return nullptr;
 }
 
@@ -2201,7 +2351,13 @@ void CodeGen::genExtern(const ExternDecl *ext) {
   llvm::Type *retType = resolveType(ext->ReturnType, false);
   llvm::FunctionType *ft =
       llvm::FunctionType::get(retType, argTypes, ext->IsVariadic);
-  llvm::Function::Create(ft, llvm::Function::ExternalLinkage, ext->Name,
+
+  std::string llvmName = ext->Name;
+  if (llvmName.size() > 5 && llvmName.substr(0, 5) == "libc_") {
+    llvmName = llvmName.substr(5);
+  }
+
+  llvm::Function::Create(ft, llvm::Function::ExternalLinkage, llvmName,
                          m_Module.get());
 }
 

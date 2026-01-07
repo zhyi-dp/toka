@@ -1,0 +1,82 @@
+// lib/std/string.tk
+import std/io::println
+
+// Libc Memory Functions
+extern fn malloc(size: u64) -> *i8
+extern fn realloc(ptr: *i8, size: u64) -> *i8
+extern fn free(ptr: *void)
+extern fn memcpy(dest: *void, src: *void, n: u64) -> *void
+extern fn strlen(s: *i8) -> u64
+
+pub shape String (
+    *buf: i8,
+    len: i32,
+    cap: i32
+)
+
+impl String@encap { 
+    // All fields (buf, len, cap) are private by default in @encap block
+}
+
+impl String {
+    pub fn new() -> String {
+        auto *ptr = malloc(1);
+        // Assign identity (*ptr) to field identity (*buf)
+        return String(*buf = *ptr, len = 0, cap = 1);
+    }
+
+    pub fn from(*s: i8) -> String {
+        auto l = strlen(*s);
+        auto *ptr = malloc(l + 1);
+        memcpy(*ptr, *s, l);
+        
+        return String(
+            *buf = *ptr,
+            len = l as i32,
+            cap = (l + 1) as i32
+        );
+    }
+
+    pub fn len(self) -> i32 {
+        return self.len;
+    }
+
+    pub fn capacity(self) -> i32 {
+        return self.cap;
+    }
+    
+    // Manual destructor until Drop trait exists
+    pub fn drop(self#) {
+        if self.*buf != null {
+            free(self.*buf);
+        }
+    }
+    
+    // Append string slice
+    pub fn push_str(self#, other: str) {
+        auto *other_ptr = other as *i8;
+        auto other_len = strlen(*other_ptr) as i32;
+        auto new_len = self.len + other_len;
+        
+        if new_len >= self.cap {
+            auto new_cap = self.cap * 2;
+            if new_cap <= new_len {
+                new_cap = new_len + 1;
+            }
+            auto *new_ptr = realloc(self#.*buf, new_cap as u64);
+            self#.*buf = *new_ptr;
+            self#.cap = new_cap;
+        }
+        
+        // Use identity for address addition if supported, or & indexing
+        memcpy(&(self#.*buf[self.len]), *other_ptr, other_len as u64);
+        
+        self.len = new_len;
+    }
+    
+    pub fn as_ptr(self) -> *i8 {
+        return self.*buf;
+    }
+}
+
+

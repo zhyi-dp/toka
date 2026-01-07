@@ -294,26 +294,51 @@ If no label is provided, `break` and `continue` target the innermost loop.
     - **Postfix (`x++`)**: Returns the value **before** the operation.
     - **Prefix (`++x`)**: Returns the value **after** the operation.
 
-### 4.4 Toka Morphology (Point-Value Duality)
-Toka uses a unique "morphology" system to manage pointers and handles without verbose dereferencing symbols.
+### 4.4 Toka Morphology (Raw Pointer 1.3 Specification)
+Toka uses a "Point-Value Duality" morphology system to distinguish between a pointer's **Identity** (the address it holds) and its **Entity** (the memory it points to).
 
-- **Variable Name as Object**: In a scope where a pointer or reference is declared (e.g., `auto *ptr = ...`), the name `ptr` refers directly to the **dereferenced object**.
-    - `ptr.x` is valid and operates on the object's field.
-    - `ptr` used in a context expecting a value will perform an auto-dereference load.
-- **Morphology Symbol as Identity/Handle**: To access the **identity** (memory address, ownership handle, or reference count structure), use the definition's morphology symbol as a prefix.
-    - `*ptr`: Represents the **raw pointer value** (the address). `printf("%p", *ptr)` prints the address.
-    - `^ptr`: Represents the **unique ownership handle**. `auto ^q = ^p` moves the handle.
-    - `~ptr`: Represents the **shared ownership handle** (the control block + data pointer).
-- **Modification of Identity (Reseating)**:
-    - `*ptr = new_address`: Changes where the pointer points (reseats the pointer identity).
-- **Explicit Pointer Access (`->`)**:
-    - While `ptr.x` is the standard, Toka supports `->` for member access via an identity.
-    - `(*ptr)->x`: Accesses the member `x` through the raw pointer value. Note that `ptr->x` is invalid because `ptr` is the object itself, not a pointer.
+#### 4.4.1 Identity vs. Entity
+- **Entity Access (`p`)**: Refers to the **pointed-to memory** (the soul).
+    - `p.field`: Accesses fields of the object.
+    - `p[0]`: Dereferences to the value (for scalars).
+    - `p[i]`: Array access.
+    - Used predominantly in **Entity Scopes** where the variable's type determines the layout.
+- **Identity Access (`*p`, `^p`, `~p`)**: Refers to the **pointer itself** (the handle/address).
+    - `*p`: Accesses the **raw memory address** stored in the variable.
+    - `^p`: Accesses the **unique ownership handle**.
+    - `~p`: Accesses the **shared control block**.
+    - `*p = null`: Reseats the pointer to a new address.
+    - `printf("%p", *p)`: Prints the address stored in `p`.
 
-### 4.5 Memory Deallocation
-- **Explicit (`del`)**: Used to manually free memory associated with a pointer identity.
-    - `del *ptr`: Frees the memory pointed to by the raw pointer identity.
-- **RAII**: `^` and `~` handles automatically free memory when their last handle identity goes out of scope.
+#### 4.4.2 Pointer Morphology & Attributes
+Toka uses suffixes on the morphology symbol to control the pointer variable's behavior.
+
+| Pattern | Meaning | Identity Binding | Entity Access |
+| :--- | :--- | :--- | :--- |
+| `auto *p` | Non-swappable raw pointer | Fixed address | `p` (entity) |
+| `auto *#p` | **Swappable** identity | `*p = addr` | `p` (entity) |
+| `auto *?p` | **Nullable** identity | `*p = null` | `p` (entity) |
+| `auto *!p` | Swappable + Nullable | `*p = addr/null` | `p` (entity) |
+
+#### 4.4.3 Interaction with Functions (Reference to Identity)
+When a parameter is defined as `*#ptr`, it creates a **Mutable Reference to the Pointer Identity**.
+- `fn demo(*#ptr: i32)`: Calling `demo(*val)` passes the address of the variable `val` to the function.
+- Inside `demo`:
+    - `*ptr`: Is the heap address stored in the caller's variable.
+    - `*#ptr = null`: Writes `null` back to the caller's variable (Identity Mutation).
+
+### 4.5 Memory Management Hooks (MAGIC)
+Toka delegates memory management to the standard library via specific "Magic Hooks".
+
+- **Allocation**: `auto *p = alloc T(...)` lowers to `__toka_alloc(sizeof(T))`.
+- **Deallocation**: `free *p` lowers to `__toka_free(*#p)`.
+    - **Crucial**: Notice that `free` passes the **Identity** with a mutable marker (`*#p`), allowing `__toka_free` to set the caller's pointer to `null` after freeing.
+
+#### 4.5.1 C Interop (libc_ Prefix)
+The compiler follows a naming convention for C functions:
+- Symbols starting with `libc_` (e.g., `libc_malloc`, `libc_free`) automatically have the prefix stripped during CGS (Code Generation Stage). 
+- `extern fn libc_malloc(...)` links directly to `malloc` in the C standard library.
+- This prevents keyword conflicts (like `free`) while maintaining clean Toka code.
 
 ## 5. Concurrency Model
 

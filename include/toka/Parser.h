@@ -56,6 +56,10 @@ private:
   std::unique_ptr<Expr> parsePass();
   std::unique_ptr<BlockStmt> parseBlock();
   std::unique_ptr<Stmt> parseDeleteStmt();
+  std::unique_ptr<Stmt> parseUnsafeStmt();
+  std::unique_ptr<Expr> parseUnsafeExpr();
+  std::unique_ptr<Stmt> parseFreeStmt();
+  std::unique_ptr<Expr> parseAllocExpr();
   std::unique_ptr<ReturnStmt> parseReturn();
 
   std::unique_ptr<Expr> parseExpr(int minPrec = 0);

@@ -1,7 +1,12 @@
 // lib/core/memory.tk
 // Core memory management traits.
+import core/types::usize
 
-pub trait @Allocator {
-    fn alloc(self, size: u64) -> *void
-    fn dealloc(self, ptr: *void)
-}
+// core/memory.tk
+// 没有任何特殊的语法，这就是普通的函数声明
+// 只是它们的名字恰好被编译器“认识”
+
+extern fn libc_malloc(size: usize) -> *void
+extern fn libc_free(*ptr: void) -> void
+extern fn libc_memcpy(*dest#: void, *src: void, n: usize) -> *void
+extern fn libc_memset(*dest#: void, val: i32, n: usize) -> *void

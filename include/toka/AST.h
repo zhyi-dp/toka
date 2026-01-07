@@ -209,6 +209,32 @@ public:
   }
 };
 
+class UnsafeExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Expression;
+  UnsafeExpr(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
+  std::string toString() const override {
+    return "Unsafe(" + Expression->toString() + ")";
+  }
+};
+
+class AllocExpr : public Expr {
+public:
+  std::string TypeName;
+  std::unique_ptr<Expr> Initializer;
+  bool IsArray = false;
+  std::unique_ptr<Expr> ArraySize;
+
+  AllocExpr(const std::string &type, std::unique_ptr<Expr> init = nullptr,
+            bool isArray = false, std::unique_ptr<Expr> size = nullptr)
+      : TypeName(type), Initializer(std::move(init)), IsArray(isArray),
+        ArraySize(std::move(size)) {}
+
+  std::string toString() const override {
+    return std::string("Alloc(") + (IsArray ? "[]" : "") + TypeName + ")";
+  }
+};
+
 class TupleExpr : public Expr {
 public:
   std::vector<std::unique_ptr<Expr>> Elements;
@@ -384,6 +410,20 @@ public:
   std::unique_ptr<Expr> Expression;
   DeleteStmt(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
   std::string toString() const override { return "Delete"; }
+};
+
+class UnsafeStmt : public Stmt {
+public:
+  std::unique_ptr<Stmt> Statement;
+  UnsafeStmt(std::unique_ptr<Stmt> stmt) : Statement(std::move(stmt)) {}
+  std::string toString() const override { return "UnsafeStmt"; }
+};
+
+class FreeStmt : public Stmt {
+public:
+  std::unique_ptr<Expr> Expression;
+  FreeStmt(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
+  std::string toString() const override { return "FreeStmt"; }
 };
 
 class IfExpr : public Expr {
@@ -589,8 +629,14 @@ public:
     bool IsUnique = false;
     bool IsShared = false;
     bool IsReference = false;
-    bool IsMutable = false;
-    bool IsNullable = false;
+    bool IsMutable = false;  // Deprecated
+    bool IsNullable = false; // Deprecated
+
+    // New Permissions
+    bool IsRebindable = false;
+    bool IsValueMutable = false;
+    bool IsPointerNullable = false;
+    bool IsValueNullable = false;
   };
 
   bool IsPub = false;
@@ -618,6 +664,12 @@ public:
     bool IsReference = false;
     bool IsMutable = false;
     bool IsNullable = false;
+
+    // New Permissions match FunctionDecl
+    bool IsRebindable = false;
+    bool IsValueMutable = false;
+    bool IsPointerNullable = false;
+    bool IsValueNullable = false;
   };
   std::string Name;
   std::vector<Arg> Args;

@@ -83,6 +83,7 @@ private:
   void cleanupScopes(size_t targetDepth);
   llvm::Value *genExpr(const Expr *expr);
   llvm::Value *genAddr(const Expr *expr);
+  llvm::Value *getVarAddr(const std::string &name);
   llvm::Value *genStmt(const Stmt *stmt);
   llvm::Function *genFunction(const FunctionDecl *func,
                               const std::string &overrideName = "",
