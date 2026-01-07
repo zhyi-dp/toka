@@ -278,8 +278,16 @@ Token Lexer::punctuation() {
       advance();
       return Token{TokenType::Dependency, "<-", line, col};
     }
+    if (peek() == '=') {
+      advance();
+      return Token{TokenType::LessEqual, "<=", line, col};
+    }
     return Token{TokenType::Less, "<", line, col};
   case '>':
+    if (peek() == '=') {
+      advance();
+      return Token{TokenType::GreaterEqual, ">=", line, col};
+    }
     return Token{TokenType::Greater, ">", line, col};
   case '.':
     if (peek() == '.' && peekNext() == '.') {

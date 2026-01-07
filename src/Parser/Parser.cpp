@@ -449,15 +449,28 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
       bool hasPointer = false;
       bool isUnique = false;
       bool isShared = false;
+
+      bool isRebindable = false;
+      bool isPtrNullable = false;
+
       if (match(TokenType::Caret)) {
         isUnique = true;
+        Token t = previous();
+        isRebindable = t.IsSwappablePtr;
+        isPtrNullable = t.HasNull;
       } else if (check(TokenType::Star)) {
         Token t = advance();
         hasPointer = true;
+        isRebindable = t.IsSwappablePtr;
+        isPtrNullable = t.HasNull;
         if (t.IsSwappablePtr)
-          isRef = true; // *# means mutable reference to pointer
+          isRef = true; // Legacy support? *# implies rebindable pointer,
+                        // usually by reference
       } else if (match(TokenType::Tilde)) {
         isShared = true;
+        Token t = previous();
+        isRebindable = t.IsSwappablePtr;
+        isPtrNullable = t.HasNull;
       }
       Token argName = consume(TokenType::Identifier, "Expected argument name");
       std::string argType = "i64"; // fallback
@@ -475,6 +488,18 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
       arg.IsReference = isRef;
       arg.IsMutable = argName.HasWrite;
       arg.IsNullable = argName.HasNull;
+
+      // New Permissions
+      arg.IsUnique = isUnique;
+      arg.IsShared = isShared;
+      arg.IsRebindable = isRebindable; // Captured from token
+      arg.IsPointerNullable = isPtrNullable;
+      arg.IsValueMutable = argName.HasWrite;
+      arg.IsValueNullable = argName.HasNull;
+
+      std::cerr << "DEBUG: Parsed Arg " << arg.Name
+                << " IsRebindable=" << arg.IsRebindable << "\n";
+
       args.push_back(std::move(arg));
     } while (match(TokenType::Comma));
   }
@@ -676,6 +701,8 @@ int Parser::getPrecedence(TokenType type) {
   case TokenType::Neq:
   case TokenType::Less:
   case TokenType::Greater:
+  case TokenType::LessEqual:
+  case TokenType::GreaterEqual:
   case TokenType::KwIs:
     return 5;
   case TokenType::And:

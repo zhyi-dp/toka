@@ -121,6 +121,8 @@ enum class TokenType {
   Neq,
   Less,
   Greater,
+  LessEqual,
+  GreaterEqual,
   PlusPlus,
   MinusMinus,
   Tilde, // ~

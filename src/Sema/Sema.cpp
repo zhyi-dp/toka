@@ -1034,6 +1034,15 @@ std::string Sema::checkExpr(Expr *E) {
       VariantName = CallName.substr(pos + 2);
 
       if (ShapeMap.count(ShapeName)) {
+        // 1. Check for Static Method (impl Shape { fn ... })
+        if (MethodMap.count(ShapeName) &&
+            MethodMap[ShapeName].count(VariantName)) {
+          for (auto &Arg : Call->Args)
+            checkExpr(Arg.get());
+          return MethodMap[ShapeName][VariantName];
+        }
+
+        // 2. Check for Enum Variant
         ShapeDecl *SD = ShapeMap[ShapeName];
         if (SD->Kind == ShapeKind::Enum) {
           for (auto &Memb : SD->Members) {
@@ -1565,29 +1574,25 @@ std::string Sema::checkExpr(Expr *E) {
             }
           }
 
-          // Return type based on point-value duality
-          std::string fieldType = Field.Type;
-          std::string fieldPrefix = "";
-          if (fieldType.size() > 1 &&
-              (fieldType[0] == '*' || fieldType[0] == '^' ||
-               fieldType[0] == '~' || fieldType[0] == '&')) {
-            fieldPrefix = fieldType.substr(0, 1);
-            fieldType = fieldType.substr(1);
+          // Return type based on Toka 1.3 Pointer-Value Duality
+          std::string fullType = Field.Type;
+          std::string requestedMember = Memb->Member;
+          std::string requestedPrefix = "";
+          if (!requestedMember.empty() &&
+              (requestedMember[0] == '*' || requestedMember[0] == '^' ||
+               requestedMember[0] == '~' || requestedMember[0] == '&')) {
+            requestedPrefix = requestedMember.substr(0, 1);
           }
 
-          if (requestedPrefix == fieldPrefix) {
-            // Exact match or both empty (value access)
-            return fieldType;
-          } else if (requestedPrefix.empty()) {
-            // Accessed as .field, but it's a pointer. return value (pointee
-            // type)
-            return fieldType;
+          if (requestedPrefix.empty()) {
+            // obj.field -> Entity (Pointer itself if it's a pointer)
+            return fullType;
           } else if (requestedPrefix == "*") {
-            // Accessed as .*field. return pointer identity
-            return "*" + fieldType;
+            // obj.*field -> Identity (Address stored in the pointer)
+            return fullType;
           }
 
-          return Field.Type;
+          return fullType;
         }
       }
       error(Memb, "struct '" + ObjType + "' has no member named '" +

@@ -313,12 +313,17 @@ Toka uses a "Point-Value Duality" morphology system to distinguish between a poi
 #### 4.4.2 Pointer Morphology & Attributes
 Toka uses suffixes on the morphology symbol to control the pointer variable's behavior.
 
-| Pattern | Meaning | Identity Binding | Entity Access |
+| Pattern | Meaning | Identity Binding (`*p`) | Entity Access (`p`) |
 | :--- | :--- | :--- | :--- |
-| `auto *p` | Non-swappable raw pointer | Fixed address | `p` (entity) |
-| `auto *#p` | **Swappable** identity | `*p = addr` | `p` (entity) |
-| `auto *?p` | **Nullable** identity | `*p = null` | `p` (entity) |
-| `auto *!p` | Swappable + Nullable | `*p = addr/null` | `p` (entity) |
+| `auto *p` | Non-swappable raw pointer | Single Load (Address) | Double Load (Value) |
+| `auto *#p` | **Swappable** identity | `*p = addr` (Update Slot A) | Double Load (Value) |
+| `auto *?p` | **Nullable** identity | `*p = null` | Double Load (Value) |
+| `auto *!p` | Swappable + Nullable | `*#p = addr/null` | Double Load (Value) |
+
+**Important (Inverted Logic)**:
+- `*p` (Identity): Accesses the **Pointer Slot** (Slot A). Returns the address.
+- `p` (Soul/Entity): Accesses the **Data Slot** (Slot B). Returns the pointed-to value.
+- **Member Access**: `self.*buf` retrieves the address stored in `buf`. `self.buf` retrieves the value pointed to by `buf`.
 
 #### 4.4.3 Interaction with Functions (Reference to Identity)
 When a parameter is defined as `*#ptr`, it creates a **Mutable Reference to the Pointer Identity**.
@@ -357,35 +362,40 @@ The compiler follows a naming convention for C functions:
     - Lock acquisition is **implicit** via the `#` token scope or `oncelock{}` blocks.
 ### 3. Permissions & Attributes System (Detailed)
 
-Toka uses a **Dual-Location Attribute System** distinguishing between the *Pointer/Container* and the *Object Value*.
+Toka uses a **Host-Based Permission Inheritance** system with **Explicit Slot Overrides**, sticking to the "Immutable by Default" philosophy.
 
-#### A. Pointer Attributes (Prefix on Morphology Token `^`, `*`, `~`, `&`)
-Control the **Reference/Pointer itself** (the container).
--   **Suffixes on Morphology**: `#`, `?`, `!`.
-    -   `#` (`^#`): **Rebindable**. The pointer variable can be reassigned (`p = new`).
-    -   `?` (`^?`): **Nullable**. The pointer can be null.
--   **Transfer Rule**:
-    -   **Move/Copy**: **Free Redefinition**. The new owner can define their pointer as Rebindable or Nullable regardless of the source, as it only affects the local container.
-    -   **Share/Borrow**: **Covariant**. Cannot grant more permission than the source (e.g., cannot borrow a nullable pointer as non-null without check).
+#### 3.1 Terminology
+- **Host**: The container holding an entity or pointer (e.g., a scope, a struct instance).
+- **Embedded Entity**: A value stored directly in the host.
+- **Embedded Pointer**: A pointer stored in the host.
+- **Pointed-to Entity**: The value pointed to by a pointer.
+- **Identity (`*p`)**: The pointer variable itself (the address).
+- **Entity (`p`)**: The content pointed to.
 
-#### B. Value Attributes (Suffix on Identifier)
-Control the **Object Value** (the soul).
--   **Suffixes on Identifier**: `#`, `?`.
-    -   `#` (`name#`): **Value Mutable**. The content (`*p`, `p.field`) can be modified.
-    -   `?` (`name?`): **Value Option** (Logical None possibility).
--   **Transfer Rule**:
-    -   **ALL Transfers (Move/Copy/Share/Borrow)**: **Strict No-Upgrade**.
-        -   **Immutable -> Mutable**: **FORBIDDEN**. You cannot gain write access if the source was read-only, even if you Move it.
-        -   **Mutable -> Immutable**: **ALLOWED**. You can voluntarily drop write access.
+#### 3.2 Inheritance & Blocking Rules
+1.  **Host Inheritance**: Entities and Pointers (Identity) inherit the permissions of their Host.
+    -   If Host is **Read-Only** (default), members are Read-Only.
+    -   If Host is **Writable** (marked `#`), members are Writable.
+2.  **Pointer Blocking**: Inheritance **stops** at the Pointer boundary.
+    -   The **Pointed-to Entity** does NOT inherit the Host's permissions.
+    -   It defaults to **Read-Only** (Safe default).
+    -   Use `*p#` to explicitly make the entity mutable.
+3.  **Scope Host**: The local scope acts as a Host that is always **Read-Only** (for entities) or **Fixed** (for pointers) by default. You must declare variables with `#` to open a writable slot.
 
-#### Implementation Requirements
-1.  **Parser Update**: Extract attributes from both Morphology Token (Prefix) and Identifier Token (Suffix).
-2.  **SymbolInfo**: Track `IsRebindable`, `IsValueMutable`, `IsPointerNullable`, `IsValueNullable` separately.
-3.  **Sema Logic**:
-    -   **Reassignment (`p = ...`)**: Check `IsRebindable`.
-    -   **Modification (`p.f = ...`)**: Check `IsValueMutable`.
-    -   **Transfer Check**:
-        -   Target `IsValueMutable` must be <= Source `IsValueMutable` (True <= True, False <= True/False). **False <= True is OK (Downgrade). True <= False is ERROR (Upgrade).**
+#### 3.3 Explicit Slot Symbols
+-   `#` (Mutable Slot): **Always Writable**. Overrides Host's Read-Only constraint (Interior Mutability).
+-   `$` (Const Slot): **Always Read-Only**. Overrides Host's Writable permission.
+-   *(Implicit)*: Inherits from Host (blocked at pointers).
+
+#### 3.4 Pointer Morphology Examples
+| Syntax | Identity (`*p`) | Entity (`p`) | Semantics |
+| :--- | :--- | :--- | :--- |
+| `auto *p` | Fixed | Read-Only | Const pointer to const data |
+| `auto *#p` | **Rebindable** | Read-Only | Mutable pointer to const data |
+| `auto *p#` | Fixed | **Mutable** | Const pointer to mutable data |
+| `auto *#p#` | **Rebindable** | **Mutable** | Mutable pointer to mutable data |
+
+*(Note: `*p1` behaves as `*p1$` for the entity part due to blocking)*
 
 ### 5. Nullability Handling (The `is` Operator)
 **Sole Mechanism**: Toka uses the `is` operator as the **only** method for null checks and unwrapping. 
@@ -444,6 +454,9 @@ Sema must verify that:
         - **Shared**: Decrement ref-count; release both data and ref-count memory if zero.
         - **Unique**: Check for null; `free` if not null.
     - **In-place Initialization**: If a complex type (Struct/Tuple) is initialized with a slightly different type (e.g., different sized integers), CodeGen must perform **Member-wise conversion** (creating temporaries and casting each field) rather than a simple bit-cast to ensure data integrity.
+    - **Method ABI (Pass-By-Reference)**: 
+        - For all `shape` (struct) methods, the `self` parameter MUST be passed as a pointer (`ptr`) in LLVM IR, regardless of whether it is mutable (`#`) or immutable.
+        - This prevents structure-by-value copies and ensures ABI compatibility between `callee` and `caller`.
     - **CodeGen Safety & Dead Code (Dead Instruction Probes)**:
         - Before emitting ANY instruction, CodeGen MUST check if the current `BasicBlock` is terminated: `if (!m_Builder.GetInsertBlock() || m_Builder.GetInsertBlock()->getTerminator()) return nullptr`.
         - This prevents LLVM assertion failures when generating code for branches that follow a `break`, `continue`, or `return`.

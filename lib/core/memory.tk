@@ -6,7 +6,7 @@ import core/types::usize
 // 没有任何特殊的语法，这就是普通的函数声明
 // 只是它们的名字恰好被编译器“认识”
 
-extern fn libc_malloc(size: usize) -> *void
-extern fn libc_free(*ptr: void) -> void
-extern fn libc_memcpy(*dest#: void, *src: void, n: usize) -> *void
-extern fn libc_memset(*dest#: void, val: i32, n: usize) -> *void
+extern fn libc_malloc(size: usize) -> usize
+extern fn libc_free(ptr: usize) -> void
+extern fn libc_memcpy(dest: usize, src: usize, n: usize) -> usize
+extern fn libc_memset(dest: usize, val: i32, n: usize) -> usize

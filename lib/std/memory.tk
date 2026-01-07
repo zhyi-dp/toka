@@ -6,16 +6,14 @@
 import core/types::usize
 
 extern fn libc_malloc(size: usize) -> *void
-extern fn libc_free(*ptr: void) -> void
-extern fn libc_memcpy(*#dest: void, *src: void, n: usize) -> *void
-extern fn libc_memset(*#dest: void, val: i32, n: usize) -> *void
+extern fn libc_free(ptr: usize) -> void
+extern fn libc_memcpy(dest: usize, src: usize, n: usize) -> usize
+extern fn libc_memset(dest: usize, val: i32, n: usize) -> usize
 
 // export Magic Hooks
 // 编译器在处理 'alloc' 和 'free' 关键字时会寻找这些符号
 
 pub fn __toka_alloc(size: usize) -> *void {
-    // 直接透传给 malloc
-    // 如果返回 null，alloc 关键字也就得到 null (Raw Pointer 的诚实行为)
     unsafe {
         return libc_malloc(size)
     }
@@ -23,23 +21,21 @@ pub fn __toka_alloc(size: usize) -> *void {
 
 pub fn __toka_free(*#ptr: void) {
     unsafe {
-        // Identity (*ptr) is the address value stored in the variable
         if *ptr != null {
-            libc_free(*ptr) // Free the heap address
-            *#ptr = null   // Set the variable to null
+            libc_free(*ptr as usize)
+            ptr# = null
         }
     }
 }
 
 pub fn __toka_memset(*ptr#: void, val: u8, len: usize) {
-    // C 的 memset 接收 int 类型的 val，这里做个微小的类型转换
     unsafe {
-        libc_memset(*ptr#, val as i32, len)
+        libc_memset(*ptr# as usize, val as i32, len)
     }
 }
 
 pub fn __toka_memcpy(*dest#: void, *src: void, len: usize) {
     unsafe {
-        libc_memcpy(*dest#, *src, len)
+        libc_memcpy(*dest# as usize, *src as usize, len)
     }
 }

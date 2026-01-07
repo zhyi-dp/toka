@@ -6,11 +6,11 @@ shape Rect (
 )
 
 impl Rect {
-    fn area(self) -> i32 {
+    pub fn area(self) -> i32 {
         return self.width * self.height
     }
     
-    fn perimeter(self) -> i32 {
+    pub fn perimeter(self) -> i32 {
         return (self.width + self.height) * 2
     }
 }

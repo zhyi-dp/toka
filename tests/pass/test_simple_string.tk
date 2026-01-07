@@ -1,0 +1,36 @@
+// tests/pass/test_simple_string.tk
+import std/io::println
+import std/string::String
+
+fn main() -> i32 {
+    auto s = String::from("Hi")
+    println("{}", s.len())
+    println("{}", s.capacity())
+    println("{}", s.as_ptr())
+    // Address-of method call (implicit passing of pointer to self?)
+    // String::push_str takes self#. 
+    s.push_str(" World")
+    
+    // println uses copy or we should implement borrow?
+    // s is value. 
+    println("Original: {}", s.as_ptr()) 
+    
+    // Copy construction test
+    // String has pointer.
+    
+    // s.clone()? No clone yet.
+    // s2 = s => Shallow copy.
+    // s2.push_str("!") => realloc self.buf (same buf).
+    // s.buf is now dangling.
+    // So we must NOT use s and s2 together without copy semantics.
+    // Testing mutation on s directly.
+    
+    s.push_str("!")
+    println("Appended: {}", s.as_ptr())
+    
+    s.drop()
+    if s.len() == 2 { // This condition will now be false after push_str calls
+        return 0
+    }
+    return 1
+}

@@ -47,6 +47,7 @@ private:
   std::map<std::string, llvm::Value *> m_NamedValues;
   std::string m_CurrentSelfType;
   std::map<std::string, llvm::Type *> m_ValueTypes;
+  std::map<std::string, std::string> m_ValueTypeNames;
   std::map<std::string, llvm::Type *> m_ValueElementTypes;
   std::map<std::string, llvm::StructType *> m_StructTypes;
   std::map<std::string, std::vector<std::string>> m_StructFieldNames;
