@@ -23,6 +23,14 @@ class ShapeDecl;
 class ImplDecl;
 class MethodCallExpr;
 
+struct TokaSymbol {
+  llvm::Value *allocaPtr; // Identity (alloca address)
+  llvm::Type *llvmType;   // Real logic type (e.g. Point struct)
+  bool isImplicitPtr;     // In-place capture / Captured Shape
+  bool isExplicitPtr;     // Unique/Shared/Raw pointer handled by user
+  bool isMutable;
+};
+
 class CodeGen {
 public:
   CodeGen(llvm::LLVMContext &context, const std::string &moduleName)
@@ -30,6 +38,8 @@ public:
     m_Module = std::make_unique<llvm::Module>(moduleName, context);
   }
 
+  void discover(const Module &ast);
+  void resolveSignatures(const Module &ast);
   void generate(const Module &ast);
   bool hasErrors() const { return m_ErrorCount > 0; }
   void print(llvm::raw_ostream &os);
@@ -44,23 +54,25 @@ private:
 
   std::map<std::string, const FunctionDecl *> m_Functions;
   std::map<std::string, const ExternDecl *> m_Externs;
-  std::map<std::string, llvm::Value *> m_NamedValues;
+  std::map<std::string, TokaSymbol> m_Symbols;
   std::string m_CurrentSelfType;
-  std::map<std::string, llvm::Type *> m_ValueTypes;
   std::map<std::string, std::string> m_ValueTypeNames;
   std::map<std::string, llvm::Type *> m_ValueElementTypes;
   std::map<std::string, llvm::StructType *> m_StructTypes;
   std::map<std::string, std::vector<std::string>> m_StructFieldNames;
   std::map<std::string, std::string> m_TypeAliases;
-  std::map<std::string, bool> m_ValueIsReference;
-  std::map<std::string, bool> m_ValueIsMutable;
-  std::map<std::string, bool> m_ValueIsNullable;
-  std::map<std::string, bool> m_ValueIsUnique;     // Tracks ^Type for variables
-  std::map<std::string, bool> m_ValueIsShared;     // Tracks ~Type for variables
-  std::map<std::string, bool> m_ValueIsRawPointer; // Tracks *Type for variables
   std::map<std::string, const ShapeDecl *> m_Shapes;
   std::map<std::string, const TraitDecl *> m_Traits;
   std::map<llvm::Type *, std::string> m_TypeToName;
+
+  // Legacy Mapping (Sema/CodeGen interoperability)
+  std::map<std::string, llvm::Value *> m_NamedValues;
+  std::map<std::string, llvm::Type *> m_ValueTypes;
+  std::map<std::string, bool> m_ValueIsReference;
+  std::map<std::string, bool> m_ValueIsMutable;
+  std::map<std::string, bool> m_ValueIsUnique;
+  std::map<std::string, bool> m_ValueIsShared;
+  std::map<std::string, bool> m_ValueIsNullable;
 
   struct CFInfo {
     std::string Label;
@@ -85,6 +97,14 @@ private:
   llvm::Value *genExpr(const Expr *expr);
   llvm::Value *genAddr(const Expr *expr);
   llvm::Value *getVarAddr(const std::string &name);
+
+  // Address Layering Protocol
+  llvm::Value *getEntityAddr(const std::string &name);
+  llvm::Value *getIdentityAddr(const std::string &name);
+  llvm::Value *emitEntityAddr(const Expr *expr); // "Soul" - actual data address
+  llvm::Value *
+  emitHandleAddr(const Expr *expr); // "Handle" - identity/sleeve (alloca)
+
   llvm::Value *genStmt(const Stmt *stmt);
   llvm::Function *genFunction(const FunctionDecl *func,
                               const std::string &overrideName = "",

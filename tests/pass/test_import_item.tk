@@ -1,0 +1,6 @@
+import std/io::println
+
+fn main() -> i32 {
+    println("Hello from direct import!");
+    return 0;
+}

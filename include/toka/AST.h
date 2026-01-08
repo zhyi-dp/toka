@@ -164,10 +164,14 @@ public:
   std::unique_ptr<Expr> Object;
   std::string Member;
   bool IsArrow;
+  bool IsStatic;
   MemberExpr(std::unique_ptr<Expr> obj, const std::string &member,
-             bool isArrow = false)
-      : Object(std::move(obj)), Member(member), IsArrow(isArrow) {}
+             bool isArrow = false, bool isStatic = false)
+      : Object(std::move(obj)), Member(member), IsArrow(isArrow),
+        IsStatic(isStatic) {}
   std::string toString() const override {
+    if (IsStatic)
+      return Object->toString() + "::" + Member;
     return Object->toString() + (IsArrow ? "->" : ".") + Member;
   }
 };
@@ -514,6 +518,8 @@ public:
   bool IsUnique = false;
   bool IsShared = false;
   bool IsReference = false;
+  bool IsPub = false;
+  bool IsConst = false;
   // Permissions (Dual-Location Attributes)
   bool IsRebindable = false;      // Pointer Attribute # (^#p)
   bool IsValueMutable = false;    // Identifier Attribute # (p#)
@@ -537,8 +543,10 @@ public:
   bool IsPub = false;
   std::string Name;
   std::string TargetType;
-  TypeAliasDecl(bool isPub, const std::string &name, const std::string &target)
-      : IsPub(isPub), Name(name), TargetType(target) {}
+  bool IsStrong = false;
+  TypeAliasDecl(bool isPub, const std::string &name, const std::string &target,
+                bool isStrong = false)
+      : IsPub(isPub), Name(name), TargetType(target), IsStrong(isStrong) {}
   std::string toString() const override {
     return std::string(IsPub ? "Pub" : "") + "TypeAlias(" + Name + " = " +
            TargetType + ")";
@@ -723,6 +731,7 @@ public:
 
 class Module {
 public:
+  std::string FileName;
   std::vector<std::unique_ptr<ImportDecl>> Imports;
   std::vector<std::unique_ptr<TypeAliasDecl>> TypeAliases;
   std::vector<std::unique_ptr<ShapeDecl>> Shapes;

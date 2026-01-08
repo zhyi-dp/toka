@@ -1,3 +1,5 @@
-pub type usize = u64
-pub type isize = i64
-//constexpr null = 0:usize
+pub alias usize = u64
+pub alias isize = i64
+pub type  Addr = u64
+
+pub const NULL = 0:Addr

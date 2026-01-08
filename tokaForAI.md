@@ -267,11 +267,11 @@ If no label is provided, `break` and `continue` target the innermost loop.
     - If a type is `[#no_bit_copy]`, copy is via `clone`.
     - Variable at last usage (R-value): `move`.
     - Variable as L-value ending scope: `drop`.
-- **Optimization & Capture Passing**:
-    - **Capture Passing (In-place Capture)**: Function arguments that are **Structs**, **Arrays**, **Tuples**, or marked as **Mutable (`#`)** are passed by **Reference** (pointer) by default.
-    - This allows in-place modification within functions without explicit `&` at the call site if the parameter is mutable.
-    - Behavior is similar to Java objects: no binary copy for complex types or mutable bindings during call.
-    - Immutable primitives are passed by value (copy).
+- **Optimization & Capture Passing (In-place Capture ABI)**:
+    - **Physical Rule**: Function arguments that are **Shapes (Structs/Tuples/Arrays)** or marked as **Mutable (`#`)** are passed as **Addresses** (pointers) in the LLVM IR, even if they appear as "pass-by-value" in source.
+    - **Invisible Implementation**: Inside the function, these arguments are registered as **Implicit Pointers** (`isImplicitPtr = true`).
+    - **Semantic Symmetry**: The source code treats them as values, but the CodeGen performs an automatic **Soul Extraction** (Load) before any access, ensuring "Value Semantics" are maintained over "Pointer Reality".
+    - Immutable primitives remain simple pass-by-value (copy).
 
 ### 4.2 Explicit Mutation Requirement
 - To modify any value, the **Write Token (`#`)** is MANDATORY at usage site.
@@ -325,12 +325,18 @@ Toka uses suffixes on the morphology symbol to control the pointer variable's be
 - `p` (Soul/Entity): Accesses the **Data Slot** (Slot B). Returns the pointed-to value.
 - **Member Access**: `self.*buf` retrieves the address stored in `buf`. `self.buf` retrieves the value pointed to by `buf`.
 
-#### 4.4.3 Interaction with Functions (Reference to Identity)
-When a parameter is defined as `*#ptr`, it creates a **Mutable Reference to the Pointer Identity**.
-- `fn demo(*#ptr: i32)`: Calling `demo(*val)` passes the address of the variable `val` to the function.
-- Inside `demo`:
-    - `*ptr`: Is the heap address stored in the caller's variable.
-    - `*#ptr = null`: Writes `null` back to the caller's variable (Identity Mutation).
+#### 4.4.3 The Physical Soul Protocol (Address Layering)
+Toka CodeGen implements the **Address Layering Protocol** to manage symbol resolution:
+
+1.  **Identity Layer (`getIdentityAddr`)**:
+    - Returns the `alloca` instruction (the stack slot / handle).
+    - This is the **Stationary Address** of the variable.
+2.  **Soul Layer (`getEntityAddr`)**:
+    - Returns the **Data Pointer**.
+    - If `isImplicitPtr` or `isExplicitPtr` is `true`, it performs an automatic `load ptr, ptr %identity` to retrieve the soul from the shell.
+    - If not a pointer, it returns the `Identity` directly (Identity = Soul).
+
+**Contract**: All field accesses (`GEP`) and data operations must be performed on the **Soul** address. All ownership transfers (Move/Drop) must be performed on the **Identity** address (to allow nulling).
 
 ### 4.5 Memory Management Hooks (MAGIC)
 Toka delegates memory management to the standard library via specific "Magic Hooks".
@@ -385,7 +391,8 @@ Toka uses a **Host-Based Permission Inheritance** system with **Explicit Slot Ov
 #### 3.3 Explicit Slot Symbols
 -   `#` (Mutable Slot): **Always Writable**. Overrides Host's Read-Only constraint (Interior Mutability).
 -   `$` (Const Slot): **Always Read-Only**. Overrides Host's Writable permission.
--   *(Implicit)*: Inherits from Host (blocked at pointers).
+-   **Host Inheritance**: Members inherit the permissions of their Host (e.g. if `p` is `Data#`, `p.v` is writable by default).
+-   **Pointer Blocking**: Inheritance **stops** at the Pointer boundary. Pointed-to entities default to Read-Only unless explicitly marked (e.g. `*p#`).
 
 #### 3.4 Pointer Morphology Examples
 | Syntax | Identity (`*p`) | Entity (`p`) | Semantics |
@@ -404,10 +411,9 @@ Toka uses a **Host-Based Permission Inheritance** system with **Explicit Slot Ov
     -   **Source Expression**: `^?p` (matches the declaration pattern of the nullable variable).
     -   **Target Expression**: `^p` (matches the desired non-nullable pattern).
     -   **Actual Code**: `if ^?p is ^p { ... }`.
-    -   **Semantics**: Checks if variable `p` (declared as `auto ^?p`) is not null. Returns true if valid.
--   **Capabilities**:
-    -   **Unwrap**: Converts `?` or `!` to non-null (`#` or default).
+    -   **Semantics**: Checks if variable `p` (declared as `auto ^?p`) is not null.
     -   **Deep Conversion**: `if ~!ptr? is ~ptr`.
+-   **Type Narrowing (Sema Rule)**: Inside the `then` branch of an `is` check, the compiler must temporarily narrow the source variable's type (e.g., `HasNull` becomes `false`). Generated IR can then safely perform GEPs and Loads without further guards.
 
 | Source Declaration | Check/Unwrap Syntax | Resulting Binding |
 | :--- | :--- | :--- |
@@ -457,11 +463,13 @@ Sema must verify that:
     - **Method ABI (Pass-By-Reference)**: 
         - For all `shape` (struct) methods, the `self` parameter MUST be passed as a pointer (`ptr`) in LLVM IR, regardless of whether it is mutable (`#`) or immutable.
         - This prevents structure-by-value copies and ensures ABI compatibility between `callee` and `caller`.
-    - **CodeGen Safety & Dead Code (Dead Instruction Probes)**:
-        - Before emitting ANY instruction, CodeGen MUST check if the current `BasicBlock` is terminated: `if (!m_Builder.GetInsertBlock() || m_Builder.GetInsertBlock()->getTerminator()) return nullptr`.
-        - This prevents LLVM assertion failures when generating code for branches that follow a `break`, `continue`, or `return`.
-        - In `BinaryExpr`, check liveness after each operand evaluation, as the evaluation itself might contain a terminator (e.g., a function call that includes a non-local break).
-        - **Result Allocas**: Ensure `resultAddr` allocas for `IfExpr`, `WhileExpr`, etc., are created at the VERY BEGINNING of the expression generation, before any branches, to ensure they are accessible from all paths.
+    - **Dead Code & Terminator Safety**: Before emitting any instruction, CodeGen MUST check if the current block is terminated: `if (m_Builder.GetInsertBlock()->getTerminator()) return nullptr`.
+    - **Soul Extraction Requirement (Member Access)**: `MemberExpr` generation MUST call `getEntityAddr` first. If `isImplicitPtr` is true (capture), it loads the soul pointer; otherwise it uses the identity. This is the silver bullet for prevents stack-corrupted reads.
+    - **LLVM 17+ Opaque Pointers**: Since LLVM 17 uses `ptr` everywhere, CodeGen MUST pass types explicitly to `CreateLoad`, `CreateStructGEP`, etc. (e.g., `m_Builder.CreateLoad(expectedType, addr)`). Do NOT rely on `getPointerElementType()`.
+    - **Multi-Pass Compilation Discovery**:
+        - **Pass 1: Discovery**: Register names of Shapes, Functions, and Externs.
+        - **Pass 2: Signatures**: Resolve all Type structures and Function/Extern signatures (allowing forward references).
+        - **Pass 3: Code Generation**: Emit IR bodies, utilizing fully resolved type metadata.
     - Auto-generation of `drop` glue at scope end.
     - `async/await` state machine generation.
 

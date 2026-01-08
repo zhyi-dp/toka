@@ -114,6 +114,7 @@ void Parser::error(const Token &tok, const std::string &message) {
 
 std::unique_ptr<Module> Parser::parseModule() {
   auto module = std::make_unique<Module>();
+  module->FileName = m_CurrentFile;
 
   while (peek().Kind != TokenType::EndOfFile) {
     std::cerr << "Parsing Top Level: " << peek().toString() << " at line "
@@ -127,11 +128,10 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->Imports.push_back(parseImport(isPub));
     } else if (check(TokenType::KwFn)) {
       module->Functions.push_back(parseFunctionDecl(isPub));
-    } else if (check(TokenType::KwLet) || check(TokenType::KwAuto)) {
-      if (isPub)
-        error(peek(), "Global variables cannot be public yet");
-      module->Globals.push_back(parseVariableDecl());
-    } else if (check(TokenType::KwType)) {
+    } else if (check(TokenType::KwLet) || check(TokenType::KwAuto) ||
+               check(TokenType::KwConst)) {
+      module->Globals.push_back(parseVariableDecl(isPub));
+    } else if (check(TokenType::KwType) || check(TokenType::KwAlias)) {
       module->TypeAliases.push_back(parseTypeAliasDecl(isPub));
     } else if (check(TokenType::KwExtern)) {
       if (isPub)
@@ -530,10 +530,13 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
   return decl;
 }
 
-std::unique_ptr<Stmt> Parser::parseVariableDecl() {
-  match(TokenType::KwLet);
-  if (previous().Kind != TokenType::KwLet)
-    match(TokenType::KwAuto);
+std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
+  bool isConst = match(TokenType::KwConst);
+  if (!isConst) {
+    match(TokenType::KwLet);
+    if (previous().Kind != TokenType::KwLet)
+      match(TokenType::KwAuto);
+  }
 
   bool isRef = match(TokenType::Ampersand);
   bool hasPointer = false;
@@ -609,6 +612,8 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl() {
   node->IsUnique = isUnique;
   node->IsShared = isShared;
   node->IsReference = isRef;
+  node->IsPub = isPub;
+  node->IsConst = isConst;
   node->IsMutable = name.HasWrite; // Value Mutable
   node->IsNullable = name.HasNull; // Value Nullable
   // Explicit properties mapping
@@ -638,7 +643,7 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
   if (check(TokenType::KwReturn))
     return parseReturn();
   if (check(TokenType::KwLet) || check(TokenType::KwAuto))
-    return parseVariableDecl();
+    return parseVariableDecl(false);
   if (check(TokenType::KwDelete))
     return parseDeleteStmt();
   if (check(TokenType::KwUnsafe))
@@ -981,10 +986,15 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         consume(TokenType::Colon, "");
         Token member =
             consume(TokenType::Identifier, "Expected member after ::");
-        name.Text += "::" + member.Text;
+
+        auto obj = std::make_unique<VariableExpr>(name.Text);
+        obj->setLocation(name, m_CurrentFile);
+        expr = std::make_unique<MemberExpr>(std::move(obj), member.Text, false,
+                                            true);
+        expr->setLocation(name, m_CurrentFile);
 
         if (match(TokenType::LParen)) {
-          // Function Call
+          // Function Call on Member
           std::vector<std::unique_ptr<Expr>> args;
           if (!check(TokenType::RParen)) {
             do {
@@ -992,12 +1002,13 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
             } while (match(TokenType::Comma));
           }
           consume(TokenType::RParen, "Expected ')' after arguments");
-          auto node = std::make_unique<CallExpr>(name.Text, std::move(args));
+          auto node = std::make_unique<CallExpr>(name.Text + "::" + member.Text,
+                                                 std::move(args));
           node->setLocation(name, m_CurrentFile);
           expr = std::move(node);
-          return expr; // Early return as scope resolution usually ends a
-                       // primary
+          return expr;
         }
+        return expr;
       }
 
       auto var = std::make_unique<VariableExpr>(name.Text);
@@ -1292,29 +1303,31 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
       items.push_back({"*", ""});
     } else if (match(TokenType::LBrace)) {
       while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+        std::string symName;
         if (match(TokenType::At)) {
-          // Optional @ for traits
+          symName = "@";
         }
-        Token sym = consume(TokenType::Identifier, "Expected symbol name");
+        symName += consume(TokenType::Identifier, "Expected symbol name").Text;
         std::string alias;
         if (match(TokenType::KwAs)) {
           alias = consume(TokenType::Identifier, "Expected alias").Text;
         }
-        items.push_back({sym.Text, alias});
+        items.push_back({symName, alias});
         if (!match(TokenType::Comma))
           break;
       }
       consume(TokenType::RBrace, "Expected '}'");
     } else {
+      std::string symName;
       if (match(TokenType::At)) {
-        // Optional @ for traits
+        symName = "@";
       }
-      Token sym = consume(TokenType::Identifier, "Expected symbol name");
+      symName += consume(TokenType::Identifier, "Expected symbol name").Text;
       std::string alias;
       if (match(TokenType::KwAs)) {
         alias = consume(TokenType::Identifier, "Expected alias").Text;
       }
-      items.push_back({sym.Text, alias});
+      items.push_back({symName, alias});
     }
   } else {
     // 3. Optional Module Alias (only if no logical items were parsed)
@@ -1338,7 +1351,12 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
 }
 
 std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
-  consume(TokenType::KwType, "Expected 'type'");
+  bool isStrong = false;
+  if (match(TokenType::KwType)) {
+    isStrong = true;
+  } else {
+    consume(TokenType::KwAlias, "Expected 'alias' or 'type'");
+  }
   Token name = consume(TokenType::Identifier, "Expected type alias name");
   consume(TokenType::Equal, "Expected '='");
 
@@ -1354,9 +1372,10 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
   }
   expectEndOfStatement();
 
-  auto node = std::make_unique<TypeAliasDecl>(isPub, name.Text, targetType);
-  node->setLocation(name, m_CurrentFile);
-  return node;
+  auto decl =
+      std::make_unique<TypeAliasDecl>(isPub, name.Text, targetType, isStrong);
+  decl->setLocation(name, m_CurrentFile);
+  return decl;
 }
 
 std::unique_ptr<Stmt> Parser::parseDeleteStmt() {

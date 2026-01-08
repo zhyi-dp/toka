@@ -4,6 +4,7 @@
 namespace toka {
 
 bool Sema::checkModule(Module &M) {
+  enterScope();       // Module-level global scope
   CurrentModule = &M; // Set context
   // 1. Register all globals (Functions, Structs, etc.)
   registerGlobals(M);
@@ -14,6 +15,7 @@ bool Sema::checkModule(Module &M) {
   }
 
   CurrentModule = nullptr;
+  exitScope();
   return !HasError;
 }
 
@@ -59,44 +61,117 @@ void Sema::clearStmtBorrows() {
 }
 
 void Sema::registerGlobals(Module &M) {
-  enterScope(); // Global scope
 
+  // Initialize ModuleScope
+  ModuleScope &ms = ModuleMap[M.FileName];
+  ms.Name = M.FileName;
+  // Simple name extraction (e.g. std/io.tk -> io)
+  size_t lastSlash = ms.Name.find_last_of('/');
+  if (lastSlash != std::string::npos) {
+    ms.Name = ms.Name.substr(lastSlash + 1);
+  }
+  size_t dot = ms.Name.find_last_of('.');
+  if (dot != std::string::npos) {
+    ms.Name = ms.Name.substr(0, dot);
+  }
+
+  // Case A: Register local symbols in the ModuleScope
   for (auto &Fn : M.Functions) {
-    GlobalFunctions.push_back(Fn.get());
-    // Also checking for duplicates within the SAME module could be good, but
-    // expensive O(N^2) or need a set. For now, assume Parser prevents
-    // duplicates or let it slide.
+    ms.Functions[Fn->Name] = Fn.get();
+    GlobalFunctions.push_back(
+        Fn.get()); // Still keep global map for flat-checks
   }
-
   for (auto &Ext : M.Externs) {
-    if (ExternMap.count(Ext->Name)) {
-      error(Ext.get(), "redefinition of extern '" + Ext->Name + "'");
-    } else {
-      ExternMap[Ext->Name] = Ext.get();
-    }
+    ms.Externs[Ext->Name] = Ext.get();
+    ExternMap[Ext->Name] = Ext.get();
   }
-
   for (auto &St : M.Shapes) {
-    if (ShapeMap.count(St->Name)) {
-      error(St.get(), "redefinition of shape '" + St->Name + "'");
-    } else {
-      ShapeMap[St->Name] = St.get();
-    }
+    ms.Shapes[St->Name] = St.get();
+    ShapeMap[St->Name] = St.get();
   }
-
   for (auto &Alias : M.TypeAliases) {
-    if (TypeAliasMap.count(Alias->Name)) {
-      error(Alias.get(), "redefinition of type alias '" + Alias->Name + "'");
-    } else {
-      TypeAliasMap[Alias->Name] = Alias->TargetType;
+    ms.TypeAliases[Alias->Name] = {Alias->TargetType, Alias->IsStrong};
+    TypeAliasMap[Alias->Name] = {Alias->TargetType, Alias->IsStrong};
+  }
+  for (auto &Trait : M.Traits) {
+    ms.Traits[Trait->Name] = Trait.get();
+    TraitMap[Trait->Name] = Trait.get();
+  }
+  for (auto &G : M.Globals) {
+    if (auto *v = dynamic_cast<VariableDecl *>(G.get())) {
+      ms.Globals[v->Name] = v;
     }
   }
 
-  for (auto &Trait : M.Traits) {
-    if (TraitMap.count(Trait->Name)) {
-      error(Trait.get(), "redefinition of trait '" + Trait->Name + "'");
+  // Case B: Handle Imports
+  for (auto &Imp : M.Imports) {
+    ModuleScope *target = nullptr;
+    // We need to resolve PhysicalPath to what's in ModuleMap
+    // The ModuleMap is keyed by whatever FileName was set in main.cpp
+    for (auto &[path, scope] : ModuleMap) {
+      if (path == Imp->PhysicalPath ||
+          (path.find(Imp->PhysicalPath) != std::string::npos &&
+           path.length() > Imp->PhysicalPath.length())) {
+        target = &scope;
+        break;
+      }
+    }
+
+    if (!target) {
+      // It's possible the file wasn't loaded or path doesn't match
+      continue;
+    }
+
+    if (Imp->Items.empty()) {
+      // 1. Simple Import: import std/io
+      SymbolInfo info;
+      info.Type = "module";
+      info.ReferencedModule = target;
+      std::string modName = Imp->Alias.empty() ? target->Name : Imp->Alias;
+      CurrentScope->define(modName, info);
     } else {
-      TraitMap[Trait->Name] = Trait.get();
+      // 2. Specific Import: import std/io::println
+      for (auto &item : Imp->Items) {
+        if (item.Symbol == "*") {
+          // Import all functions
+          for (auto const &[name, fn] : target->Functions)
+            CurrentScope->define(item.Alias.empty() ? name : item.Alias,
+                                 {"fn", "", false, false, false, false, false,
+                                  0, false, "", nullptr});
+          // Import all shapes
+          for (auto const &[name, sh] : target->Shapes) {
+            ShapeMap[name] =
+                sh; // Still needs to be in global maps for resolution
+          }
+          // Import all aliases
+          for (auto const &[name, ai] : target->TypeAliases) {
+            TypeAliasMap[name] = ai;
+          }
+          // Import all traits
+          for (auto const &[name, trait] : target->Traits) {
+            TraitMap[name] = trait;
+          }
+          // Import all externs
+          for (auto const &[name, ext] : target->Externs) {
+            ExternMap[name] = ext;
+          }
+        } else {
+          // Import specific
+          std::string name = item.Alias.empty() ? item.Symbol : item.Alias;
+          if (target->Functions.count(item.Symbol)) {
+            CurrentScope->define(name, {"fn", "", false, false, false, false,
+                                        false, 0, false, "", nullptr});
+          } else if (target->Shapes.count(item.Symbol)) {
+            ShapeMap[name] = target->Shapes[item.Symbol];
+          } else if (target->TypeAliases.count(item.Symbol)) {
+            TypeAliasMap[name] = target->TypeAliases[item.Symbol];
+          } else if (target->Traits.count(item.Symbol)) {
+            TraitMap[name] = target->Traits[item.Symbol];
+          } else if (target->Externs.count(item.Symbol)) {
+            ExternMap[name] = target->Externs[item.Symbol];
+          }
+        }
+      }
     }
   }
 
@@ -610,18 +685,18 @@ std::string Sema::checkExpr(Expr *E) {
     return rhsInfo;
   } else if (auto *Str = dynamic_cast<StringExpr *>(E)) {
     return "str";
-  } else if (auto *Var = dynamic_cast<VariableExpr *>(E)) {
+  } else if (auto *ve = dynamic_cast<VariableExpr *>(E)) {
     SymbolInfo Info;
-    if (!CurrentScope->lookup(Var->Name, Info)) {
-      error(Var, "use of undeclared identifier '" + Var->Name + "'");
+    if (!CurrentScope->lookup(ve->Name, Info)) {
+      error(ve, "use of undeclared identifier '" + ve->Name + "'");
       return "unknown";
     }
     if (Info.Moved) {
-      error(Var, "use of moved value: '" + Var->Name + "'");
+      error(ve, "use of moved value: '" + ve->Name + "'");
     }
     if (Info.IsMutablyBorrowed) {
-      error(Var, "cannot access '" + Var->Name +
-                     "' while it is mutably borrowed (Rule 406)");
+      error(ve, "cannot access '" + ve->Name +
+                    "' while it is mutably borrowed (Rule 406)");
     }
     std::string baseType = Info.Type;
     if (!baseType.empty() && baseType.back() == '?')
@@ -1012,8 +1087,10 @@ std::string Sema::checkExpr(Expr *E) {
     }
 
     // Intrinsic: println (Compiler Magic)
-    // Avoids strict function lookup and arg checking for this special intrinsic
-    if (CallName == "println") {
+    // Avoids strict function lookup and arg checking for this special
+    // intrinsic
+    if (CallName == "println" ||
+        CallName.find("::println") != std::string::npos) {
       if (Call->Args.empty()) {
         error(Call, "println requires at least a format string");
       }
@@ -1063,156 +1140,101 @@ std::string Sema::checkExpr(Expr *E) {
 
     // 1. Check if name is namespaced (e.g. lib::foo)
     size_t scopePos = FnName.find("::");
+    ExternDecl *Ext = nullptr;
+    ShapeDecl *Sh = nullptr;
+
     if (scopePos != std::string::npos) {
       std::string ModName = FnName.substr(0, scopePos);
       std::string FuncName = FnName.substr(scopePos + 2);
 
-      // Verify ModName is bound in CurrentModule->Imports
-      const ImportDecl *BoundImport = nullptr;
-      if (CurrentModule) {
-        for (const auto &Imp : CurrentModule->Imports) {
-          // Rule: To access Mod::Func, 'Mod' must be bound.
-          // Only module imports (empty items) bind the module name.
-          if (!Imp->Items.empty())
-            continue;
-
-          std::string BoundName;
-          if (!Imp->Alias.empty()) {
-            BoundName = Imp->Alias;
-          } else {
-            // Derive from path stem
-            std::string Stem = Imp->PhysicalPath;
-            size_t lastSlash = Stem.find_last_of('/');
-            if (lastSlash != std::string::npos)
-              Stem = Stem.substr(lastSlash + 1);
-            size_t dot = Stem.find_last_of('.');
-            if (dot != std::string::npos)
-              Stem = Stem.substr(0, dot);
-            BoundName = Stem;
-          }
-
-          if (BoundName == ModName) {
-            BoundImport = Imp.get();
-            break;
-          }
+      SymbolInfo modSpec;
+      if (CurrentScope->lookup(ModName, modSpec) && modSpec.ReferencedModule) {
+        ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
+        if (target->Functions.count(FuncName)) {
+          Fn = target->Functions[FuncName];
+        } else if (target->Externs.count(FuncName)) {
+          Ext = target->Externs[FuncName];
+        } else if (target->Shapes.count(FuncName)) {
+          Sh = target->Shapes[FuncName];
         }
-      }
-
-      if (!BoundImport) {
-        error(Call, "Module '" + ModName +
-                        "' is not imported or bound in this scope");
+      } else {
+        error(Call, "Module '" + ModName + "' not found or not imported");
         return "";
       }
+    } else {
+      // Not namespaced
+      // 1. Check current module's symbols
+      if (CurrentModule && ModuleMap.count(CurrentModule->FileName)) {
+        auto &ms = ModuleMap[CurrentModule->FileName];
+        if (ms.Functions.count(FnName)) {
+          Fn = ms.Functions[FnName];
+        } else if (ms.Externs.count(FnName)) {
+          Ext = ms.Externs[FnName];
+        } else if (ms.Shapes.count(FnName)) {
+          Sh = ms.Shapes[FnName];
+        }
+      }
 
-      // Find matching function
-      for (auto *GF : GlobalFunctions) {
-        if (GF->Name == FuncName) {
-          // Check if Module matches the BoundImport's path.
-          // We assume physical path stem matches function file stem.
-          // Ideally we should compare full resolved paths, but for now strict
-          // stem matching + bound check is enough.
-
-          std::string Stem = GF->FileName;
-          size_t lastSlash = Stem.find_last_of('/');
-          if (lastSlash != std::string::npos)
-            Stem = Stem.substr(lastSlash + 1);
-          size_t dot = Stem.find_last_of('.');
-          if (dot != std::string::npos)
-            Stem = Stem.substr(0, dot);
-
-          // IMPORTANT: If we used an alias (import core/io as sys), ModName is
-          // "sys". But the Function's native module name is "io". We must
-          // ensure that the function we found actually belongs to the file
-          // pointed to by BoundImport.
-
-          // Let's derive the stem from BoundImport->PhysicalPath
-          std::string ImportStem = BoundImport->PhysicalPath;
-          size_t iSlash = ImportStem.find_last_of('/');
-          if (iSlash != std::string::npos)
-            ImportStem = ImportStem.substr(iSlash + 1);
-          size_t iDot = ImportStem.find_last_of('.');
-          if (iDot != std::string::npos)
-            ImportStem = ImportStem.substr(0, iDot);
-
-          if (Stem == ImportStem) {
-            Fn = GF;
-            break;
+      // 2. Check explicitly imported symbols in current scope
+      if (!Fn && !Ext && !Sh) {
+        SymbolInfo sym;
+        if (CurrentScope->lookup(FnName, sym)) {
+          if (sym.Type == "fn") {
+            // Find in GlobalFunctions
+            for (auto *GF : GlobalFunctions) {
+              if (GF->Name == FnName) {
+                Fn = GF;
+                break;
+              }
+            }
+          } else if (sym.Type == "extern") {
+            if (ExternMap.count(FnName))
+              Ext = ExternMap[FnName];
+          } else if (sym.Type == "shape") {
+            if (ShapeMap.count(FnName))
+              Sh = ShapeMap[FnName];
           }
         }
       }
-    } else {
-      // 2. Unqualified lookup
-      // Priority: Local Module > Imported Explicitly > Global?
-      // Spec: Default Private.
 
-      for (auto *GF : GlobalFunctions) {
-        if (GF->Name == FnName) {
-          // Determine if this function is visible
-          bool isVisible = false;
-
-          // Same Module?
-          if (CurrentModule && !CurrentModule->Functions.empty() &&
-              GF->FileName == CurrentModule->Functions[0]->FileName) {
-            isVisible = true;
-          } else if (CurrentModule) {
-            // It's external. Is it visible?
-            // Check imports.
-
-            std::string GFStem = GF->FileName;
-            size_t lastSlash = GFStem.find_last_of('/');
-            if (lastSlash != std::string::npos)
-              GFStem = GFStem.substr(lastSlash + 1);
-            size_t dot = GFStem.find_last_of('.');
-            if (dot != std::string::npos)
-              GFStem = GFStem.substr(0, dot);
-
-            for (const auto &Imp : CurrentModule->Imports) {
-              std::string ImpStem = Imp->PhysicalPath;
-              size_t iSlash = ImpStem.find_last_of('/');
-              if (iSlash != std::string::npos)
-                ImpStem = ImpStem.substr(iSlash + 1);
-
-              // Handle "local" imports? ImpStem might be "lib.tk" or just "lib"
-              // My parser handles "lib" or "lib.tk" if I patched it?
-              // Actually parsing "import std/json" gives "std/json".
-              // So ImpStem -> "json".
-
-              if (ImpStem == GFStem) {
-                if (!Imp->Items.empty()) {
-                  for (const auto &Item : Imp->Items) {
-                    if (Item.Symbol == "*" || Item.Symbol == FnName) {
-                      isVisible = true;
-                      break;
-                    }
-                  }
-                }
-              }
-              if (isVisible)
-                break;
+      // 3. Fallback to global maps (legacy/flat)
+      if (!Fn && !Ext && !Sh) {
+        if (ExternMap.count(FnName))
+          Ext = ExternMap[FnName];
+        else if (ShapeMap.count(FnName))
+          Sh = ShapeMap[FnName];
+        else {
+          // We might still find a function in GlobalFunctions even if not in
+          // scope? Actually most functions should be in GlobalFunctions if
+          // they are top-level.
+          for (auto *GF : GlobalFunctions) {
+            if (GF->Name == FnName) {
+              Fn = GF;
+              break;
             }
-          }
-
-          if (isVisible) {
-            Fn = GF;
-            break;
           }
         }
       }
     }
 
+    if (!Fn && !Ext && !Sh) {
+      error(Call, "Undefined function or shape: " + FnName);
+      return "";
+    }
+
     if (Fn) {
 
       if (!Fn->IsPub && Fn->FileName != Call->FileName) {
-        // Relaxed privacy check: allow calls within the same module, regardless
-        // of file. This means if a function is private, it can still be called
-        // by other functions in the same module, even if they are in different
-        // files within that module. The original check was too strict,
-        // requiring the *exact* same file.
+        // Relaxed privacy check: allow calls within the same module,
+        // regardless of file. This means if a function is private, it can
+        // still be called by other functions in the same module, even if they
+        // are in different files within that module. The original check was
+        // too strict, requiring the *exact* same file.
         bool sameModule = false;
         if (CurrentModule && !CurrentModule->Functions.empty()) {
           // Check if the called function's file belongs to the current module
-          // This is a heuristic, assuming functions in the same module share a
-          // common base path or are explicitly listed. A more robust check
+          // This is a heuristic, assuming functions in the same module share
+          // a common base path or are explicitly listed. A more robust check
           // would involve a module-level function registry.
           for (const auto &funcInModule : CurrentModule->Functions) {
             if (funcInModule->FileName == Fn->FileName) {
@@ -1251,9 +1273,9 @@ std::string Sema::checkExpr(Expr *E) {
       return Fn->ReturnType;
     }
 
-    // Check ExternMap
-    if (ExternMap.count(Call->Callee)) {
-      ExternDecl *Fn = ExternMap[Call->Callee];
+    // Check Extern
+    if (Ext) {
+      ExternDecl *Fn = Ext;
       if (Fn->Args.size() != Call->Args.size() && !Fn->IsVariadic) {
         // If variadic, we need at least fixed args
         if (Call->Args.size() < Fn->Args.size())
@@ -1281,8 +1303,8 @@ std::string Sema::checkExpr(Expr *E) {
       return Fn->ReturnType;
     }
     // Check for Shape Constructor (Struct Initialization via Call)
-    else if (ShapeMap.count(Call->Callee)) {
-      ShapeDecl *sh = ShapeMap[Call->Callee];
+    else if (Sh) {
+      ShapeDecl *sh = Sh;
       if (sh->Kind == ShapeKind::Struct || sh->Kind == ShapeKind::Tuple) {
         // Validate arguments
         // We allow named args matching fields, or positional args if Tuple.
@@ -1344,20 +1366,20 @@ std::string Sema::checkExpr(Expr *E) {
             // Only valid for Tuples or if we decide to support positional
             // struct init
             if (sh->Kind == ShapeKind::Struct) {
-              // Actually, let's strictly require named args for Structs for now
-              // to match user expectation, OR check if user intends positional.
-              // test_shape_match.tk: Point(u8, u8...) uses positional?
-              // shape Point(u8, u8, u8, u8) is Tuple-like struct?
+              // Actually, let's strictly require named args for Structs for
+              // now to match user expectation, OR check if user intends
+              // positional. test_shape_match.tk: Point(u8, u8...) uses
+              // positional? shape Point(u8, u8, u8, u8) is Tuple-like struct?
               // If members are named "0", "1", etc. it is Tuple.
               // If named, it is Struct.
               // Parser sets Kind=Struct if it sees 'name :'.
               // Parser sets Kind=Tuple if it sees comma separated types?
               // Let's assume purely positional for Struct is risky unless
-              // defined order. But wait, test_shape_match.tk uses `RawBytes[1,
-              // 2, 3, 4]`. That's ArrayIndexExpr, not CallExpr. But `shape
-              // Point(u8, ....)` -> `auto p = Point(1, 2, 3, 4)` ? User changed
-              // `struct Point {x,y,z}` to `shape Point(x:i32...)`. They used
-              // `Point(x=1...)`. This is named.
+              // defined order. But wait, test_shape_match.tk uses
+              // `RawBytes[1, 2, 3, 4]`. That's ArrayIndexExpr, not CallExpr.
+              // But `shape Point(u8, ....)` -> `auto p = Point(1, 2, 3, 4)` ?
+              // User changed `struct Point {x,y,z}` to `shape
+              // Point(x:i32...)`. They used `Point(x=1...)`. This is named.
 
               // If Positional passed to Struct with named fields:
               if (argIdx < sh->Members.size()) {
@@ -1468,8 +1490,8 @@ std::string Sema::checkExpr(Expr *E) {
 
       // Visibility Check:
       if (!SD->IsPub && SD->FileName != Init->FileName) {
-        // Relaxed privacy check: allow calls within the same module, regardless
-        // of file.
+        // Relaxed privacy check: allow calls within the same module,
+        // regardless of file.
         bool sameModule = false;
         if (CurrentModule && !CurrentModule->Shapes.empty()) {
           for (const auto &shapeInModule : CurrentModule->Shapes) {
@@ -1494,6 +1516,23 @@ std::string Sema::checkExpr(Expr *E) {
     return Init->ShapeName;
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
     std::string ObjTypeFull = checkExpr(Memb->Object.get());
+    if (ObjTypeFull == "module") {
+      // It's a module access
+      if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
+        SymbolInfo modSpec;
+        if (CurrentScope->lookup(objVar->Name, modSpec) &&
+            modSpec.ReferencedModule) {
+          ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
+          if (target->Functions.count(Memb->Member)) {
+            return "fn";
+          }
+          if (target->Globals.count(Memb->Member)) {
+            return resolveType(target->Globals[Memb->Member]->TypeName);
+          }
+        }
+      }
+    }
+
     if (ObjTypeFull.find('?') != std::string::npos) {
       error(Memb, "cannot access member of nullable '" + ObjTypeFull +
                       "' without 'is' check (Rule 408)");
@@ -1720,20 +1759,50 @@ std::string Sema::checkExpr(Expr *E) {
 }
 
 std::string Sema::resolveType(const std::string &Type) {
+  size_t scopePos = Type.find("::");
+  if (scopePos != std::string::npos) {
+    std::string ModName = Type.substr(0, scopePos);
+    std::string TargetType = Type.substr(scopePos + 2);
+
+    SymbolInfo modSpec;
+    if (CurrentScope && CurrentScope->lookup(ModName, modSpec) &&
+        modSpec.ReferencedModule) {
+      ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
+      if (target->TypeAliases.count(TargetType)) {
+        return resolveType(target->TypeAliases[TargetType].Target);
+      }
+      return TargetType; // It's a base type or shape in that module
+    }
+  }
+
   if (TypeAliasMap.count(Type)) {
-    return resolveType(TypeAliasMap[Type]);
+    // For strong types, we only resolve if we want the UNDERLYING type
+    // But for most semantic checks, we might want to keep the strong Name.
+    // However, resolveType is usually used to find the physical layout.
+    return resolveType(TypeAliasMap[Type].Target);
   }
   return Type;
 }
 
 bool Sema::isTypeCompatible(const std::string &Target,
                             const std::string &Source) {
+  if (Target == Source || Target == "unknown" || Source == "unknown")
+    return true;
+
+  // Newtype System: if Target is a strong type, it only accepts itself
+  // (above)
+  if (TypeAliasMap.count(Target) && TypeAliasMap[Target].IsStrong) {
+    return false;
+  }
+  // If Source is a strong type, it cannot be implicitly cast TO Target.
+  if (TypeAliasMap.count(Source) && TypeAliasMap[Source].IsStrong) {
+    return false;
+  }
+
   std::string T = resolveType(Target);
   std::string S = resolveType(Source);
 
   if (T == S)
-    return true;
-  if (T == "unknown" || S == "unknown")
     return true;
 
   // Integer Literal Promotion

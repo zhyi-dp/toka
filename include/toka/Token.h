@@ -22,6 +22,7 @@ enum class TokenType {
   KwAuto,
   KwMut,
   KwType,
+  KwAlias,
   KwConst,
   KwShape,
   KwPacked,

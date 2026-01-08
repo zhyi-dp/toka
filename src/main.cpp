@@ -114,6 +114,17 @@ int main(int argc, char **argv) {
   llvm::LLVMContext context;
   toka::CodeGen codegen(context, argv[1]);
 
+  // Pass 1: Discovery (Registration)
+  for (const auto &ast : astModules) {
+    codegen.discover(*ast);
+  }
+
+  // Pass 2: Resolution (Signatures)
+  for (const auto &ast : astModules) {
+    codegen.resolveSignatures(*ast);
+  }
+
+  // Pass 3: Generation (Emission)
   for (const auto &ast : astModules) {
     codegen.generate(*ast);
   }

@@ -1,20 +1,20 @@
 import std/io::println
-import std/memory
+import std/memory::*
 
 shape Point (x: i32, y: i32)
 
 fn main() -> i32 {
     // 1. Alloc: *#ptr# means pointer itself is mutable AND value is mutable
     unsafe {
-        auto *#ptr# = alloc Point(x = 10, y = 20)
+        auto *ptr# = alloc Point(x = 10, y = 20)
         
         // 2. Point-Value Duality: ptr is the object
         println("ptr.x = {} (expected 10)", ptr.x)
-        // ptr#.x = 100
+        ptr#.x = 100
         println("After ptr#.x = 100, ptr.x = {} (expected 100)", ptr.x)
         
         // 3. Identity access: *ptr is the pointer address
-        println("Address (*ptr) = {}", *ptr)
+        println("Address (*ptr) = {}", *ptr as *void)
         
         // 4. Explicit pointer access: (*ptr)->y
         println("(*ptr)->y = {} (expected 20)", (*ptr)->y)

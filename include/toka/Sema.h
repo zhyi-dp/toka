@@ -26,6 +26,8 @@ struct SymbolInfo {
   std::string BorrowedFrom =
       ""; // If this is a reference, name of the source variable
 
+  void *ReferencedModule = nullptr; // Pointer to ModuleScope (opaque here)
+
   // Legacy/Helpers
   bool IsMutable() const { return IsValueMutable; }
   bool IsReference() const { return Morphology == "&"; }
@@ -100,7 +102,11 @@ private:
       GlobalFunctions; // All functions across all modules
   std::map<std::string, ExternDecl *> ExternMap;
   std::map<std::string, ShapeDecl *> ShapeMap;
-  std::map<std::string, std::string> TypeAliasMap;
+  struct AliasInfo {
+    std::string Target;
+    bool IsStrong;
+  };
+  std::map<std::string, AliasInfo> TypeAliasMap;
   // TypeName -> {MethodName -> ReturnType}
   std::map<std::string, std::map<std::string, std::string>> MethodMap;
   std::map<std::string, TraitDecl *> TraitMap;
@@ -109,6 +115,19 @@ private:
   std::string m_LastBorrowSource;
   // {VarName, IsMutable}
   std::vector<std::pair<std::string, bool>> m_CurrentStmtBorrows;
+  struct ModuleScope {
+    std::string Name;
+    std::map<std::string, FunctionDecl *> Functions;
+    std::map<std::string, ExternDecl *> Externs;
+    std::map<std::string, ShapeDecl *> Shapes;
+    std::map<std::string, AliasInfo> TypeAliases;
+    std::map<std::string, TraitDecl *> Traits;
+    std::map<std::string, VariableDecl *> Globals;
+  };
+  std::map<std::string, ModuleScope> ModuleMap; // FullPath -> Scope
+
+  ModuleScope *getModule(const std::string &Path);
+
   Module *CurrentModule = nullptr;
   bool m_InUnsafeContext = false;
 

@@ -36,7 +36,7 @@ private:
 
   // Recursive Descent Methods
   std::unique_ptr<FunctionDecl> parseFunctionDecl(bool isPub = false);
-  std::unique_ptr<Stmt> parseVariableDecl();
+  std::unique_ptr<Stmt> parseVariableDecl(bool isPub = false);
   std::unique_ptr<ExternDecl> parseExternDecl();
   std::unique_ptr<ImportDecl> parseImport(bool isPub = false);
   std::unique_ptr<TypeAliasDecl> parseTypeAliasDecl(bool isPub = false);

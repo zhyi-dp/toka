@@ -1,0 +1,19 @@
+import std/io
+
+type Addr = u64
+alias MyInt = i32
+
+fn main() -> i32 {
+    auto a: Addr = 10:Addr
+    auto b: u64 = 20
+    
+    // This should fail (strong type)
+    // auto c: Addr = b 
+    
+    // This should work (weak alias)
+    auto d: MyInt = 30
+    auto e: i32 = d
+    
+    println("Newtype tests passed")
+    return 0
+}

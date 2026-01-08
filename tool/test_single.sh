@@ -44,6 +44,6 @@ RUN_STATUS=$?
 echo "  - Finished with Exit Code: $RUN_STATUS"
 
 # Cleanup
-rm -f "$LL_FILE" "$LOG_FILE"
+# rm -f "$LL_FILE" "$LOG_FILE"
 
 exit $RUN_STATUS

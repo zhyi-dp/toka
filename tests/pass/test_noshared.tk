@@ -7,7 +7,7 @@ shape Point (
     z: i32,
 )
 
-type PointTup = (i32, i32)
+alias PointTup = (i32, i32)
 
 fn processPoint(p: PointTup) {
     println("Point is ({}, {})", p.0, p.1)
@@ -31,12 +31,12 @@ fn main() -> i32 {
     auto p# = Point(x = 1, y = 2, z = 111)
     auto i# = 0
     auto logi# = 0
-    while (i < 3) {
+    while i < 3 {
         println("[{}]p.x is {}, loop {}", logi#++, p.x, i)
         p#.x = p.x + 10
         i# = i + 1
     }
-    println("[{}]p.x is {}, loop {}", logi#++, p.x, i)
+    println("[{}]p.x is {}, out loop {}", logi#++, p.x, i)
     p#.x = addx(p, 10)
     println("[{}]p.x is {} (after addx, should be 41)", logi#++, p.x)
     
