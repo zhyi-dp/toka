@@ -1095,103 +1095,8 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     }
   }
 
-  if (auto *unary = dynamic_cast<const UnaryExpr *>(expr)) {
-    if (unary->Op == TokenType::PlusPlus ||
-        unary->Op == TokenType::MinusMinus) {
-      llvm::Value *addr = genAddr(unary->RHS.get());
-      if (!addr)
-        return nullptr;
-      llvm::Type *type = nullptr;
-      if (auto *var = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-        type = m_ValueElementTypes[var->Name];
-      } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
-        type = gep->getResultElementType();
-      } else if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(addr)) {
-        type = alloca->getAllocatedType();
-      }
-      if (!type)
-        return nullptr;
-      llvm::Value *oldVal = m_Builder.CreateLoad(type, addr, "pre_old");
-      llvm::Value *newVal;
-      if (unary->Op == TokenType::PlusPlus)
-        newVal = m_Builder.CreateAdd(oldVal, llvm::ConstantInt::get(type, 1),
-                                     "preinc_new");
-      else
-        newVal = m_Builder.CreateSub(oldVal, llvm::ConstantInt::get(type, 1),
-                                     "predec_new");
-      m_Builder.CreateStore(newVal, addr);
-      return newVal;
-    }
-
-    // Identity and address-of: *p, &p
-    if (unary->Op == TokenType::Ampersand) {
-      if (auto *var = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-        return getEntityAddr(var->Name);
-      }
-      return genAddr(unary->RHS.get());
-    }
-
-    if (unary->Op == TokenType::Star) {
-      if (dynamic_cast<const VariableExpr *>(unary->RHS.get()) ||
-          dynamic_cast<const MemberExpr *>(unary->RHS.get())) {
-        return genAddr(unary->RHS.get());
-      }
-      return genExpr(unary->RHS.get());
-    }
-
-    // Morphology symbols: ^p, ~p
-
-    // Morphology symbols: ^p, ~p
-    if (unary->Op == TokenType::Caret) {
-      if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-        llvm::Value *alloca = getIdentityAddr(v->Name);
-        if (alloca) {
-          // Get the base name (no morphology) for symbol lookup
-          std::string baseName = v->Name;
-          while (!baseName.empty() &&
-                 (baseName[0] == '*' || baseName[0] == '#' ||
-                  baseName[0] == '&' || baseName[0] == '^' ||
-                  baseName[0] == '~'))
-            baseName = baseName.substr(1);
-          while (!baseName.empty() &&
-                 (baseName.back() == '#' || baseName.back() == '?' ||
-                  baseName.back() == '!'))
-            baseName.pop_back();
-
-          if (m_Symbols.count(baseName)) {
-            TokaSymbol &sym = m_Symbols[baseName];
-            llvm::Value *val = m_Builder.CreateLoad(m_Builder.getPtrTy(),
-                                                    alloca, v->Name + ".move");
-            // Move Semantics: Null out the source (Destructive Move)
-            m_Builder.CreateStore(
-                llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), alloca);
-            return val;
-          }
-        }
-      }
-      return genExpr(unary->RHS.get());
-    }
-    if (unary->Op == TokenType::Tilde) {
-      if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-        llvm::Value *alloca = m_NamedValues[v->Name];
-        if (alloca) {
-          return m_Builder.CreateLoad(m_ValueTypes[v->Name], alloca,
-                                      v->Name + "_shared");
-        }
-      }
-      return genExpr(unary->RHS.get());
-    }
-
-    llvm::Value *rhs = genExpr(unary->RHS.get());
-    if (!rhs)
-      return nullptr;
-    if (unary->Op == TokenType::Bang) {
-      return m_Builder.CreateNot(rhs, "nottmp");
-    } else if (unary->Op == TokenType::Minus) {
-      if (rhs->getType()->isFloatingPointTy())
-        return m_Builder.CreateFNeg(rhs, "negtmp");
-      return m_Builder.CreateNeg(rhs, "negtmp");
-    }
+  if (auto *e = dynamic_cast<const UnaryExpr *>(expr)) {
+    return genUnaryExpr(e);
   }
 
   if (auto *post = dynamic_cast<const PostfixExpr *>(expr)) {
@@ -1985,6 +1890,102 @@ llvm::Value *CodeGen::genCastExpr(const CastExpr *cast) {
     return m_Builder.CreateLoad(targetType, castPtr);
   }
   return val;
+}
+
+llvm::Value *CodeGen::genUnaryExpr(const UnaryExpr *unary) {
+  if (unary->Op == TokenType::PlusPlus || unary->Op == TokenType::MinusMinus) {
+    llvm::Value *addr = genAddr(unary->RHS.get());
+    if (!addr)
+      return nullptr;
+    llvm::Type *type = nullptr;
+    if (auto *var = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+      type = m_ValueElementTypes[var->Name];
+    } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+      type = gep->getResultElementType();
+    } else if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(addr)) {
+      type = alloca->getAllocatedType();
+    }
+    if (!type)
+      return nullptr;
+    llvm::Value *oldVal = m_Builder.CreateLoad(type, addr, "pre_old");
+    llvm::Value *newVal;
+    if (unary->Op == TokenType::PlusPlus)
+      newVal = m_Builder.CreateAdd(oldVal, llvm::ConstantInt::get(type, 1),
+                                   "preinc_new");
+    else
+      newVal = m_Builder.CreateSub(oldVal, llvm::ConstantInt::get(type, 1),
+                                   "predec_new");
+    m_Builder.CreateStore(newVal, addr);
+    return newVal;
+  }
+
+  // Identity and address-of: *p, &p
+  if (unary->Op == TokenType::Ampersand) {
+    if (auto *var = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+      return getEntityAddr(var->Name);
+    }
+    return genAddr(unary->RHS.get());
+  }
+
+  if (unary->Op == TokenType::Star) {
+    if (dynamic_cast<const VariableExpr *>(unary->RHS.get()) ||
+        dynamic_cast<const MemberExpr *>(unary->RHS.get())) {
+      return genAddr(unary->RHS.get());
+    }
+    return genExpr(unary->RHS.get());
+  }
+
+  // Morphology symbols: ^p, ~p
+  if (unary->Op == TokenType::Caret) {
+    if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+      llvm::Value *alloca = getIdentityAddr(v->Name);
+      if (alloca) {
+        // Get the base name (no morphology) for symbol lookup
+        std::string baseName = v->Name;
+        while (!baseName.empty() &&
+               (baseName[0] == '*' || baseName[0] == '#' ||
+                baseName[0] == '&' || baseName[0] == '^' || baseName[0] == '~'))
+          baseName = baseName.substr(1);
+        while (!baseName.empty() &&
+               (baseName.back() == '#' || baseName.back() == '?' ||
+                baseName.back() == '!'))
+          baseName.pop_back();
+
+        if (m_Symbols.count(baseName)) {
+          TokaSymbol &sym = m_Symbols[baseName];
+          llvm::Value *val = m_Builder.CreateLoad(m_Builder.getPtrTy(), alloca,
+                                                  v->Name + ".move");
+          // Move Semantics: Null out the source (Destructive Move)
+          m_Builder.CreateStore(
+              llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), alloca);
+          return val;
+        }
+      }
+    }
+    return genExpr(unary->RHS.get());
+  }
+  if (unary->Op == TokenType::Tilde) {
+    if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+      llvm::Value *alloca = m_NamedValues[v->Name];
+      if (alloca) {
+        return m_Builder.CreateLoad(m_ValueTypes[v->Name], alloca,
+                                    v->Name + "_shared");
+      }
+    }
+    return genExpr(unary->RHS.get());
+  }
+
+  llvm::Value *rhs = genExpr(unary->RHS.get());
+  if (!rhs)
+    return nullptr;
+  if (unary->Op == TokenType::Bang) {
+    return m_Builder.CreateNot(rhs, "nottmp");
+  } else if (unary->Op == TokenType::Minus) {
+    if (rhs->getType()->isFloatingPointTy())
+      return m_Builder.CreateFNeg(rhs, "negtmp");
+    return m_Builder.CreateNeg(rhs, "negtmp");
+  }
+  return nullptr;
 }
 
 llvm::Value *CodeGen::genAllocExpr(const AllocExpr *ae) {

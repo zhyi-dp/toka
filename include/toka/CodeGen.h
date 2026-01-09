@@ -121,6 +121,7 @@ private:
   llvm::Value *genVariableExpr(const VariableExpr *expr);
   llvm::Value *genLiteralExpr(const Expr *expr);
   llvm::Value *genCastExpr(const CastExpr *expr);
+  llvm::Value *genUnaryExpr(const UnaryExpr *expr);
   void genPatternBinding(const MatchArm::Pattern *pat, llvm::Value *targetAddr,
                          llvm::Type *targetType);
   llvm::Value *genMethodCall(const MethodCallExpr *expr);
