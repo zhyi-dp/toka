@@ -63,7 +63,7 @@
                 },
                 {
                     "name": "constant.language.toka",
-                    "match": "\\b(true|false|null|none|self|Self|main)\\b"
+                    "match": "\\b(true|false|nullptr|none|self|Self|main)\\b"
                 }
             ]
         },

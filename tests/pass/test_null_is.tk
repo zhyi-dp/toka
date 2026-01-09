@@ -11,14 +11,14 @@ fn main() -> i32 {
     if ^?p is ^p {
         println("Success: p.v = {}", p.v)
     } else {
-        println("Failure: p is null\n")
+        println("Failure: p is nullptr\n")
     }
 
-    auto ^?q# = null
-    if ^?q is ^q {
-        println("Error: q should be null\n")
+    auto ^?q# = nullptr
+    if ^?q is nullptr {
+        println("Success: q confirmed nullptr\n")
     } else {
-        println("Success: q confirmed null\n")
+        println("Error: q should be nullptr\n")
     }
 
     return 0

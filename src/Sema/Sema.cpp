@@ -1,5 +1,9 @@
 #include "toka/Sema.h"
 #include "llvm/Support/raw_ostream.h"
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
 
 namespace toka {
 
@@ -100,6 +104,18 @@ void Sema::registerGlobals(Module &M) {
   for (auto &G : M.Globals) {
     if (auto *v = dynamic_cast<VariableDecl *>(G.get())) {
       ms.Globals[v->Name] = v;
+      // In-line inference for global constants if TypeName is missing
+      if (v->TypeName.empty() && v->Init) {
+        if (auto *cast = dynamic_cast<CastExpr *>(v->Init.get())) {
+          v->TypeName = cast->TargetType;
+        } else if (dynamic_cast<NumberExpr *>(v->Init.get())) {
+          v->TypeName = "i64";
+        } else if (dynamic_cast<BoolExpr *>(v->Init.get())) {
+          v->TypeName = "bool";
+        } else if (dynamic_cast<StringExpr *>(v->Init.get())) {
+          v->TypeName = "str";
+        }
+      }
     }
   }
 
@@ -155,6 +171,24 @@ void Sema::registerGlobals(Module &M) {
           for (auto const &[name, ext] : target->Externs) {
             ExternMap[name] = ext;
           }
+          // Import all globals (constants)
+          for (auto const &[name, v] : target->Globals) {
+            std::string morph = "";
+            if (v->HasPointer)
+              morph = "*";
+            else if (v->IsUnique)
+              morph = "^";
+            else if (v->IsShared)
+              morph = "~";
+            else if (v->IsReference)
+              morph = "&";
+
+            CurrentScope->define(item.Alias.empty() ? name : item.Alias,
+                                 {v->TypeName, morph, v->IsRebindable,
+                                  v->IsValueMutable, v->IsPointerNullable,
+                                  v->IsValueNullable, false, 0, false, "",
+                                  nullptr});
+          }
         } else {
           // Import specific
           std::string name = item.Alias.empty() ? item.Symbol : item.Alias;
@@ -169,6 +203,22 @@ void Sema::registerGlobals(Module &M) {
             TraitMap[name] = target->Traits[item.Symbol];
           } else if (target->Externs.count(item.Symbol)) {
             ExternMap[name] = target->Externs[item.Symbol];
+          } else if (target->Globals.count(item.Symbol)) {
+            auto *v = target->Globals[item.Symbol];
+            std::string morph = "";
+            if (v->HasPointer)
+              morph = "*";
+            else if (v->IsUnique)
+              morph = "^";
+            else if (v->IsShared)
+              morph = "~";
+            else if (v->IsReference)
+              morph = "&";
+
+            CurrentScope->define(name, {v->TypeName, morph, v->IsRebindable,
+                                        v->IsValueMutable, v->IsPointerNullable,
+                                        v->IsValueNullable, false, 0, false, "",
+                                        nullptr});
           }
         }
       }
@@ -334,6 +384,17 @@ void Sema::checkStmt(Stmt *S) {
       error(Ret, "return type mismatch: expected '" +
                      CurrentFunctionReturnType + "', got '" + ExprType + "'");
     }
+  } else if (auto *Free = dynamic_cast<FreeStmt *>(S)) {
+    std::string ExprType = checkExpr(Free->Expression.get());
+    if (ExprType.empty() || ExprType[0] != '*') {
+      if (ExprType.size() > 0 && (ExprType[0] == '^' || ExprType[0] == '~')) {
+        error(Free, "manual 'free' is forbidden for smart pointers ('" +
+                        ExprType + "'). Use automatic scoping instead.");
+      } else {
+        error(Free,
+              "can only 'free' a raw pointer ('*'), got '" + ExprType + "'");
+      }
+    }
   } else if (auto *ExprS = dynamic_cast<ExprStmt *>(S)) {
     checkExpr(ExprS->Expression.get());
     clearStmtBorrows();
@@ -352,9 +413,9 @@ void Sema::checkStmt(Stmt *S) {
         Var->TypeName = "unknown";
       } else {
         std::string Inferred = InitType;
-        // If the variable declaration HAS morphology, and the initializer ALSO
-        // has it, we must strip it from the inferred type to avoid redundancy
-        // (e.g. *i32 -> i32)
+        // If the variable declaration HAS morphology, and the initializer
+        // ALSO has it, we must strip it from the inferred type to avoid
+        // redundancy (e.g. *i32 -> i32)
         if (Var->HasPointer || Var->IsUnique || Var->IsShared ||
             Var->IsReference) {
           if (!Inferred.empty() && (Inferred[0] == '*' || Inferred[0] == '^' ||
@@ -420,8 +481,8 @@ void Sema::checkStmt(Stmt *S) {
     if (Var->IsNullable && !Info.IsValueNullable)
       Info.IsValueNullable = true;
 
-    // Type cleanup: If type is "^T", we often store "T" in Info.Type and "^" in
-    // Morphology
+    // Type cleanup: If type is "^T", we often store "T" in Info.Type and "^"
+    // in Morphology
     if (Info.Type.size() > 1 && (Info.Type[0] == '^' || Info.Type[0] == '~' ||
                                  Info.Type[0] == '*' || Info.Type[0] == '&')) {
       if (Info.Morphology.empty()) {
@@ -473,8 +534,8 @@ void Sema::checkStmt(Stmt *S) {
     std::string InitType = resolveType(checkExpr(Destruct->Init.get()));
     std::string DeclType = resolveType(Destruct->TypeName);
 
-    // Basic check: DeclType should match InitType (or InitType is tuple/struct
-    // compatible)
+    // Basic check: DeclType should match InitType (or InitType is
+    // tuple/struct compatible)
     if (DeclType != InitType && InitType != "unknown" &&
         InitType != "tuple") { // "tuple" is weak type for now
       error(Destruct, "destructuring type mismatch: expected '" + DeclType +
@@ -547,7 +608,10 @@ std::string Sema::checkExpr(Expr *E) {
       if (!m_InUnsafeContext) {
         error(Idx, "raw pointer indexing requires unsafe context");
       }
-      return ArrType.substr(1);
+      std::string res = ArrType.substr(1);
+      while (!res.empty() && (res.back() == '!' || res.back() == '?'))
+        res.pop_back();
+      return res;
     }
     // For now simple array access
     if (ArrType.size() > 1 && (ArrType[0] == '[' || ArrType[0] == '^' ||
@@ -571,13 +635,15 @@ std::string Sema::checkExpr(Expr *E) {
     // Dereference a pointer/reference/handle
     if (inner.size() > 1 && (inner[0] == '^' || inner[0] == '&' ||
                              inner[0] == '*' || inner[0] == '~')) {
-      return inner.substr(1);
+      std::string res = inner.substr(1);
+      while (!res.empty() && (res.back() == '!' || res.back() == '?'))
+        res.pop_back();
+      return res;
     }
-    // Spec: variable name is the object. dereferencing a non-pointer is error?
-    // Morpholopy: *ptr is Identity value (address).
-    // Wait, AddressOfExpr is &x. DereferenceExpr is *x.
-    // If x is ^i32. *x accesses the raw address? Or the value?
-    // CodeGen: dereference load from pointer.
+    // Spec: variable name is the object. dereferencing a non-pointer is
+    // error? Morpholopy: *ptr is Identity value (address). Wait,
+    // AddressOfExpr is &x. DereferenceExpr is *x. If x is ^i32. *x accesses
+    // the raw address? Or the value? CodeGen: dereference load from pointer.
     // So *x returns the pointee type.
     error(Deref, "cannot dereference non-pointer type '" + inner + "'");
     return "unknown";
@@ -702,10 +768,19 @@ std::string Sema::checkExpr(Expr *E) {
     if (!baseType.empty() && baseType.back() == '?')
       baseType.pop_back();
 
-    return baseType +
-           (Info.IsValueNullable || Info.IsPointerNullable ? "?" : "");
+    if (Info.Morphology == "&") {
+      // References auto-dereference in expressions
+      return baseType + (Info.IsValueNullable ? "?" : "");
+    }
+
+    std::string fullType =
+        Info.Morphology + baseType +
+        (Info.IsValueNullable || Info.IsPointerNullable ? "?" : "");
+    if (Info.IsRebindable && !fullType.empty() && fullType.back() != '!')
+      fullType += "!";
+    return fullType;
   } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
-    return "null";
+    return "nullptr";
   } else if (auto *None = dynamic_cast<NoneExpr *>(E)) {
     return "none";
   } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) {
@@ -1545,11 +1620,13 @@ std::string Sema::checkExpr(Expr *E) {
       ObjType = ObjType.substr(1);
     }
     // Strip suffix '?' if it was '^?Point' -> '?Point' -> 'Point'
-    if (!ObjType.empty() && ObjType.back() == '?')
+    while (!ObjType.empty() && (ObjType.back() == '?' ||
+                                ObjType.back() == '!' || ObjType.back() == '#'))
       ObjType.pop_back();
 
     // Secondary middle check if prefix icon remained somehow?
-    if (!ObjType.empty() && ObjType[0] == '?')
+    while (!ObjType.empty() &&
+           (ObjType[0] == '?' || ObjType[0] == '!' || ObjType[0] == '#'))
       ObjType = ObjType.substr(1);
 
     if (ShapeMap.count(ObjType)) {
@@ -1817,17 +1894,19 @@ bool Sema::isTypeCompatible(const std::string &Target,
   if (S == "str" && (T == "*i8" || T == "^i8" || T == "str"))
     return true;
 
-  if (S == "null" || T == "null") {
-    std::string Other = (S == "null" ? T : S);
-    if (Other == "null")
+  if (S == "nullptr" || T == "nullptr") {
+    std::string Other = (S == "nullptr" ? Target : Source);
+    if (Other == "nullptr")
       return true;
-    if (Other.size() >= 1) {
-      if (Other[0] == '*')
-        return true; // Raw pointers are always nullable in identity space
-      if (Other.size() >= 2 &&
-          (Other[0] == '^' || Other[0] == '~' || Other[0] == '&')) {
-        return (Other[1] == '?' || Other[1] == '!');
-      }
+
+    std::string O = resolveType(Other);
+    if (O.empty())
+      return false;
+
+    char prefix = O[0];
+    // nullptr is restricted to pointer morphologies (*, ^, ~)
+    if (prefix == '*' || prefix == '^' || prefix == '~') {
+      return true;
     }
     return false;
   }

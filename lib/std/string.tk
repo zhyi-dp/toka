@@ -3,7 +3,7 @@
 // Version: 1.3.1 (In-Place Capture & Strict Morphology)
 // ==========================================
 
-import core/types::{usize,Addr,NULL}
+import core/types::{usize,Addr,ADDR0}
 
 // ------------------------------------------------------
 // 1. External C Interface (libc)
@@ -141,12 +141,12 @@ impl String {
 
     pub fn drop(self#) {
         unsafe {
-            if self.*buf != null {
+            if self.*buf != nullptr {
                 // 释放内存地址
                 libc_free(self.*buf as *void)
                 
                 // 置空：修改 Slot A
-                self#.*buf = null 
+                self#.*buf = nullptr 
             }
         }
     }

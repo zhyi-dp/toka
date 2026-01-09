@@ -1,0 +1,37 @@
+import std/io::println
+import core/types::*
+
+shape Data = (
+    v: i32
+)
+
+fn main() -> i32 {
+    // 1. Raw Pointer (Nullable)
+    auto *?p1# : Data = nullptr
+    unsafe {
+        if *p1 == nullptr {
+            println("Raw pointer null OK")
+        }
+    }
+
+    // 2. Exclusive Pointer (Nullable)
+    auto ^?p2# : Data = nullptr
+    if ^?p2 is nullptr {
+        println("Exclusive pointer null OK")
+    }
+
+    // 3. Shared Pointer (Nullable)
+    auto ~?p3# : Data = nullptr
+    if ~?p3 is nullptr {
+        println("Shared pointer null OK")
+    }
+
+    // 4. Addr ADDR0 (Foundational)
+    auto addr = ADDR0
+    if addr == ADDR0 {
+        println("Addr ADDR0 OK")
+    }
+
+    println("All polymorphic null tests passed!")
+    return 0
+}

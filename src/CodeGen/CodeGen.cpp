@@ -58,6 +58,8 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     return genCallExpr(e);
   if (auto e = dynamic_cast<const PostfixExpr *>(expr))
     return genPostfixExpr(e);
+  if (auto e = dynamic_cast<const InitStructExpr *>(expr))
+    return genInitStructExpr(e);
   if (auto e = dynamic_cast<const PassExpr *>(expr))
     return genPassExpr(e);
   if (auto e = dynamic_cast<const BreakExpr *>(expr))

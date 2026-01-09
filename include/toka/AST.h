@@ -57,7 +57,7 @@ public:
 class NullExpr : public Expr {
 public:
   NullExpr() {}
-  std::string toString() const override { return "null"; }
+  std::string toString() const override { return "nullptr"; }
 };
 
 class NoneExpr : public Expr {

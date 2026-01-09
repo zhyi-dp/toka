@@ -90,6 +90,33 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     TokaSymbol sym;
     sym.allocaPtr = alloca;
     sym.llvmType = pTy;
+
+    // Determine AddressingMode and IndirectionLevel
+    sym.indirectionLevel = 0;
+    std::string typeStr = argDecl.Type;
+    while (!typeStr.empty() &&
+           (typeStr[0] == '*' || typeStr[0] == '^' || typeStr[0] == '~')) {
+      sym.indirectionLevel++;
+      typeStr = typeStr.substr(1);
+    }
+
+    if (sym.indirectionLevel == 0 &&
+        (argDecl.HasPointer || argDecl.IsUnique || argDecl.IsShared ||
+         argDecl.IsReference)) {
+      sym.indirectionLevel = 1;
+    }
+
+    if (argDecl.IsReference) {
+      sym.mode = AddressingMode::Reference;
+      sym.indirectionLevel = 1; // & is effectively 1 level
+    } else if (argDecl.HasPointer || argDecl.IsUnique || argDecl.IsShared) {
+      sym.mode = AddressingMode::Pointer;
+    } else {
+      sym.mode = AddressingMode::Direct;
+    }
+
+    sym.isRebindable = argDecl.IsRebindable;
+    sym.isContinuous = pTy->isArrayTy();
     sym.isImplicitPtr = isCaptured;
     sym.isExplicitPtr = isExplicit;
     sym.isMutable = argDecl.IsMutable || argDecl.IsValueMutable;
@@ -288,27 +315,47 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
             c, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
         m_Builder.CreateStore(inc, ref);
       } else if (initVal->getType()->isPointerTy()) {
-        llvm::Function *mallocFn = m_Module->getFunction("malloc");
-        if (mallocFn) {
-          llvm::Value *size =
-              llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 4);
-          llvm::Value *refPtr = m_Builder.CreateCall(mallocFn, size);
-          refPtr = m_Builder.CreateBitCast(
-              refPtr,
-              llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context)));
-          m_Builder.CreateStore(
-              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1),
-              refPtr);
+        if (llvm::isa<llvm::ConstantPointerNull>(initVal)) {
+          // Null shared pointer initialization
           llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
           llvm::Type *refTy =
               llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
           llvm::StructType *st =
               llvm::StructType::get(m_Context, {ptrTy, refTy});
           llvm::Value *u = llvm::UndefValue::get(st);
-          llvm::Value *ci = m_Builder.CreateBitCast(initVal, ptrTy);
           initVal = m_Builder.CreateInsertValue(
-              m_Builder.CreateInsertValue(u, ci, 0), refPtr, 1);
+              m_Builder.CreateInsertValue(
+                  u,
+                  llvm::ConstantPointerNull::get(
+                      llvm::cast<llvm::PointerType>(ptrTy)),
+                  0),
+              llvm::ConstantPointerNull::get(
+                  llvm::cast<llvm::PointerType>(refTy)),
+              1);
           type = st;
+        } else {
+          llvm::Function *mallocFn = m_Module->getFunction("malloc");
+          if (mallocFn) {
+            llvm::Value *size =
+                llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 4);
+            llvm::Value *refPtr = m_Builder.CreateCall(mallocFn, size);
+            refPtr = m_Builder.CreateBitCast(
+                refPtr, llvm::PointerType::getUnqual(
+                            llvm::Type::getInt32Ty(m_Context)));
+            m_Builder.CreateStore(
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1),
+                refPtr);
+            llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
+            llvm::Type *refTy =
+                llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+            llvm::StructType *st =
+                llvm::StructType::get(m_Context, {ptrTy, refTy});
+            llvm::Value *u = llvm::UndefValue::get(st);
+            llvm::Value *ci = m_Builder.CreateBitCast(initVal, ptrTy);
+            initVal = m_Builder.CreateInsertValue(
+                m_Builder.CreateInsertValue(u, ci, 0), refPtr, 1);
+            type = st;
+          }
         }
       }
     }
@@ -319,6 +366,35 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   TokaSymbol sym;
   sym.allocaPtr = alloca;
   sym.llvmType = elemTy;
+
+  // Calculate IndirectionLevel and Mode
+  sym.indirectionLevel = 0;
+  std::string ts = var->TypeName;
+  while (!ts.empty() && (ts[0] == '*' || ts[0] == '^' || ts[0] == '~')) {
+    sym.indirectionLevel++;
+    ts = ts.substr(1);
+  }
+
+  if (sym.indirectionLevel == 0 &&
+      (var->HasPointer || var->IsUnique || var->IsShared || var->IsReference)) {
+    sym.indirectionLevel = 1;
+  }
+
+  if (var->IsReference) {
+    sym.mode = AddressingMode::Reference;
+    sym.indirectionLevel = 1;
+  } else if (var->HasPointer || var->IsUnique || var->IsShared) {
+    sym.mode = AddressingMode::Pointer;
+  } else {
+    sym.mode = AddressingMode::Direct;
+  }
+
+  sym.isRebindable = var->IsRebindable;
+  sym.isContinuous =
+      (elemTy && elemTy->isArrayTy()) ||
+      (dynamic_cast<const AllocExpr *>(var->Init.get()) &&
+       dynamic_cast<const AllocExpr *>(var->Init.get())->IsArray);
+
   sym.isImplicitPtr = false;
   sym.isExplicitPtr =
       var->HasPointer || var->IsUnique || var->IsShared || var->IsReference;
@@ -404,6 +480,11 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     TokaSymbol sym;
     sym.allocaPtr = alloca;
     sym.llvmType = ty;
+    sym.mode =
+        AddressingMode::Direct; // Destructuring typically yields direct values
+    sym.indirectionLevel = 0;
+    sym.isRebindable = false;
+    sym.isContinuous = ty->isArrayTy();
     sym.isImplicitPtr = false;
     sym.isExplicitPtr = false;
     sym.isMutable = v.IsMutable;
@@ -929,6 +1010,5 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
     return llvm::PointerType::getUnqual(type);
   return type;
 }
-
 
 } // namespace toka

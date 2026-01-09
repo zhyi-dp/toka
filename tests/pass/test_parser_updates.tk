@@ -20,23 +20,23 @@ fn main() -> i32 {
         // Nullable Pointer
         auto ^?p2 = new Data(v=99)
 
-        // New syntax: 'is' operator for null check. 
+        // New syntax: 'is' operator for nullptr check. 
         if ^?p2 is ^p2 {
-            println("Nullable pointer is not null (is check)\n")
+            println("Nullable pointer is not nullptr (is check)\n")
             println("p2->v: {}", p2.v)
         }
     }
     {
         // Nullable Pointer
-        auto ^?p3# = null
+        auto ^?p3# = nullptr
 
-        // New syntax: 'is' operator for null check. 
+        // New syntax: 'is' operator for nullptr check. 
         if ^?p3 is ^p3 {
-            println("Nullable pointer is not null (is check)\n")
+            println("Nullable pointer is not nullptr (is check)\n")
         }
         else
         {
-            println("Nullable pointer is null (is check)\n")
+            println("Nullable pointer is nullptr (is check)\n")
         }
     }
     return 0

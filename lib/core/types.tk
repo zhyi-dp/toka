@@ -1,5 +1,13 @@
+//Defines a weak type alias: creates a symbolic synonym for an existing type. 
+//It is semantically identical and transparent to the compiler, allowing seamless interchanging with the underlying type without explicit casting.
 pub alias usize = u64
 pub alias isize = i64
-pub type  Addr = u64
 
-pub const NULL = 0:Addr
+//Defines a strong type: creates a unique semantic identity that shares the same physical memory layout as the base type.
+//It enforces strict type isolation, requiring explicit conversion to prevent accidental type confusion and enhance memory safety.
+pub type Addr = u64
+
+//A named literal (Symbolic Constant). 
+//It exists only as a compile-time value and is inlined directly by the compiler. 
+//No memory is allocated, and its address cannot be taken.
+pub const ADDR0 = 0:Addr

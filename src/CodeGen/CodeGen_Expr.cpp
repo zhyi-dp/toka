@@ -226,7 +226,22 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
       rhsVal = res;
     }
 
-    if (destType != rhsVal->getType()) {
+    bool typesMatch = (destType == rhsVal->getType());
+    if (!typesMatch) {
+      // Fallback 1: Integer width matching (i32 vs i32)
+      if (destType->isIntegerTy() && rhsVal->getType()->isIntegerTy()) {
+        if (destType->getIntegerBitWidth() ==
+            rhsVal->getType()->getIntegerBitWidth()) {
+          typesMatch = true;
+        }
+      }
+      // Fallback 2: Pointer matching
+      if (destType->isPointerTy() && rhsVal->getType()->isPointerTy()) {
+        typesMatch = true;
+      }
+    }
+
+    if (!typesMatch) {
       error(bin, "Type mismatch in assignment");
       return nullptr;
     }
@@ -312,14 +327,64 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     return PN;
   }
 
+  // 'is' operator - Specialized 'peek' evaluation to avoid destructive moves
+  if (bin->Op == "is") {
+    auto evaluatePeek = [&](const Expr *e) -> llvm::Value * {
+      const Expr *target = e;
+      if (auto *u = dynamic_cast<const UnaryExpr *>(e)) {
+        if (u->Op == TokenType::Caret || u->Op == TokenType::Tilde ||
+            u->Op == TokenType::Star) {
+          target = u->RHS.get();
+        }
+      }
+      if (auto *v = dynamic_cast<const VariableExpr *>(target)) {
+        std::string baseName = v->Name;
+        while (!baseName.empty() && (baseName[0] == '*' || baseName[0] == '#' ||
+                                     baseName[0] == '&' || baseName[0] == '^' ||
+                                     baseName[0] == '~' || baseName[0] == '!'))
+          baseName = baseName.substr(1);
+        while (!baseName.empty() &&
+               (baseName.back() == '#' || baseName.back() == '?' ||
+                baseName.back() == '!'))
+          baseName.pop_back();
+
+        if (m_ValueIsShared.count(baseName) && m_ValueIsShared[baseName]) {
+          return genExpr(target);
+        }
+        return getEntityAddr(v->Name);
+      }
+      return genExpr(e);
+    };
+
+    llvm::Value *lhsVal = evaluatePeek(bin->LHS.get());
+    if (!lhsVal)
+      return nullptr;
+
+    llvm::Type *lhsTy = lhsVal->getType();
+    if (lhsTy->isStructTy() && lhsTy->getStructNumElements() == 2) {
+      // shared pointer: extract raw pointer
+      lhsVal = m_Builder.CreateExtractValue(lhsVal, 0, "shared_ptr_val");
+      lhsTy = lhsVal->getType();
+    }
+
+    // Special Case: 'expr is nullptr' (Null check)
+    if (dynamic_cast<const NullExpr *>(bin->RHS.get())) {
+      return m_Builder.CreateIsNull(lhsVal, "is_null");
+    }
+
+    // Implicit Case: 'expr is Type' or 'expr is pattern' (Not-Null check)
+    if (lhsTy->isPointerTy()) {
+      return m_Builder.CreateIsNotNull(lhsVal, "is_not_null");
+    }
+    return llvm::ConstantInt::getTrue(m_Context);
+  }
+
   // Standard Arithmetic and Comparisons
   llvm::Value *lhs = genExpr(bin->LHS.get());
   if (!lhs) {
     return nullptr;
   }
 
-  // Dead Instruction Probes: If the block was terminated during LHS
-  // evaluation, we must not attempt to emit more instructions.
   if (!m_Builder.GetInsertBlock() ||
       m_Builder.GetInsertBlock()->getTerminator()) {
     return nullptr;
@@ -345,6 +410,10 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   if (lhsType != rhsType && !isPtrArith) {
     if (lhsType->isPointerTy() && rhsType->isPointerTy()) {
       rhs = m_Builder.CreateBitCast(rhs, lhsType);
+    } else if (lhsType->isPointerTy() && rhsType->isIntegerTy()) {
+      rhs = m_Builder.CreateIntToPtr(rhs, lhsType);
+    } else if (lhsType->isIntegerTy() && rhsType->isPointerTy()) {
+      lhs = m_Builder.CreateIntToPtr(lhs, rhsType);
     } else if (lhsType->isIntegerTy() && rhsType->isIntegerTy()) {
       // Promote to widest
       if (lhsType->getIntegerBitWidth() < rhsType->getIntegerBitWidth()) {
@@ -356,17 +425,11 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
         rhsType = lhsType;
       }
     } else {
-      error(bin, "Type mismatch in binary expression");
-      return nullptr;
+      if (lhsType != rhsType) {
+        error(bin, "Type mismatch in binary expression");
+        return nullptr;
+      }
     }
-  }
-
-  // 'is' operator (Null Check)
-  if (bin->Op == "is") {
-    if (lhsType->isPointerTy()) {
-      return m_Builder.CreateIsNotNull(lhs, "is_not_null");
-    }
-    return llvm::ConstantInt::getTrue(m_Context);
   }
 
   if (!lhsType->isIntOrIntVectorTy() && !lhsType->isPtrOrPtrVectorTy()) {
@@ -483,8 +546,30 @@ llvm::Value *CodeGen::genUnaryExpr(const UnaryExpr *unary) {
   }
 
   if (unary->Op == TokenType::Star) {
-    if (dynamic_cast<const VariableExpr *>(unary->RHS.get()) ||
-        dynamic_cast<const MemberExpr *>(unary->RHS.get())) {
+    if (auto *idx = dynamic_cast<const ArrayIndexExpr *>(unary->RHS.get())) {
+      // Identity access: *arr[1] -> returns address of the element
+      return genAddr(idx);
+    }
+    if (auto *var = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+      std::string baseName = var->Name;
+      while (!baseName.empty() &&
+             (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
+              baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+        baseName = baseName.substr(1);
+      while (!baseName.empty() &&
+             (baseName.back() == '#' || baseName.back() == '?' ||
+              baseName.back() == '!'))
+        baseName.pop_back();
+
+      auto it = m_Symbols.find(baseName);
+      if (it != m_Symbols.end() && it->second.isExplicitPtr) {
+        // Identity access for *ptr: load the address value itself
+        return m_Builder.CreateLoad(m_Builder.getPtrTy(), it->second.allocaPtr,
+                                    baseName + ".addr_val");
+      }
+      return genAddr(var);
+    }
+    if (dynamic_cast<const MemberExpr *>(unary->RHS.get())) {
       return genAddr(unary->RHS.get());
     }
     return genExpr(unary->RHS.get());
@@ -628,7 +713,7 @@ llvm::Value *CodeGen::genLiteralExpr(const Expr *expr) {
   }
   if (dynamic_cast<const NullExpr *>(expr) ||
       dynamic_cast<const NoneExpr *>(expr)) {
-    return llvm::ConstantPointerNull::get(llvm::PointerType::get(m_Context, 0));
+    return llvm::ConstantPointerNull::get(m_Builder.getPtrTy());
   }
   if (auto *str = dynamic_cast<const StringExpr *>(expr)) {
     return m_Builder.CreateGlobalStringPtr(str->Value);
@@ -1053,6 +1138,20 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
     m_ValueIsUnique[pName] =
         false; // IsUnique needs pat support? Assume false for now or infer
     m_ValueIsShared[pName] = false;
+
+    TokaSymbol sym;
+    sym.allocaPtr = alloca;
+    sym.llvmType = targetType;
+    sym.mode =
+        pat->IsReference ? AddressingMode::Reference : AddressingMode::Direct;
+    sym.indirectionLevel = pat->IsReference ? 1 : 0;
+    sym.isRebindable =
+        false; // patterns are currently and implicitly non-rebindable
+    sym.isContinuous = targetType->isArrayTy();
+    sym.isImplicitPtr = pat->IsReference;
+    sym.isExplicitPtr = false;
+    sym.isMutable = pat->IsMutable;
+    m_Symbols[pName] = sym;
 
     if (!m_ScopeStack.empty()) {
       m_ScopeStack.back().push_back({pName, alloca, false, false});
@@ -1543,6 +1642,50 @@ llvm::Value *CodeGen::genUnsafeExpr(const UnsafeExpr *ue) {
   return genExpr(ue->Expression.get());
 }
 
+llvm::Value *CodeGen::genInitStructExpr(const InitStructExpr *init) {
+  llvm::StructType *st = m_StructTypes[init->ShapeName];
+  if (!st) {
+    error(init, "Unknown struct type " + init->ShapeName);
+    return nullptr;
+  }
+
+  llvm::Value *alloca =
+      m_Builder.CreateAlloca(st, nullptr, init->ShapeName + "_init");
+  auto &fields = m_StructFieldNames[init->ShapeName];
+
+  for (const auto &f : init->Members) {
+    int idx = -1;
+    for (int i = 0; i < (int)fields.size(); ++i) {
+      std::string fn = fields[i];
+      while (!fn.empty() && (fn[0] == '^' || fn[0] == '*' || fn[0] == '&' ||
+                             fn[0] == '#' || fn[0] == '~' || fn[0] == '!'))
+        fn = fn.substr(1);
+      while (!fn.empty() &&
+             (fn.back() == '#' || fn.back() == '?' || fn.back() == '!'))
+        fn.pop_back();
+
+      if (fn == f.first) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx == -1) {
+      error(init, "Unknown field " + f.first);
+      return nullptr;
+    }
+
+    llvm::Value *fieldVal = genExpr(f.second.get());
+    if (!fieldVal)
+      return nullptr;
+
+    llvm::Value *fieldAddr =
+        m_Builder.CreateStructGEP(st, alloca, idx, "field_" + f.first);
+    m_Builder.CreateStore(fieldVal, fieldAddr);
+  }
+
+  return m_Builder.CreateLoad(st, alloca);
+}
+
 llvm::Value *CodeGen::genNewExpr(const NewExpr *newExpr) {
   llvm::Type *type = resolveType(newExpr->Type, false);
   if (!type)
@@ -1572,55 +1715,15 @@ llvm::Value *CodeGen::genNewExpr(const NewExpr *newExpr) {
   llvm::Value *heapPtr = voidPtr;
 
   if (newExpr->Initializer) {
-    if (auto *strInit =
-            dynamic_cast<const InitStructExpr *>(newExpr->Initializer.get())) {
-      llvm::StructType *st = m_StructTypes[newExpr->Type];
-      if (!st) {
-        error(newExpr, "Unknown struct type " + newExpr->Type);
-        return nullptr;
-      }
-
-      auto &fields = m_StructFieldNames[newExpr->Type];
-      for (const auto &f : strInit->Members) {
-        int idx = -1;
-        for (int i = 0; i < (int)fields.size(); ++i) {
-          std::string fn = fields[i];
-          while (!fn.empty() && (fn[0] == '^' || fn[0] == '*' || fn[0] == '&' ||
-                                 fn[0] == '#' || fn[0] == '~' || fn[0] == '!'))
-            fn = fn.substr(1);
-          while (!fn.empty() &&
-                 (fn.back() == '#' || fn.back() == '?' || fn.back() == '!'))
-            fn.pop_back();
-
-          if (fn == f.first) {
-            idx = i;
-            break;
-          }
+    llvm::Value *initVal = genExpr(newExpr->Initializer.get());
+    if (initVal) {
+      if (initVal->getType() != type) {
+        // Attempt cast
+        if (initVal->getType()->isIntegerTy() && type->isIntegerTy()) {
+          initVal = m_Builder.CreateIntCast(initVal, type, true);
         }
-        if (idx == -1) {
-          error(newExpr, "Unknown field " + f.first);
-          return nullptr;
-        }
-
-        llvm::Value *fieldVal = genExpr(f.second.get());
-        if (!fieldVal)
-          return nullptr;
-
-        llvm::Value *fieldAddr =
-            m_Builder.CreateStructGEP(st, heapPtr, idx, "field_" + f.first);
-        m_Builder.CreateStore(fieldVal, fieldAddr);
       }
-    } else {
-      llvm::Value *initVal = genExpr(newExpr->Initializer.get());
-      if (initVal) {
-        if (initVal->getType() != type) {
-          // Attempt cast
-          if (initVal->getType()->isIntegerTy() && type->isIntegerTy()) {
-            initVal = m_Builder.CreateIntCast(initVal, type, true);
-          }
-        }
-        m_Builder.CreateStore(initVal, heapPtr);
-      }
+      m_Builder.CreateStore(initVal, heapPtr);
     }
   }
 

@@ -1,5 +1,8 @@
 #include "toka/Lexer.h"
+#include <iostream>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace toka {
 
@@ -53,7 +56,7 @@ static std::unordered_map<std::string, TokenType> Keywords = {
     {"true", TokenType::KwTrue},
     {"false", TokenType::KwFalse},
     {"none", TokenType::KwNone},
-    {"null", TokenType::KwNull},
+    {"nullptr", TokenType::KwNull},
     {"defer", TokenType::KwDefer},
     {"main", TokenType::KwMain},
     {"extern", TokenType::KwExtern},
@@ -225,9 +228,36 @@ Token Lexer::punctuation() {
       advance();
       return Token{TokenType::And, "&&", line, col};
     }
-    return Token{TokenType::Ampersand, "&", line, col};
-  case '~':
-    return Token{TokenType::Tilde, "~", line, col};
+    {
+      Token t{TokenType::Ampersand, "&", line, col};
+      if (match('#')) {
+        t.IsSwappablePtr = true;
+        t.Text += "#";
+      } else if (match('?')) {
+        t.HasNull = true;
+        t.Text += "?";
+      } else if (match('!')) {
+        t.IsSwappablePtr = true;
+        t.HasNull = true;
+        t.Text += "!";
+      }
+      return t;
+    }
+  case '~': {
+    Token t{TokenType::Tilde, "~", line, col};
+    if (match('#')) {
+      t.IsSwappablePtr = true;
+      t.Text += "#";
+    } else if (match('?')) {
+      t.HasNull = true;
+      t.Text += "?";
+    } else if (match('!')) {
+      t.IsSwappablePtr = true;
+      t.HasNull = true;
+      t.Text += "!";
+    }
+    return t;
+  }
   case '@':
     return Token{TokenType::At, "@", line, col};
   case '|':

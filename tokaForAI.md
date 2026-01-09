@@ -45,7 +45,7 @@ Compiler parser should treat these as reserved.
 **Type & Logic**
 - `as` (Cast), `is` (Type check), `in` (Membership/Iteration)
 - `self`, `Self`
-- `true`, `false`, `none`, `null`
+- `true`, `false`, `none`, `nullptr`
 - `defer`: Lazy initialization.
 - `main`: Entry point.
 
@@ -55,7 +55,7 @@ Compiler parser should treat these as reserved.
 - `{}`: Blocks, Scopes.
 - `^`: Pointer prefix (e.g., `^Person`).
 - `#`: **Write Token** (Writable Content / Swappable Address).
-- `?`: **Null Token** (Nullable: `none` for objects, `null` for pointers).
+- `?`: **Null Token** (Nullable: `none` for objects, `nullptr` for pointers).
 - `!`: **Write + Null Token** (Writable/Swappable + Nullable).
 - `$`: **None Token** (Immutable & Non-null), usually omitted.
 - **Literal Defaults**: 
@@ -342,9 +342,12 @@ Toka CodeGen implements the **Address Layering Protocol** to manage symbol resol
 ### 4.5 Memory Management Hooks (MAGIC)
 Toka delegates memory management to the standard library via specific "Magic Hooks".
 
-- **Allocation**: `auto *p = alloc T(...)` lowers to `__toka_alloc(sizeof(T))`.
-- **Deallocation**: `free *p` lowers to `__toka_free(*#p)`.
-    - **Crucial**: Notice that `free` passes the **Identity** with a mutable marker (`*#p`), allowing `__toka_free` to set the caller's pointer to `null` after freeing.
+- **Allocation**:
+    - `auto ^p = new T(...)`: For Smart Pointers (`^`, `~`). Memory is managed automatically.
+    - `auto *p = unsafe alloc T(...)`: For Raw Pointers (`*`). Memory must be managed manually.
+- **Deallocation**: 
+    - `free *p`: Explicitly release memory for **Raw Pointers** (`*`) only.
+    - **Crucial**: Notice that `free` handles the **Soul** address for deallocation. Manual `free` is forbidden for smart pointers (`^`, `~`) as the compiler inserts drop glue automatically.
 
 #### 4.5.1 C Interop (libc_ Prefix)
 The compiler follows a naming convention for C functions:

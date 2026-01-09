@@ -52,13 +52,17 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
   else
     std::cerr << "DEBUG: __toka_free FOUND: " << freeHook->getName().str()
               << "\n";
-  llvm::Value *ptrAddr = genAddr(fs->Expression.get());
+  llvm::Value *ptrAddr = nullptr;
+  if (auto *unary = dynamic_cast<const UnaryExpr *>(fs->Expression.get())) {
+    if (unary->Op == TokenType::Star) {
+      ptrAddr = emitHandleAddr(unary->RHS.get());
+    }
+  }
+
   if (!ptrAddr)
-    std::cerr << "DEBUG: genAddr returned NULL for free expression\n";
-  else
-    std::cerr << "DEBUG: genAddr returned value for free expression\n";
+    ptrAddr = genAddr(fs->Expression.get());
+
   if (freeHook && ptrAddr) {
-    std::cerr << "DEBUG: Generating call to __toka_free\n";
     llvm::Value *casted =
         m_Builder.CreateBitCast(ptrAddr, m_Builder.getPtrTy());
     m_Builder.CreateCall(freeHook, casted);
@@ -127,30 +131,18 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
   if (auto *var = dynamic_cast<const VariableExpr *>(expr)) {
     return getEntityAddr(var->Name);
   }
+
   if (auto *unary = dynamic_cast<const UnaryExpr *>(expr)) {
-    if (unary->Op == TokenType::Star || unary->Op == TokenType::Ampersand) {
+    if (unary->Op == TokenType::Ampersand) {
       if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-        return getIdentityAddr(v->Name); // Identity
-      }
-      if (auto *mem = dynamic_cast<const MemberExpr *>(unary->RHS.get())) {
-        // We want the field address (Identity target).
-        // For raw pointers, genAddr(mem) already returns the field address
-        // if it's NOT a pointer field, and it returns Slot A if it IS a
-        // pointer field. Wait, for Identity (*buf), we ALWAYS want the slot
-        // address. I have logic in genAddr(MemberExpr) for this if member
-        // starts with '*'. Temporary hack: use a modified member name without
-        // copying the whole object.
-        std::string originalMember = mem->Member;
-        const_cast<MemberExpr *>(mem)->Member = "*" + originalMember;
-        llvm::Value *res = genAddr(mem);
-        const_cast<MemberExpr *>(mem)->Member = originalMember;
-        return res;
+        return getIdentityAddr(v->Name); // &v -> Box address
       }
       return genAddr(unary->RHS.get());
-    } else if (unary->Op == TokenType::PlusPlus ||
-               unary->Op == TokenType::MinusMinus) {
-      // handled in genExpr? No, getting address of post increment result?
-      // Usually invalid lvalue unless reference.
+    }
+    if (unary->Op == TokenType::Star) {
+      // *p -> The Soul address of p.
+      // genAddr(p) already peels the onion to return the Soul address.
+      return genAddr(unary->RHS.get());
     }
   }
 
@@ -158,69 +150,95 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
     if (idxExpr->Indices.empty())
       return nullptr;
 
-    llvm::Value *arrAddr = emitEntityAddr(idxExpr->Array.get());
-    if (!arrAddr)
+    // 1. Identify the Array base variable
+    std::string baseName = "";
+    if (auto *v = dynamic_cast<const VariableExpr *>(idxExpr->Array.get())) {
+      baseName = v->Name;
+    }
+
+    // Scrub decorators
+    while (!baseName.empty() &&
+           (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
+            baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+      baseName = baseName.substr(1);
+    while (!baseName.empty() &&
+           (baseName.back() == '#' || baseName.back() == '?' ||
+            baseName.back() == '!'))
+      baseName.pop_back();
+
+    llvm::Value *indexValue = genExpr(idxExpr->Indices[0].get());
+    if (!indexValue)
       return nullptr;
 
-    llvm::Value *index = genExpr(idxExpr->Indices[0].get());
-    if (!index)
-      return nullptr;
+    auto it = m_Symbols.find(baseName);
+    if (it == m_Symbols.end()) {
+      // Fallback for non-variable bases (e.g., function returns)
+      llvm::Value *arrVal = emitEntityAddr(idxExpr->Array.get());
+      if (!arrVal)
+        return nullptr;
+      return m_Builder.CreateInBoundsGEP(m_Builder.getInt32Ty(), arrVal,
+                                         indexValue);
+    }
 
-    // Get soul type for GEP
-    llvm::Type *soulType = nullptr;
-    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(arrAddr)) {
-      soulType = alloca->getAllocatedType();
+    TokaSymbol &sym = it->second;
+    llvm::Value *currentBase = sym.allocaPtr;
+
+    // 2. The Radar Logic (Addressing Constitution)
+    if (sym.mode == AddressingMode::Direct) {
+      // Stack-allocated array [N]: Base is the Identity Slot itself
+      // Requires double-GEP: [0, index]
+      if (sym.llvmType->isArrayTy()) {
+        return m_Builder.CreateInBoundsGEP(sym.llvmType, currentBase,
+                                           {m_Builder.getInt32(0), indexValue});
+      }
+      return m_Builder.CreateInBoundsGEP(sym.llvmType, currentBase, indexValue);
     } else {
-      soulType = arrAddr->getType();
-    }
+      // Pointer or Reference: Peel the onion
+      // For Pointer, we need to load 'indirectionLevel' times to get to the
+      // Soul base.
+      // For Reference, it's basically load 1 time.
+      int loads = sym.indirectionLevel;
+      if (sym.mode == AddressingMode::Reference && loads == 0)
+        loads = 1;
 
-    if (soulType && soulType->isArrayTy()) {
-      return m_Builder.CreateInBoundsGEP(soulType, arrAddr,
-                                         {m_Builder.getInt32(0), index});
+      for (int i = 0; i < loads; ++i) {
+        currentBase = m_Builder.CreateLoad(m_Builder.getPtrTy(), currentBase,
+                                           baseName + ".deref_step");
+      }
+
+      // 3. Final GEP Calculation (Single-level for pointer-based arrays)
+      return m_Builder.CreateInBoundsGEP(sym.llvmType, currentBase, indexValue);
     }
-    return m_Builder.CreateInBoundsGEP(soulType, arrAddr, index);
   }
 
   if (auto *mem = dynamic_cast<const MemberExpr *>(expr)) {
-    llvm::Value *objAddr = nullptr;
+    llvm::Value *objAddr = emitEntityAddr(mem->Object.get());
+    if (!objAddr)
+      return nullptr;
+
     llvm::Type *objType = nullptr;
-
-    objAddr = emitEntityAddr(mem->Object.get());
-
-    if (auto *objVar = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
-      std::string baseName = objVar->Name;
-      while (!baseName.empty() &&
-             (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
-              baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!')) {
-        baseName = baseName.substr(1);
-      }
-      while (!baseName.empty() &&
-             (baseName.back() == '#' || baseName.back() == '?' ||
-              baseName.back() == '!')) {
-        baseName.pop_back();
-      }
-      if (m_Symbols.count(baseName)) {
-        objType = m_Symbols[baseName].llvmType;
+    if (auto *ptrTy = llvm::dyn_cast<llvm::PointerType>(objAddr->getType())) {
+      // Use the result element type of GEP if it came from one,
+      // or the allocated type if it's an alloca.
+      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
+        objType = alloca->getAllocatedType();
+      } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
+        objType = gep->getResultElementType();
+      } else if (auto *load = llvm::dyn_cast<llvm::LoadInst>(objAddr)) {
+        objType = load->getType();
       } else {
-        objType = m_ValueElementTypes[baseName];
-      }
-    } else {
-      if (objAddr) {
-        if (auto *ptrTy =
-                llvm::dyn_cast<llvm::PointerType>(objAddr->getType())) {
-          if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
-            objType = gep->getResultElementType();
-          } else if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
-            objType = alloca->getAllocatedType();
-          } else if (auto *load = llvm::dyn_cast<llvm::LoadInst>(objAddr)) {
-            objType = load->getType();
-          }
+        // Fallback: try element type discovery
+        if (auto *ve = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
+          std::string baseName = ve->Name;
+          while (
+              !baseName.empty() &&
+              (baseName[0] == '*' || baseName[0] == '&' || baseName[0] == '#'))
+            baseName = baseName.substr(1);
+          if (m_ValueElementTypes.count(baseName))
+            objType = m_ValueElementTypes[baseName];
         }
       }
     }
-
-    if (!objAddr)
-      return nullptr;
 
     int idx = -1;
     llvm::StructType *st = nullptr;
@@ -355,14 +373,24 @@ llvm::Value *CodeGen::getEntityAddr(const std::string &name) {
   }
 
   TokaSymbol &sym = it->second;
-  if (sym.isImplicitPtr || sym.isExplicitPtr) {
-    // Soul access: load the data pointer from the stack slot (Identity)
-    m_Builder.CreateIntrinsic(llvm::Intrinsic::donothing, {}, {}); // IR Marker
-    return m_Builder.CreateLoad(m_Builder.getPtrTy(), sym.allocaPtr,
-                                baseName + ".soul");
+  llvm::Value *current = sym.allocaPtr;
+
+  if (sym.mode == AddressingMode::Direct) {
+    // Regular variable: the alloca is the data address
+    return current;
   }
-  // Regular variable: the alloca is the data address
-  return sym.allocaPtr;
+
+  // Pointer or Reference: Peel the onion to find the Soul
+  int loads = sym.indirectionLevel;
+  if (sym.mode == AddressingMode::Reference)
+    loads = 1;
+
+  for (int i = 0; i < loads; ++i) {
+    current = m_Builder.CreateLoad(m_Builder.getPtrTy(), current,
+                                   baseName + ".soul_step");
+  }
+
+  return current;
 }
 
 llvm::Value *CodeGen::getIdentityAddr(const std::string &name) {
@@ -380,6 +408,7 @@ llvm::Value *CodeGen::getIdentityAddr(const std::string &name) {
   if (it == m_Symbols.end())
     return nullptr;
 
+  // The Identity is ALWAYS the allocaPtr (the box)
   return it->second.allocaPtr;
 }
 
@@ -396,6 +425,5 @@ llvm::Value *CodeGen::emitHandleAddr(const Expr *expr) {
   }
   return genAddr(expr);
 }
-
 
 } // namespace toka

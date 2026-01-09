@@ -23,12 +23,22 @@ class ShapeDecl;
 class ImplDecl;
 class MethodCallExpr;
 
+enum class AddressingMode {
+  Direct,   // Stack-allocated value (e.g. i32, Array [N])
+  Pointer,  // Explicit pointer (e.g. *i32, ^Point)
+  Reference // Implicit alias (&v)
+};
+
 struct TokaSymbol {
-  llvm::Value *allocaPtr; // Identity (alloca address)
-  llvm::Type *llvmType;   // Real logic type (e.g. Point struct)
-  bool isImplicitPtr;     // In-place capture / Captured Shape
-  bool isExplicitPtr;     // Unique/Shared/Raw pointer handled by user
-  bool isMutable;
+  llvm::Value *allocaPtr; // Identity (alloca address / Identity Slot)
+  llvm::Type *llvmType;   // Soul Type (e.g. Point struct)
+  AddressingMode mode;    // Tracking the addressing orbit
+  int indirectionLevel;   // Pointer depth (1 for *, 2 for **)
+  bool isRebindable;      // # (Identity mutability)
+  bool isContinuous;      // Pointing to a sequence (alloc [N])
+  bool isImplicitPtr;     // Legacy support (to be unified)
+  bool isExplicitPtr;     // Legacy support
+  bool isMutable;         // Entity mutability
 };
 
 class CodeGen {
@@ -128,6 +138,7 @@ private:
   llvm::Value *genForExpr(const ForExpr *expr);
   void genPatternBinding(const MatchArm::Pattern *pat, llvm::Value *targetAddr,
                          llvm::Type *targetType);
+  llvm::Value *genInitStructExpr(const InitStructExpr *expr);
   llvm::Value *genMethodCall(const MethodCallExpr *expr);
   llvm::Value *genCallExpr(const CallExpr *expr);
   llvm::Value *genPostfixExpr(const PostfixExpr *expr);

@@ -22,7 +22,7 @@ fn main() -> i32 {
 
     // 2. 数组分配与算术 (Array Alloc & Stride)
     // 根据 1.2: alloc [5]i32(0) 映射为 memset 0
-    auto *arr# = unsafe alloc [5]i32(0)
+    auto *arr# = (unsafe alloc [5]i32(0)) as *i32
     unsafe {
         arr#[0] = 10
         arr#[1] = 20
@@ -76,8 +76,8 @@ fn main() -> i32 {
 
     // 6. 空值检查 (Null Check)
     // 根据 7: *ptr == null 属于 SAFE
-    auto *empty = null
-    if null == *empty {
+    auto *empty = nullptr
+    if nullptr == *empty {
         println("Null pointer confirmed")
     }
 
