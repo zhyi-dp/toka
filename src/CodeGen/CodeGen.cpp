@@ -357,365 +357,21 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
   }
 
   if (auto *ret = dynamic_cast<const ReturnStmt *>(stmt)) {
-    llvm::Value *retVal = nullptr;
-    if (ret->ReturnValue) {
-      retVal = genExpr(ret->ReturnValue.get());
-      if (auto *varExpr =
-              dynamic_cast<const VariableExpr *>(ret->ReturnValue.get())) {
-        if (varExpr->IsUnique) {
-          if (m_Symbols.count(varExpr->Name)) {
-            llvm::Value *alloca = m_Symbols[varExpr->Name].allocaPtr;
-            if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(alloca)) {
-              m_Builder.CreateStore(
-                  llvm::Constant::getNullValue(ai->getAllocatedType()), alloca);
-            }
-          }
-        }
-      }
-    }
-
-    cleanupScopes(0);
-    if (retVal)
-      return m_Builder.CreateRet(retVal);
-    return m_Builder.CreateRetVoid();
+    return genReturnStmt(ret);
   } else if (auto *del = dynamic_cast<const DeleteStmt *>(stmt)) {
-    llvm::Function *freeFunc = m_Module->getFunction("free");
-    if (freeFunc) {
-      llvm::Value *val = genExpr(del->Expression.get());
-      if (val && val->getType()->isPointerTy()) {
-        llvm::Value *casted = m_Builder.CreateBitCast(
-            val,
-            llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
-        m_Builder.CreateCall(freeFunc, casted);
-      }
-    }
-    return nullptr;
+    return genDeleteStmt(del);
   } else if (auto *dest = dynamic_cast<const DestructuringDecl *>(stmt)) {
-    llvm::Value *initVal = genExpr(dest->Init.get());
-    if (!initVal)
-      return nullptr;
-
-    llvm::Type *srcTy = initVal->getType();
-    if (!srcTy->isStructTy()) {
-      error(dest, "Positional destructuring requires a struct or tuple type");
-      return nullptr;
-    }
-
-    auto *st = llvm::cast<llvm::StructType>(srcTy);
-    for (size_t i = 0; i < dest->Variables.size(); ++i) {
-      if (i >= st->getNumElements()) {
-        error(dest, "Too many variables in destructuring");
-        break;
-      }
-
-      const auto &v = dest->Variables[i];
-      std::string vName = v.Name;
-      while (!vName.empty() &&
-             (vName[0] == '*' || vName[0] == '#' || vName[0] == '&' ||
-              vName[0] == '^' || vName[0] == '~' || vName[0] == '!'))
-        vName = vName.substr(1);
-      while (!vName.empty() && (vName.back() == '#' || vName.back() == '?' ||
-                                vName.back() == '!'))
-        vName.pop_back();
-
-      llvm::Value *val = m_Builder.CreateExtractValue(initVal, i, vName);
-      llvm::Type *ty = val->getType();
-
-      llvm::AllocaInst *alloca = m_Builder.CreateAlloca(ty, nullptr, vName);
-      m_Builder.CreateStore(val, alloca);
-
-      m_NamedValues[vName] = alloca;
-      m_ValueTypes[vName] = ty;
-      m_ValueElementTypes[vName] = ty; // fallback for basic types
-      m_ValueIsMutable[vName] = v.IsMutable;
-      m_ValueIsNullable[vName] = v.IsNullable;
-
-      TokaSymbol sym;
-      sym.allocaPtr = alloca;
-      sym.llvmType = ty;
-      sym.isImplicitPtr = false;
-      sym.isExplicitPtr = false;
-      sym.isMutable = v.IsMutable;
-      m_Symbols[vName] = sym;
-
-      if (!m_ScopeStack.empty()) {
-        m_ScopeStack.back().push_back({v.Name, alloca, false, false});
-      }
-    }
-    return nullptr;
+    return genDestructuringDecl(dest);
   } else if (auto *var = dynamic_cast<const VariableDecl *>(stmt)) {
-    std::string varName = var->Name;
-    while (!varName.empty() &&
-           (varName[0] == '*' || varName[0] == '#' || varName[0] == '&' ||
-            varName[0] == '^' || varName[0] == '~' || varName[0] == '!'))
-      varName = varName.substr(1);
-    while (!varName.empty() && (varName.back() == '#' ||
-                                varName.back() == '?' || varName.back() == '!'))
-      varName.pop_back();
-
-    llvm::Value *initVal = nullptr;
-    if (var->Init) {
-      m_CFStack.push_back({varName, nullptr, nullptr, nullptr});
-      initVal = genExpr(var->Init.get());
-      m_CFStack.pop_back();
-      if (!initVal)
-        return nullptr;
-    }
-
-    llvm::Type *type = nullptr;
-    if (!var->TypeName.empty()) {
-      type = resolveType(var->TypeName, var->HasPointer || var->IsReference ||
-                                            var->IsUnique || var->IsShared);
-    } else if (initVal) {
-      type = initVal->getType();
-    }
-
-    llvm::Type *elemTy = nullptr;
-    std::string soulTypeName = var->TypeName;
-    if (!soulTypeName.empty()) {
-      // Strip ALL morphology to find the core Soul dimension
-      while (!soulTypeName.empty() &&
-             (soulTypeName[0] == '^' || soulTypeName[0] == '*' ||
-              soulTypeName[0] == '&' || soulTypeName[0] == '~')) {
-        soulTypeName = soulTypeName.substr(1);
-      }
-      elemTy = resolveType(soulTypeName, false);
-    } else if (initVal) {
-      if (auto *ve = dynamic_cast<const VariableExpr *>(var->Init.get())) {
-        elemTy = m_ValueElementTypes[ve->Name];
-      } else if (auto *ae =
-                     dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
-        if (auto *vae =
-                dynamic_cast<const VariableExpr *>(ae->Expression.get()))
-          elemTy = m_ValueElementTypes[vae->Name];
-      } else if (auto *allocExpr =
-                     dynamic_cast<const AllocExpr *>(var->Init.get())) {
-        // auto *p = alloc Point(...) -> elemTy should be Point
-        elemTy = resolveType(allocExpr->TypeName, false);
-      } else if (auto *newExpr =
-                     dynamic_cast<const NewExpr *>(var->Init.get())) {
-        elemTy = resolveType(newExpr->Type, false);
-      } else if (auto *cast = dynamic_cast<const CastExpr *>(var->Init.get())) {
-        std::string tn = cast->TargetType;
-        while (!tn.empty() &&
-               (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
-          tn = tn.substr(1);
-        elemTy = resolveType(tn, false);
-      } else if (auto *call = dynamic_cast<const CallExpr *>(var->Init.get())) {
-        std::string retTypeName;
-        if (m_Functions.count(call->Callee)) {
-          retTypeName = m_Functions[call->Callee]->ReturnType;
-        } else if (m_Externs.count(call->Callee)) {
-          retTypeName = m_Externs[call->Callee]->ReturnType;
-        }
-
-        if (!retTypeName.empty()) {
-          std::string tn = retTypeName;
-          while (!tn.empty() &&
-                 (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
-            tn = tn.substr(1);
-          elemTy = resolveType(tn, false);
-        }
-      } else if (initVal->getType()->isPointerTy()) {
-        // Fallback: use the value type itself as elem
-        elemTy = initVal->getType();
-      }
-    }
-
-    if (!elemTy) {
-      if (initVal)
-        elemTy = initVal->getType();
-      else
-        elemTy = llvm::Type::getInt32Ty(m_Context);
-    }
-
-    // Ensure m_ValueElementTypes is set early
-    m_ValueElementTypes[varName] = elemTy;
-    m_ValueTypeNames[varName] = var->TypeName;
-
-    // The Form (Identity) is always what resolveType returns for the full name
-    if (!type) { // Only try to resolve if type hasn't been determined yet
-      type = resolveType(var->TypeName, var->HasPointer || var->IsUnique ||
-                                            var->IsShared || var->IsReference);
-    }
-    if (!type && initVal)
-      type = initVal->getType();
-
-    // CRITICAL: For Shared variables, ALWAYS use the handle struct { ptr, ptr
-    // }, regardless of what resolveType returned. This ensures all Shared
-    // variables have consistent memory layout with ref counting support.
-    if (var->IsShared) {
-      llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
-      llvm::Type *refTy =
-          llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
-      type = llvm::StructType::get(m_Context, {ptrTy, refTy});
-    } else if (var->IsUnique && (!type || !type->isPointerTy())) {
-      // Unique variables must be pointers, never raw Soul types
-      type = llvm::PointerType::getUnqual(elemTy);
-    } else if (!type) {
-      // Regular variables use the Soul type directly
-      type = elemTy;
-    }
-
-    if (!type) {
-      error(var, "Cannot infer type for variable '" + varName + "'");
-      return nullptr;
-    }
-
-    if (var->Init && initVal) {
-      // Move Semantics for Unique
-      if (var->IsUnique) {
-        const VariableExpr *ve =
-            dynamic_cast<const VariableExpr *>(var->Init.get());
-        if (!ve) {
-          if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
-            if (ue->Op == TokenType::Caret)
-              ve = dynamic_cast<const VariableExpr *>(ue->RHS.get());
-          }
-        }
-        if (ve) {
-          // Stripping logic for unique variable lookup could be added here if
-          // needed, but m_NamedValues should have stripped keys now.
-          std::string veName = ve->Name;
-          while (!veName.empty() &&
-                 (veName[0] == '*' || veName[0] == '#' || veName[0] == '&' ||
-                  veName[0] == '^' || veName[0] == '~' || veName[0] == '!'))
-            veName = veName.substr(1);
-          while (!veName.empty() &&
-                 (veName.back() == '#' || veName.back() == '?' ||
-                  veName.back() == '!'))
-            veName.pop_back();
-
-          if (m_ValueIsUnique[veName]) {
-            llvm::Value *s = m_NamedValues[veName];
-            if (s && llvm::isa<llvm::AllocaInst>(s))
-              m_Builder.CreateStore(
-                  llvm::Constant::getNullValue(
-                      llvm::cast<llvm::AllocaInst>(s)->getAllocatedType()),
-                  s);
-          }
-        }
-      } else if (var->IsShared) {
-        // Shared Semantics: Incref or Promote
-        if (initVal->getType()->isStructTy() &&
-            initVal->getType()->getStructNumElements() == 2) {
-          llvm::Value *ref = m_Builder.CreateExtractValue(initVal, 1);
-          llvm::Value *c = m_Builder.CreateLoad(
-              llvm::Type::getInt32Ty(m_Context), ref, "ref_count");
-          llvm::Value *inc = m_Builder.CreateAdd(
-              c, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-          m_Builder.CreateStore(inc, ref);
-        } else if (initVal->getType()->isPointerTy()) {
-          llvm::Function *mallocFn = m_Module->getFunction("malloc");
-          if (mallocFn) {
-            llvm::Value *size =
-                llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 4);
-            llvm::Value *refPtr = m_Builder.CreateCall(mallocFn, size);
-            refPtr = m_Builder.CreateBitCast(
-                refPtr, llvm::PointerType::getUnqual(
-                            llvm::Type::getInt32Ty(m_Context)));
-            m_Builder.CreateStore(
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1),
-                refPtr);
-            llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
-            llvm::Type *refTy =
-                llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
-            llvm::StructType *st =
-                llvm::StructType::get(m_Context, {ptrTy, refTy});
-            llvm::Value *u = llvm::UndefValue::get(st);
-            llvm::Value *ci = m_Builder.CreateBitCast(initVal, ptrTy);
-            initVal = m_Builder.CreateInsertValue(
-                m_Builder.CreateInsertValue(u, ci, 0), refPtr, 1);
-            type = st;
-          }
-        }
-      }
-    }
-
-    llvm::AllocaInst *alloca = m_Builder.CreateAlloca(type, nullptr, varName);
-
-    TokaSymbol sym;
-    sym.allocaPtr = alloca;
-    sym.llvmType = elemTy;
-    sym.isImplicitPtr = false;
-    sym.isExplicitPtr =
-        var->HasPointer || var->IsUnique || var->IsShared || var->IsReference;
-    sym.isMutable = var->IsMutable;
-    m_Symbols[varName] = sym;
-
-    m_NamedValues[varName] = alloca;
-    m_ValueTypes[varName] = type;
-    m_ValueIsUnique[varName] = var->IsUnique;
-    m_ValueIsShared[varName] = var->IsShared;
-    m_ValueIsReference[varName] = var->IsReference;
-    m_ValueIsMutable[varName] = var->IsMutable;
-
-    if (initVal) {
-      if (initVal->getType() != type) {
-        if (initVal->getType()->isPointerTy() && type->isPointerTy()) {
-          initVal = m_Builder.CreateBitCast(initVal, type);
-        } else if (initVal->getType()->isPointerTy() && !type->isPointerTy()) {
-          initVal = m_Builder.CreateLoad(type, initVal);
-        } else if (initVal->getType()->isIntegerTy() && type->isIntegerTy()) {
-          initVal = m_Builder.CreateIntCast(initVal, type, true);
-        } else {
-          std::string s1 = "Unknown", s2 = "Unknown";
-          if (type) {
-            llvm::raw_string_ostream os1(s1);
-            type->print(os1);
-          }
-          if (initVal) {
-            llvm::raw_string_ostream os2(s2);
-            initVal->getType()->print(os2);
-          }
-          error(var, "Internal Error: Type mismatch in VariableDecl despite "
-                     "Sema: Expected " +
-                         s1 + ", Got " + s2);
-          return nullptr;
-        }
-      }
-      m_Builder.CreateStore(initVal, alloca);
-    }
+    return genVariableDecl(var);
   } else if (auto *bs = dynamic_cast<const BlockStmt *>(stmt)) {
-    m_ScopeStack.push_back({});
-    llvm::Value *lastVal = nullptr;
-    for (const auto &s : bs->Statements) {
-      lastVal = genStmt(s.get());
-      // Liveness check: stop if terminator was generated
-      if (m_Builder.GetInsertBlock() &&
-          m_Builder.GetInsertBlock()->getTerminator())
-        break;
-    }
-
-    if (m_ScopeStack.empty())
-      return lastVal;
-
-    cleanupScopes(m_ScopeStack.size() - 1);
-    m_ScopeStack.pop_back();
-    return lastVal;
+    return genBlockStmt(bs);
   } else if (auto *me = dynamic_cast<const MatchExpr *>(stmt)) {
     return genMatchExpr(me);
   } else if (auto *us = dynamic_cast<const UnsafeStmt *>(stmt)) {
     return genStmt(us->Statement.get());
   } else if (auto *fs = dynamic_cast<const FreeStmt *>(stmt)) {
-    llvm::Function *freeHook = m_Module->getFunction("__toka_free");
-    if (!freeHook)
-      std::cerr << "DEBUG: __toka_free NOT FOUND in module\n";
-    else
-      std::cerr << "DEBUG: __toka_free FOUND: " << freeHook->getName().str()
-                << "\n";
-    llvm::Value *ptrAddr = genAddr(fs->Expression.get());
-    if (!ptrAddr)
-      std::cerr << "DEBUG: genAddr returned NULL for free expression\n";
-    else
-      std::cerr << "DEBUG: genAddr returned value for free expression\n";
-    if (freeHook && ptrAddr) {
-      std::cerr << "DEBUG: Generating call to __toka_free\n";
-      llvm::Value *casted =
-          m_Builder.CreateBitCast(ptrAddr, m_Builder.getPtrTy());
-      m_Builder.CreateCall(freeHook, casted);
-    }
-    return nullptr;
+    return genFreeStmt(fs);
   } else if (auto *es = dynamic_cast<const ExprStmt *>(stmt)) {
     return genExpr(es->Expression.get());
   }
@@ -3455,5 +3111,371 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
   }
 
   return m_Builder.CreateCall(callee, args);
+}
+
+llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
+  llvm::Value *retVal = nullptr;
+  if (ret->ReturnValue) {
+    retVal = genExpr(ret->ReturnValue.get());
+    if (auto *varExpr =
+            dynamic_cast<const VariableExpr *>(ret->ReturnValue.get())) {
+      if (varExpr->IsUnique) {
+        if (m_Symbols.count(varExpr->Name)) {
+          llvm::Value *alloca = m_Symbols[varExpr->Name].allocaPtr;
+          if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(alloca)) {
+            m_Builder.CreateStore(
+                llvm::Constant::getNullValue(ai->getAllocatedType()), alloca);
+          }
+        }
+      }
+    }
+  }
+
+  cleanupScopes(0);
+  if (retVal)
+    return m_Builder.CreateRet(retVal);
+  return m_Builder.CreateRetVoid();
+}
+
+llvm::Value *CodeGen::genBlockStmt(const BlockStmt *bs) {
+  m_ScopeStack.push_back({});
+  llvm::Value *lastVal = nullptr;
+  for (const auto &s : bs->Statements) {
+    lastVal = genStmt(s.get());
+    // Liveness check: stop if terminator was generated
+    if (m_Builder.GetInsertBlock() &&
+        m_Builder.GetInsertBlock()->getTerminator())
+      break;
+  }
+
+  if (m_ScopeStack.empty())
+    return lastVal;
+
+  cleanupScopes(m_ScopeStack.size() - 1);
+  m_ScopeStack.pop_back();
+  return lastVal;
+}
+
+llvm::Value *CodeGen::genDeleteStmt(const DeleteStmt *del) {
+  llvm::Function *freeFunc = m_Module->getFunction("free");
+  if (freeFunc) {
+    llvm::Value *val = genExpr(del->Expression.get());
+    if (val && val->getType()->isPointerTy()) {
+      llvm::Value *casted = m_Builder.CreateBitCast(
+          val, llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+      m_Builder.CreateCall(freeFunc, casted);
+    }
+  }
+  return nullptr;
+}
+
+llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
+  llvm::Function *freeHook = m_Module->getFunction("__toka_free");
+  if (!freeHook)
+    std::cerr << "DEBUG: __toka_free NOT FOUND in module\n";
+  else
+    std::cerr << "DEBUG: __toka_free FOUND: " << freeHook->getName().str()
+              << "\n";
+  llvm::Value *ptrAddr = genAddr(fs->Expression.get());
+  if (!ptrAddr)
+    std::cerr << "DEBUG: genAddr returned NULL for free expression\n";
+  else
+    std::cerr << "DEBUG: genAddr returned value for free expression\n";
+  if (freeHook && ptrAddr) {
+    std::cerr << "DEBUG: Generating call to __toka_free\n";
+    llvm::Value *casted =
+        m_Builder.CreateBitCast(ptrAddr, m_Builder.getPtrTy());
+    m_Builder.CreateCall(freeHook, casted);
+  }
+  return nullptr;
+}
+
+llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
+  llvm::Value *initVal = genExpr(dest->Init.get());
+  if (!initVal)
+    return nullptr;
+
+  llvm::Type *srcTy = initVal->getType();
+  if (!srcTy->isStructTy()) {
+    error(dest, "Positional destructuring requires a struct or tuple type");
+    return nullptr;
+  }
+
+  auto *st = llvm::cast<llvm::StructType>(srcTy);
+  for (size_t i = 0; i < dest->Variables.size(); ++i) {
+    if (i >= st->getNumElements()) {
+      error(dest, "Too many variables in destructuring");
+      break;
+    }
+
+    const auto &v = dest->Variables[i];
+    std::string vName = v.Name;
+    while (!vName.empty() &&
+           (vName[0] == '*' || vName[0] == '#' || vName[0] == '&' ||
+            vName[0] == '^' || vName[0] == '~' || vName[0] == '!'))
+      vName = vName.substr(1);
+    while (!vName.empty() &&
+           (vName.back() == '#' || vName.back() == '?' || vName.back() == '!'))
+      vName.pop_back();
+
+    llvm::Value *val = m_Builder.CreateExtractValue(initVal, i, vName);
+    llvm::Type *ty = val->getType();
+
+    llvm::AllocaInst *alloca = m_Builder.CreateAlloca(ty, nullptr, vName);
+    m_Builder.CreateStore(val, alloca);
+
+    m_NamedValues[vName] = alloca;
+    m_ValueTypes[vName] = ty;
+    m_ValueElementTypes[vName] = ty; // fallback for basic types
+    m_ValueIsMutable[vName] = v.IsMutable;
+    m_ValueIsNullable[vName] = v.IsNullable;
+
+    TokaSymbol sym;
+    sym.allocaPtr = alloca;
+    sym.llvmType = ty;
+    sym.isImplicitPtr = false;
+    sym.isExplicitPtr = false;
+    sym.isMutable = v.IsMutable;
+    m_Symbols[vName] = sym;
+
+    if (!m_ScopeStack.empty()) {
+      m_ScopeStack.back().push_back({v.Name, alloca, false, false});
+    }
+  }
+  return nullptr;
+}
+
+llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
+  std::string varName = var->Name;
+  while (!varName.empty() &&
+         (varName[0] == '*' || varName[0] == '#' || varName[0] == '&' ||
+          varName[0] == '^' || varName[0] == '~' || varName[0] == '!'))
+    varName = varName.substr(1);
+  while (!varName.empty() && (varName.back() == '#' || varName.back() == '?' ||
+                              varName.back() == '!'))
+    varName.pop_back();
+
+  llvm::Value *initVal = nullptr;
+  if (var->Init) {
+    m_CFStack.push_back({varName, nullptr, nullptr, nullptr});
+    initVal = genExpr(var->Init.get());
+    m_CFStack.pop_back();
+    if (!initVal)
+      return nullptr;
+  }
+
+  llvm::Type *type = nullptr;
+  if (!var->TypeName.empty()) {
+    type = resolveType(var->TypeName, var->HasPointer || var->IsReference ||
+                                          var->IsUnique || var->IsShared);
+  } else if (initVal) {
+    type = initVal->getType();
+  }
+
+  llvm::Type *elemTy = nullptr;
+  std::string soulTypeName = var->TypeName;
+  if (!soulTypeName.empty()) {
+    // Strip ALL morphology to find the core Soul dimension
+    while (!soulTypeName.empty() &&
+           (soulTypeName[0] == '^' || soulTypeName[0] == '*' ||
+            soulTypeName[0] == '&' || soulTypeName[0] == '~')) {
+      soulTypeName = soulTypeName.substr(1);
+    }
+    elemTy = resolveType(soulTypeName, false);
+  } else if (initVal) {
+    if (auto *ve = dynamic_cast<const VariableExpr *>(var->Init.get())) {
+      elemTy = m_ValueElementTypes[ve->Name];
+    } else if (auto *ae =
+                   dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
+      if (auto *vae = dynamic_cast<const VariableExpr *>(ae->Expression.get()))
+        elemTy = m_ValueElementTypes[vae->Name];
+    } else if (auto *allocExpr =
+                   dynamic_cast<const AllocExpr *>(var->Init.get())) {
+      // auto *p = alloc Point(...) -> elemTy should be Point
+      elemTy = resolveType(allocExpr->TypeName, false);
+    } else if (auto *newExpr = dynamic_cast<const NewExpr *>(var->Init.get())) {
+      elemTy = resolveType(newExpr->Type, false);
+    } else if (auto *cast = dynamic_cast<const CastExpr *>(var->Init.get())) {
+      std::string tn = cast->TargetType;
+      while (!tn.empty() &&
+             (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
+        tn = tn.substr(1);
+      elemTy = resolveType(tn, false);
+    } else if (auto *call = dynamic_cast<const CallExpr *>(var->Init.get())) {
+      std::string retTypeName;
+      if (m_Functions.count(call->Callee)) {
+        retTypeName = m_Functions[call->Callee]->ReturnType;
+      } else if (m_Externs.count(call->Callee)) {
+        retTypeName = m_Externs[call->Callee]->ReturnType;
+      }
+
+      if (!retTypeName.empty()) {
+        std::string tn = retTypeName;
+        while (!tn.empty() &&
+               (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
+          tn = tn.substr(1);
+        elemTy = resolveType(tn, false);
+      }
+    } else if (initVal->getType()->isPointerTy()) {
+      // Fallback: use the value type itself as elem
+      elemTy = initVal->getType();
+    }
+  }
+
+  if (!elemTy) {
+    if (initVal)
+      elemTy = initVal->getType();
+    else
+      elemTy = llvm::Type::getInt32Ty(m_Context);
+  }
+
+  // Ensure m_ValueElementTypes is set early
+  m_ValueElementTypes[varName] = elemTy;
+  m_ValueTypeNames[varName] = var->TypeName;
+
+  // The Form (Identity) is always what resolveType returns for the full name
+  if (!type) { // Only try to resolve if type hasn't been determined yet
+    type = resolveType(var->TypeName, var->HasPointer || var->IsUnique ||
+                                          var->IsShared || var->IsReference);
+  }
+  if (!type && initVal)
+    type = initVal->getType();
+
+  // CRITICAL: For Shared variables, ALWAYS use the handle struct { ptr, ptr
+  // }, regardless of what resolveType returned. This ensures all Shared
+  // variables have consistent memory layout with ref counting support.
+  if (var->IsShared) {
+    llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
+    llvm::Type *refTy =
+        llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+    type = llvm::StructType::get(m_Context, {ptrTy, refTy});
+  } else if (var->IsUnique && (!type || !type->isPointerTy())) {
+    // Unique variables must be pointers, never raw Soul types
+    type = llvm::PointerType::getUnqual(elemTy);
+  } else if (!type) {
+    // Regular variables use the Soul type directly
+    type = elemTy;
+  }
+
+  if (!type) {
+    error(var, "Cannot infer type for variable '" + varName + "'");
+    return nullptr;
+  }
+
+  if (var->Init && initVal) {
+    // Move Semantics for Unique
+    if (var->IsUnique) {
+      const VariableExpr *ve =
+          dynamic_cast<const VariableExpr *>(var->Init.get());
+      if (!ve) {
+        if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
+          if (ue->Op == TokenType::Caret)
+            ve = dynamic_cast<const VariableExpr *>(ue->RHS.get());
+        }
+      }
+      if (ve) {
+        // Stripping logic for unique variable lookup could be added here if
+        // needed, but m_NamedValues should have stripped keys now.
+        std::string veName = ve->Name;
+        while (!veName.empty() &&
+               (veName[0] == '*' || veName[0] == '#' || veName[0] == '&' ||
+                veName[0] == '^' || veName[0] == '~' || veName[0] == '!'))
+          veName = veName.substr(1);
+        while (!veName.empty() &&
+               (veName.back() == '#' || veName.back() == '?' ||
+                veName.back() == '!'))
+          veName.pop_back();
+
+        if (m_ValueIsUnique[veName]) {
+          llvm::Value *s = m_NamedValues[veName];
+          if (s && llvm::isa<llvm::AllocaInst>(s))
+            m_Builder.CreateStore(
+                llvm::Constant::getNullValue(
+                    llvm::cast<llvm::AllocaInst>(s)->getAllocatedType()),
+                s);
+        }
+      }
+    } else if (var->IsShared) {
+      // Shared Semantics: Incref or Promote
+      if (initVal->getType()->isStructTy() &&
+          initVal->getType()->getStructNumElements() == 2) {
+        llvm::Value *ref = m_Builder.CreateExtractValue(initVal, 1);
+        llvm::Value *c = m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context),
+                                              ref, "ref_count");
+        llvm::Value *inc = m_Builder.CreateAdd(
+            c, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+        m_Builder.CreateStore(inc, ref);
+      } else if (initVal->getType()->isPointerTy()) {
+        llvm::Function *mallocFn = m_Module->getFunction("malloc");
+        if (mallocFn) {
+          llvm::Value *size =
+              llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 4);
+          llvm::Value *refPtr = m_Builder.CreateCall(mallocFn, size);
+          refPtr = m_Builder.CreateBitCast(
+              refPtr,
+              llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context)));
+          m_Builder.CreateStore(
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1),
+              refPtr);
+          llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
+          llvm::Type *refTy =
+              llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+          llvm::StructType *st =
+              llvm::StructType::get(m_Context, {ptrTy, refTy});
+          llvm::Value *u = llvm::UndefValue::get(st);
+          llvm::Value *ci = m_Builder.CreateBitCast(initVal, ptrTy);
+          initVal = m_Builder.CreateInsertValue(
+              m_Builder.CreateInsertValue(u, ci, 0), refPtr, 1);
+          type = st;
+        }
+      }
+    }
+  }
+
+  llvm::AllocaInst *alloca = m_Builder.CreateAlloca(type, nullptr, varName);
+
+  TokaSymbol sym;
+  sym.allocaPtr = alloca;
+  sym.llvmType = elemTy;
+  sym.isImplicitPtr = false;
+  sym.isExplicitPtr =
+      var->HasPointer || var->IsUnique || var->IsShared || var->IsReference;
+  sym.isMutable = var->IsMutable;
+  m_Symbols[varName] = sym;
+
+  m_NamedValues[varName] = alloca;
+  m_ValueTypes[varName] = type;
+  m_ValueIsUnique[varName] = var->IsUnique;
+  m_ValueIsShared[varName] = var->IsShared;
+  m_ValueIsReference[varName] = var->IsReference;
+  m_ValueIsMutable[varName] = var->IsMutable;
+
+  if (initVal) {
+    if (initVal->getType() != type) {
+      if (initVal->getType()->isPointerTy() && type->isPointerTy()) {
+        initVal = m_Builder.CreateBitCast(initVal, type);
+      } else if (initVal->getType()->isPointerTy() && !type->isPointerTy()) {
+        initVal = m_Builder.CreateLoad(type, initVal);
+      } else if (initVal->getType()->isIntegerTy() && type->isIntegerTy()) {
+        initVal = m_Builder.CreateIntCast(initVal, type, true);
+      } else {
+        std::string s1 = "Unknown", s2 = "Unknown";
+        if (type) {
+          llvm::raw_string_ostream os1(s1);
+          type->print(os1);
+        }
+        if (initVal) {
+          llvm::raw_string_ostream os2(s2);
+          initVal->getType()->print(os2);
+        }
+        error(var, "Internal Error: Type mismatch in VariableDecl despite "
+                   "Sema: Expected " +
+                       s1 + ", Got " + s2);
+        return nullptr;
+      }
+    }
+    m_Builder.CreateStore(initVal, alloca);
+  }
+  return nullptr;
 }
 } // namespace toka

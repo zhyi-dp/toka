@@ -129,6 +129,12 @@ private:
   void genPatternBinding(const MatchArm::Pattern *pat, llvm::Value *targetAddr,
                          llvm::Type *targetType);
   llvm::Value *genMethodCall(const MethodCallExpr *expr);
+  llvm::Value *genReturnStmt(const ReturnStmt *stmt);
+  llvm::Value *genBlockStmt(const BlockStmt *stmt);
+  llvm::Value *genVariableDecl(const VariableDecl *stmt);
+  llvm::Value *genDestructuringDecl(const DestructuringDecl *stmt);
+  llvm::Value *genDeleteStmt(const DeleteStmt *stmt);
+  llvm::Value *genFreeStmt(const FreeStmt *stmt);
 };
 
 } // namespace toka
