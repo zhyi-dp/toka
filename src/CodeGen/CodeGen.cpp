@@ -733,23 +733,8 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       m_Builder.GetInsertBlock()->getTerminator())
     return nullptr;
 
-  if (auto *num = dynamic_cast<const NumberExpr *>(expr)) {
-    return llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context),
-                                  num->Value);
-  }
-  if (auto *flt = dynamic_cast<const FloatExpr *>(expr)) {
-    return llvm::ConstantFP::get(llvm::Type::getDoubleTy(m_Context),
-                                 flt->Value);
-  }
-  if (auto *bl = dynamic_cast<const BoolExpr *>(expr)) {
-    return llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), bl->Value);
-  }
-  if (dynamic_cast<const NullExpr *>(expr) ||
-      dynamic_cast<const NoneExpr *>(expr)) {
-    return llvm::ConstantPointerNull::get(llvm::PointerType::get(m_Context, 0));
-  }
-  if (auto *str = dynamic_cast<const StringExpr *>(expr)) {
-    return m_Builder.CreateGlobalStringPtr(str->Value);
+  if (auto *val = genLiteralExpr(expr)) {
+    return val;
   }
 
   if (auto *ie = dynamic_cast<const IfExpr *>(expr)) {
@@ -1075,42 +1060,7 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
   }
 
   if (auto *ae = dynamic_cast<const AllocExpr *>(expr)) {
-    llvm::Function *allocHook = m_Module->getFunction("__toka_alloc");
-    if (!allocHook) {
-      // Declare it if not present
-      llvm::Type *sizeTy = llvm::Type::getInt64Ty(m_Context);
-      llvm::Type *retTy =
-          llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context));
-      llvm::FunctionType *ft = llvm::FunctionType::get(retTy, {sizeTy}, false);
-      allocHook = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
-                                         "__toka_alloc", m_Module.get());
-    }
-
-    llvm::Type *elemTy = resolveType(ae->TypeName, false);
-    llvm::DataLayout dl(m_Module.get());
-    uint64_t size = dl.getTypeAllocSize(elemTy);
-    llvm::Value *sizeVal =
-        llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), size);
-
-    if (ae->IsArray && ae->ArraySize) {
-      llvm::Value *count = genExpr(ae->ArraySize.get());
-      count = m_Builder.CreateIntCast(count, llvm::Type::getInt64Ty(m_Context),
-                                      false);
-      sizeVal = m_Builder.CreateMul(sizeVal, count);
-    }
-
-    llvm::Value *rawPtr = m_Builder.CreateCall(allocHook, sizeVal);
-    llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
-    llvm::Value *castedPtr = m_Builder.CreateBitCast(rawPtr, ptrTy);
-
-    if (ae->Initializer) {
-      // For now ignore initializer logic for malloc or handle struct init
-      // We assume InitStructExpr is handled separately but if we have new
-      // Struct { ... } We need to store it to malloc'd memory
-      llvm::Value *initVal = genExpr(ae->Initializer.get());
-      m_Builder.CreateStore(initVal, castedPtr);
-    }
-    return castedPtr;
+    return genAllocExpr(ae);
   }
 
   if (auto *ce = dynamic_cast<const ContinueExpr *>(expr)) {
@@ -1736,554 +1686,17 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     return m_Builder.CreateCall(callee, argsV);
   }
   if (auto *var = dynamic_cast<const VariableExpr *>(expr)) {
-    llvm::Value *soulAddr = getEntityAddr(var->Name);
-    if (!soulAddr) {
-      return nullptr;
-    }
-
-    // Get the base name (no morphology) for symbol lookup
-    std::string baseName = var->Name;
-    while (!baseName.empty() &&
-           (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
-            baseName[0] == '^' || baseName[0] == '~'))
-      baseName = baseName.substr(1);
-    while (!baseName.empty() &&
-           (baseName.back() == '#' || baseName.back() == '?' ||
-            baseName.back() == '!'))
-      baseName.pop_back();
-
-    llvm::Type *soulType = nullptr;
-    if (m_Symbols.count(baseName)) {
-      soulType = m_Symbols[baseName].llvmType;
-    } else {
-      // Fallback for globals/externs
-      if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(soulAddr)) {
-        soulType = ai->getAllocatedType();
-      } else if (auto *li = llvm::dyn_cast<llvm::LoadInst>(soulAddr)) {
-        soulType = li->getType();
-      } else if (auto *gv = llvm::dyn_cast<llvm::GlobalVariable>(soulAddr)) {
-        soulType = gv->getValueType();
-      }
-    }
-
-    if (!soulType)
-      return nullptr;
-
-    return m_Builder.CreateLoad(soulType, soulAddr, var->Name);
+    return genVariableExpr(var);
   }
-  if (auto *bin = dynamic_cast<const BinaryExpr *>(expr)) {
-    if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" ||
-        bin->Op == "*=" || bin->Op == "/=") {
-      llvm::Value *ptr = genAddr(bin->LHS.get());
-      if (!ptr) {
-        return nullptr;
-      }
-
-      if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-        if (!m_ValueIsMutable[varLHS->Name]) {
-          error(bin, "Cannot mutate immutable variable '" + varLHS->Name + "'");
-          return nullptr;
-        }
-        if (!varLHS->IsMutable) {
-          error(bin,
-                "Missing '#' token for mutation of '" + varLHS->Name + "'");
-          return nullptr;
-        }
-      }
-
-      llvm::Value *rhsVal = genExpr(bin->RHS.get());
-      if (!rhsVal)
-        return nullptr;
-
-      llvm::Type *destType = nullptr;
-      if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-        std::string baseName = varLHS->Name;
-        while (!baseName.empty() &&
-               (baseName[0] == '*' || baseName[0] == '#' ||
-                baseName[0] == '&' || baseName[0] == '^' ||
-                baseName[0] == '~' || baseName[0] == '!')) {
-          baseName = baseName.substr(1);
-        }
-        while (!baseName.empty() &&
-               (baseName.back() == '#' || baseName.back() == '?' ||
-                baseName.back() == '!')) {
-          baseName.pop_back();
-        }
-
-        if (m_ValueIsReference[baseName])
-          destType = m_ValueElementTypes[baseName];
-        else
-          destType = m_ValueTypes[baseName];
-      } else if (auto *memLHS =
-                     dynamic_cast<const MemberExpr *>(bin->LHS.get())) {
-        // Find struct type and field index to get destType
-        llvm::Value *objAddr = nullptr;
-        llvm::Type *objType = nullptr;
-
-        // Helper to get base variable name from expression
-        std::function<std::string(const Expr *)> getBaseName =
-            [&](const Expr *e) -> std::string {
-          if (auto *v = dynamic_cast<const VariableExpr *>(e)) {
-            return v->Name;
-          } else if (auto *p = dynamic_cast<const PostfixExpr *>(e)) {
-            return getBaseName(p->LHS.get());
-          } else if (auto *u = dynamic_cast<const UnaryExpr *>(e)) {
-            // Handle *ptr or &ptr if needed, though usually MemberExpr object
-            // is simple
-            return getBaseName(u->RHS.get());
-          }
-          return "";
-        };
-
-        std::string baseName = getBaseName(memLHS->Object.get());
-
-        // Clean up morphology decorators
-        while (!baseName.empty() &&
-               (baseName[0] == '*' || baseName[0] == '#' ||
-                baseName[0] == '&' || baseName[0] == '^' ||
-                baseName[0] == '~' || baseName[0] == '!')) {
-          baseName = baseName.substr(1);
-        }
-        while (!baseName.empty() &&
-               (baseName.back() == '#' || baseName.back() == '?' ||
-                baseName.back() == '!')) {
-          baseName.pop_back();
-        }
-
-        if (!baseName.empty() && m_ValueElementTypes.count(baseName)) {
-          objType = m_ValueElementTypes[baseName];
-        } else {
-          objType = genExpr(memLHS->Object.get())->getType();
-        }
-
-        if (objType && objType->isStructTy()) {
-          llvm::StructType *st = llvm::cast<llvm::StructType>(objType);
-          std::string memberName = memLHS->Member;
-          while (!memberName.empty() &&
-                 (memberName[0] == '^' || memberName[0] == '*' ||
-                  memberName[0] == '&' || memberName[0] == '#' ||
-                  memberName[0] == '~' || memberName[0] == '!')) {
-            memberName = memberName.substr(1);
-          }
-
-          std::string stName = m_TypeToName[st];
-
-          if (!stName.empty()) {
-            auto &fields = m_StructFieldNames[stName];
-
-            for (int i = 0; i < (int)fields.size(); ++i) {
-              std::string fn = fields[i];
-
-              while (!fn.empty() &&
-                     (fn[0] == '^' || fn[0] == '*' || fn[0] == '&' ||
-                      fn[0] == '#' || fn[0] == '~' || fn[0] == '!')) {
-                fn = fn.substr(1);
-              }
-              while (!fn.empty() && (fn.back() == '#' || fn.back() == '?' ||
-                                     fn.back() == '!')) {
-                fn.pop_back();
-              }
-
-              if (fn == memberName) {
-                destType = st->getElementType(i);
-                break;
-              }
-            }
-          }
-        }
-      } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
-        destType = gep->getResultElementType();
-      } else if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
-        destType = ai->getAllocatedType();
-      } else if (auto *unary =
-                     dynamic_cast<const UnaryExpr *>(bin->LHS.get())) {
-        if (unary->Op == TokenType::Star) {
-          // Dereference assignment: *ptr = val
-          // Use RHS of UnaryExpr to find the element type
-          std::string baseName = "";
-          if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-            baseName = v->Name;
-          } else if (auto *m =
-                         dynamic_cast<const MemberExpr *>(unary->RHS.get())) {
-            baseName = m->Member;
-          }
-
-          if (!baseName.empty()) {
-            while (!baseName.empty() &&
-                   (baseName[0] == '*' || baseName[0] == '#' ||
-                    baseName[0] == '&' || baseName[0] == '^' ||
-                    baseName[0] == '~' || baseName[0] == '!'))
-              baseName = baseName.substr(1);
-            while (!baseName.empty() &&
-                   (baseName.back() == '#' || baseName.back() == '?' ||
-                    baseName.back() == '!'))
-              baseName.pop_back();
-
-            if (m_ValueElementTypes.count(baseName)) {
-              destType = m_ValueElementTypes[baseName];
-            }
-          }
-
-          if (!destType) {
-            // Fallback: use LLVM type of ptr if possible
-            if (ptr->getType()->isPointerTy()) {
-              // In LLVM 17+, we can't easily get element type from ptr type
-              // So we might need to rely on the AST type if we had it.
-              // For now, try to find in m_ValueTypes
-              if (!baseName.empty() && m_ValueTypes.count(baseName)) {
-                destType = m_ValueTypes[baseName];
-              }
-            }
-          }
-        }
-      } else if (auto *post =
-                     dynamic_cast<const PostfixExpr *>(bin->LHS.get())) {
-        if (post->Op == TokenType::TokenWrite) {
-          if (auto *var = dynamic_cast<const VariableExpr *>(post->LHS.get())) {
-            std::string baseName = var->Name;
-            while (!baseName.empty() &&
-                   (baseName[0] == '*' || baseName[0] == '#' ||
-                    baseName[0] == '&' || baseName[0] == '^' ||
-                    baseName[0] == '~' || baseName[0] == '!'))
-              baseName = baseName.substr(1);
-            while (!baseName.empty() &&
-                   (baseName.back() == '#' || baseName.back() == '?' ||
-                    baseName.back() == '!'))
-              baseName.pop_back();
-
-            if (m_ValueElementTypes.count(baseName)) {
-              destType = m_ValueElementTypes[baseName];
-            }
-          }
-        }
-      }
-
-      if (!destType) {
-        error(bin, "Could not determine destination type for assignment");
-        return nullptr;
-      }
-
-      if (bin->Op != "=") {
-        // Compound: LHS = LHS op RHS
-        llvm::Value *lhsVal = m_Builder.CreateLoad(destType, ptr);
-        if (lhsVal->getType() != rhsVal->getType()) {
-          error(bin, "Type mismatch in compound assignment");
-          return nullptr;
-        }
-
-        llvm::Value *res = nullptr;
-        if (lhsVal->getType()->isFloatingPointTy()) {
-          if (bin->Op == "+=")
-            res = m_Builder.CreateFAdd(lhsVal, rhsVal);
-          else if (bin->Op == "-=")
-            res = m_Builder.CreateFSub(lhsVal, rhsVal);
-          else if (bin->Op == "*=")
-            res = m_Builder.CreateFMul(lhsVal, rhsVal);
-          else if (bin->Op == "/=")
-            res = m_Builder.CreateFDiv(lhsVal, rhsVal);
-        } else {
-          if (bin->Op == "+=")
-            res = m_Builder.CreateAdd(lhsVal, rhsVal);
-          else if (bin->Op == "-=")
-            res = m_Builder.CreateSub(lhsVal, rhsVal);
-          else if (bin->Op == "*=")
-            res = m_Builder.CreateMul(lhsVal, rhsVal);
-          else if (bin->Op == "/=")
-            res = m_Builder.CreateSDiv(lhsVal, rhsVal);
-        }
-
-        rhsVal = res;
-      }
-
-      if (destType != rhsVal->getType()) {
-        error(bin, "Type mismatch in assignment");
-        return nullptr;
-      }
-
-      m_Builder.CreateStore(rhsVal, ptr);
-      return rhsVal;
-    }
-
-    // Logical Operators (Short-circuiting)
-    if (bin->Op == "&&") {
-      llvm::Value *lhs = genExpr(bin->LHS.get());
-      if (!lhs)
-        return nullptr;
-      if (!lhs->getType()->isIntegerTy(1))
-        lhs = m_Builder.CreateICmpNE(
-            lhs, llvm::ConstantInt::get(lhs->getType(), 0), "tobool");
-
-      llvm::Function *TheFunction = m_Builder.GetInsertBlock()->getParent();
-      llvm::BasicBlock *EntryBB = m_Builder.GetInsertBlock();
-      llvm::BasicBlock *RHSBB =
-          llvm::BasicBlock::Create(m_Context, "land.rhs", TheFunction);
-      llvm::BasicBlock *MergeBB =
-          llvm::BasicBlock::Create(m_Context, "land.end");
-
-      m_Builder.CreateCondBr(lhs, RHSBB, MergeBB);
-
-      // Eval RHS
-      m_Builder.SetInsertPoint(RHSBB);
-      llvm::Value *rhs = genExpr(bin->RHS.get());
-      if (!rhs)
-        return nullptr;
-      if (!rhs->getType()->isIntegerTy(1))
-        rhs = m_Builder.CreateICmpNE(
-            rhs, llvm::ConstantInt::get(rhs->getType(), 0), "tobool");
-
-      m_Builder.CreateBr(MergeBB);
-      RHSBB = m_Builder.GetInsertBlock();
-
-      // Merge
-      MergeBB->insertInto(TheFunction);
-      m_Builder.SetInsertPoint(MergeBB);
-      llvm::PHINode *PN =
-          m_Builder.CreatePHI(llvm::Type::getInt1Ty(m_Context), 2, "land.val");
-      PN->addIncoming(llvm::ConstantInt::getFalse(m_Context), EntryBB);
-      PN->addIncoming(rhs, RHSBB);
-      return PN;
-    }
-
-    if (bin->Op == "||") {
-      llvm::Value *lhs = genExpr(bin->LHS.get());
-      if (!lhs)
-        return nullptr;
-      if (!lhs->getType()->isIntegerTy(1))
-        lhs = m_Builder.CreateICmpNE(
-            lhs, llvm::ConstantInt::get(lhs->getType(), 0), "tobool");
-
-      llvm::Function *TheFunction = m_Builder.GetInsertBlock()->getParent();
-      llvm::BasicBlock *EntryBB = m_Builder.GetInsertBlock();
-      llvm::BasicBlock *RHSBB =
-          llvm::BasicBlock::Create(m_Context, "lor.rhs", TheFunction);
-      llvm::BasicBlock *MergeBB =
-          llvm::BasicBlock::Create(m_Context, "lor.end");
-
-      m_Builder.CreateCondBr(lhs, MergeBB, RHSBB);
-
-      // Eval RHS
-      m_Builder.SetInsertPoint(RHSBB);
-      llvm::Value *rhs = genExpr(bin->RHS.get());
-      if (!rhs)
-        return nullptr;
-      if (!rhs->getType()->isIntegerTy(1))
-        rhs = m_Builder.CreateICmpNE(
-            rhs, llvm::ConstantInt::get(rhs->getType(), 0), "tobool");
-
-      m_Builder.CreateBr(MergeBB);
-      RHSBB = m_Builder.GetInsertBlock();
-
-      // Merge
-      MergeBB->insertInto(TheFunction);
-      m_Builder.SetInsertPoint(MergeBB);
-      llvm::PHINode *PN =
-          m_Builder.CreatePHI(llvm::Type::getInt1Ty(m_Context), 2, "lor.val");
-      PN->addIncoming(llvm::ConstantInt::getTrue(m_Context), EntryBB);
-      PN->addIncoming(rhs, RHSBB);
-      return PN;
-    }
-
-    // Standard Arithmetic and Comparisons
-    llvm::Value *lhs = genExpr(bin->LHS.get());
-    if (!lhs) {
-      return nullptr;
-    }
-
-    // Dead Instruction Probes: If the block was terminated during LHS
-    // evaluation, we must not attempt to emit more instructions.
-    if (!m_Builder.GetInsertBlock() ||
-        m_Builder.GetInsertBlock()->getTerminator()) {
-      return nullptr;
-    }
-
-    llvm::Value *rhs = genExpr(bin->RHS.get());
-    if (!rhs) {
-      return nullptr;
-    }
-
-    if (!m_Builder.GetInsertBlock() ||
-        m_Builder.GetInsertBlock()->getTerminator()) {
-      return nullptr;
-    }
-
-    llvm::Type *lhsType = lhs->getType();
-    llvm::Type *rhsType = rhs->getType();
-
-    bool isPtrArith =
-        (lhsType->isPointerTy() && rhsType->isIntegerTy()) ||
-        (rhsType->isPointerTy() && lhsType->isIntegerTy() && bin->Op == "+");
-
-    if (lhsType != rhsType && !isPtrArith) {
-      if (lhsType->isPointerTy() && rhsType->isPointerTy()) {
-        rhs = m_Builder.CreateBitCast(rhs, lhsType);
-      } else if (lhsType->isIntegerTy() && rhsType->isIntegerTy()) {
-        // Promote to widest
-        if (lhsType->getIntegerBitWidth() < rhsType->getIntegerBitWidth()) {
-          lhs = m_Builder.CreateSExt(lhs, rhsType, "lhs_ext");
-          lhsType = rhsType;
-        } else if (lhsType->getIntegerBitWidth() >
-                   rhsType->getIntegerBitWidth()) {
-          rhs = m_Builder.CreateSExt(rhs, lhsType, "rhs_ext");
-          rhsType = lhsType;
-        }
-      } else {
-        error(bin, "Type mismatch in binary expression");
-        return nullptr;
-      }
-    }
-
-    // Temporarily commented out - crash happens before this
-    /*
-    std::cerr << "[DEBUG] Pre-type-check. LHS: ";
-    lhs->print(llvm::errs());
-    std::cerr << "\n[DEBUG] Getting  LHS type pointer...\n";
-    llvm::Type* lhsType2 = lhs->getType();
-    std::cerr << "[DEBUG] LHS type pointer: " << lhsType2 << "\n";
-    std::cerr << "[DEBUG] Calling isIntegerTy...\n";
-    bool isInt = lhsType2->isIntegerTy();
-    std::cerr << "[DEBUG] isIntOrIntVectorTy=" << isInt << "\n";
-    std::cerr << "[DEBUG] Calling isIntOrIntVectorTy...\n";
-    bool isIntOrVec = lhsType2->isIntOrIntVectorTy();
-    std::cerr << "[DEBUG] isIntOrIntVectorTy=" << isIntOrVec << "\n";
-    if (!isIntOrVec && !lhsType2->isPtrOrPtrVectorTy()) {
-      std::string s;
-      llvm::raw_string_ostream os(s);
-      lhsType2->print(os);
-      error(bin, "Invalid type for comparison: " + os.str() +
-                     ". Comparisons are only allowed for scalars "
-                     "(integers/pointers).");
-      return nullptr;
-    }
-    */
-
-    // 'is' operator (Null Check)
-    if (bin->Op == "is") {
-      if (lhsType->isPointerTy()) {
-        return m_Builder.CreateIsNotNull(lhs, "is_not_null");
-      }
-      return llvm::ConstantInt::getTrue(m_Context);
-    }
-
-    if (!lhsType->isIntOrIntVectorTy() && !lhsType->isPtrOrPtrVectorTy()) {
-      std::string s;
-      llvm::raw_string_ostream os(s);
-      lhsType->print(os);
-      error(bin, "Invalid type for comparison: " + os.str() +
-                     ". Comparisons are only allowed for scalars "
-                     "(integers/pointers).");
-      return nullptr;
-    }
-
-    if (bin->Op == "+") {
-      if (lhs->getType()->isPointerTy()) {
-        // Find elemTy
-        llvm::Type *elemTy = nullptr;
-        if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-          elemTy = m_ValueElementTypes[ve->Name];
-        } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(lhs)) {
-          elemTy = gep->getResultElementType();
-        }
-        if (!elemTy)
-          elemTy = llvm::Type::getInt8Ty(m_Context);
-
-        // Ensure RHS is 64-bit for GEP
-        if (rhs->getType()->isIntegerTy() &&
-            rhs->getType()->getIntegerBitWidth() < 64) {
-          rhs = m_Builder.CreateSExt(rhs, llvm::Type::getInt64Ty(m_Context),
-                                     "idx_ext");
-        }
-        return m_Builder.CreateGEP(elemTy, lhs, {rhs}, "ptradd");
-      }
-      return m_Builder.CreateAdd(lhs, rhs, "addtmp");
-    }
-    if (bin->Op == "-") {
-      if (lhs->getType()->isPointerTy()) {
-        llvm::Type *elemTy = nullptr;
-        if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-          elemTy = m_ValueElementTypes[ve->Name];
-        }
-        if (!elemTy)
-          elemTy = llvm::Type::getInt8Ty(m_Context);
-        llvm::Value *negR = m_Builder.CreateNeg(rhs);
-        return m_Builder.CreateGEP(elemTy, lhs, {negR}, "ptrsub");
-      }
-      return m_Builder.CreateSub(lhs, rhs, "subtmp");
-    }
-    if (bin->Op == "*")
-      return m_Builder.CreateMul(lhs, rhs, "multmp");
-    if (bin->Op == "/")
-      return m_Builder.CreateSDiv(lhs, rhs, "divtmp");
-    if (bin->Op == "<") {
-      return m_Builder.CreateICmpSLT(lhs, rhs, "lt_tmp");
-    }
-    if (bin->Op == ">") {
-      return m_Builder.CreateICmpSGT(lhs, rhs, "gt_tmp");
-    }
-    if (bin->Op == "<=") {
-      return m_Builder.CreateICmpSLE(lhs, rhs, "le_tmp");
-    }
-    if (bin->Op == ">=") {
-      return m_Builder.CreateICmpSGE(lhs, rhs, "ge_tmp");
-    }
-    if (bin->Op == "==") {
-      if (lhs->getType() != rhs->getType()) {
-        if (lhs->getType()->isIntegerTy() && rhs->getType()->isIntegerTy()) {
-          if (lhs->getType()->getIntegerBitWidth() >
-              rhs->getType()->getIntegerBitWidth())
-            rhs = m_Builder.CreateZExt(rhs, lhs->getType());
-          else
-            lhs = m_Builder.CreateZExt(lhs, rhs->getType());
-        }
-      }
-      return m_Builder.CreateICmpEQ(lhs, rhs, "eq_tmp");
-    }
-    if (bin->Op == "!=")
-      return m_Builder.CreateICmpNE(lhs, rhs, "ne_tmp");
-    return nullptr;
+  if (auto *e = dynamic_cast<const BinaryExpr *>(expr)) {
+    return genBinaryExpr(e);
   }
   if (auto *cast = dynamic_cast<const CastExpr *>(expr)) {
-    llvm::Value *val = genExpr(cast->Expression.get());
-    if (!val)
-      return nullptr;
-    llvm::Type *targetType = resolveType(cast->TargetType, false);
-    if (!targetType)
-      return val;
-
-    llvm::Type *srcType = val->getType();
-    if (srcType->isIntegerTy() && targetType->isIntegerTy())
-      return m_Builder.CreateIntCast(val, targetType, true);
-
-    // Physical Interpretation: bitcast or int-ptr cast if types are different
-    if (srcType != targetType) {
-      if (srcType->isPointerTy() && targetType->isPointerTy()) {
-        return m_Builder.CreateBitCast(val, targetType);
-      }
-      if (srcType->isPointerTy() && targetType->isIntegerTy()) {
-        return m_Builder.CreatePtrToInt(val, targetType);
-      }
-      if (srcType->isIntegerTy() && targetType->isPointerTy()) {
-        return m_Builder.CreateIntToPtr(val, targetType);
-      }
-      // If one is not a pointer, we need alloca/bitcast (Zero-cost
-      // GEP/Address logic)
-      llvm::Value *tmp = m_Builder.CreateAlloca(srcType);
-      m_Builder.CreateStore(val, tmp);
-      llvm::Value *castPtr = m_Builder.CreateBitCast(
-          tmp, llvm::PointerType::getUnqual(targetType));
-      return m_Builder.CreateLoad(targetType, castPtr);
-    }
-    return val;
+    return genCastExpr(cast);
   }
 
-  if (auto *idx = dynamic_cast<const ArrayIndexExpr *>(expr)) {
-    llvm::Value *addr = genAddr(idx);
-    if (!addr)
-      return nullptr;
-    // Determine element type from GEP or recursive check
-    if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
-      return m_Builder.CreateLoad(gep->getResultElementType(), addr, "idxval");
-    }
-    return nullptr;
+  if (auto *e = dynamic_cast<const ArrayIndexExpr *>(expr)) {
+    return genIndexExpr(e);
   }
   if (auto *newExpr = dynamic_cast<const NewExpr *>(expr)) {
     llvm::Type *type = resolveType(newExpr->Type, false);
@@ -2359,24 +1772,7 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     return heapPtr;
   }
   if (auto *mem = dynamic_cast<const MemberExpr *>(expr)) {
-    llvm::Value *addr = genAddr(mem);
-    if (!addr)
-      return nullptr;
-
-    // Resolve element type for Load.
-    llvm::Type *resultTy = nullptr;
-    if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
-      resultTy = gep->getResultElementType();
-    } else if (addr->getType()->isPointerTy()) {
-      // For Soul access (where genAddr returns the pointer value),
-      // the load should yield the pointed-to element (e.g. i8).
-      resultTy = llvm::Type::getInt8Ty(m_Context);
-    }
-
-    if (!resultTy)
-      return addr;
-
-    return m_Builder.CreateLoad(resultTy, addr, mem->Member);
+    return genMemberExpr(mem);
   }
 
   if (auto *init = dynamic_cast<const InitStructExpr *>(expr)) {
@@ -2495,41 +1891,636 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     }
     return m_Builder.CreateLoad(st, alloca);
   }
-  if (auto *idxExpr = dynamic_cast<const ArrayIndexExpr *>(expr)) {
-    // Check for Array Shape Initialization
-    if (auto *var = dynamic_cast<const VariableExpr *>(idxExpr->Array.get())) {
-      if (m_Shapes.count(var->Name)) {
-        const ShapeDecl *sh = m_Shapes[var->Name];
-        if (sh->Kind == ShapeKind::Array) {
-          llvm::StructType *st = m_StructTypes[var->Name];
-          llvm::Value *alloca =
-              m_Builder.CreateAlloca(st, nullptr, var->Name + "_init");
+  return nullptr;
+}
 
-          for (size_t i = 0; i < idxExpr->Indices.size(); ++i) {
-            llvm::Value *val = genExpr(idxExpr->Indices[i].get());
-            if (!val)
-              return nullptr;
-            // GEP: struct 0, array i
-            llvm::Value *ptr = m_Builder.CreateInBoundsGEP(
-                st, alloca,
-                {m_Builder.getInt32(0), m_Builder.getInt32(0),
-                 m_Builder.getInt32((uint32_t)i)});
-            m_Builder.CreateStore(val, ptr);
+llvm::Value *CodeGen::genVariableExpr(const VariableExpr *var) {
+  llvm::Value *soulAddr = getEntityAddr(var->Name);
+  if (!soulAddr) {
+    return nullptr;
+  }
+
+  // Get the base name (no morphology) for symbol lookup
+  std::string baseName = var->Name;
+  while (!baseName.empty() &&
+         (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
+          baseName[0] == '^' || baseName[0] == '~'))
+    baseName = baseName.substr(1);
+  while (!baseName.empty() &&
+         (baseName.back() == '#' || baseName.back() == '?' ||
+          baseName.back() == '!'))
+    baseName.pop_back();
+
+  llvm::Type *soulType = nullptr;
+  if (m_Symbols.count(baseName)) {
+    soulType = m_Symbols[baseName].llvmType;
+  } else {
+    // Fallback for globals/externs
+    if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(soulAddr)) {
+      soulType = ai->getAllocatedType();
+    } else if (auto *li = llvm::dyn_cast<llvm::LoadInst>(soulAddr)) {
+      soulType = li->getType();
+    } else if (auto *gv = llvm::dyn_cast<llvm::GlobalVariable>(soulAddr)) {
+      soulType = gv->getValueType();
+    }
+  }
+
+  if (!soulType)
+    return nullptr;
+
+  return m_Builder.CreateLoad(soulType, soulAddr, var->Name);
+}
+
+llvm::Value *CodeGen::genLiteralExpr(const Expr *expr) {
+  if (auto *num = dynamic_cast<const NumberExpr *>(expr)) {
+    return llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context),
+                                  num->Value);
+  }
+  if (auto *flt = dynamic_cast<const FloatExpr *>(expr)) {
+    return llvm::ConstantFP::get(llvm::Type::getDoubleTy(m_Context),
+                                 flt->Value);
+  }
+  if (auto *bl = dynamic_cast<const BoolExpr *>(expr)) {
+    return llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), bl->Value);
+  }
+  if (dynamic_cast<const NullExpr *>(expr) ||
+      dynamic_cast<const NoneExpr *>(expr)) {
+    return llvm::ConstantPointerNull::get(llvm::PointerType::get(m_Context, 0));
+  }
+  if (auto *str = dynamic_cast<const StringExpr *>(expr)) {
+    return m_Builder.CreateGlobalStringPtr(str->Value);
+  }
+  return nullptr;
+}
+
+llvm::Value *CodeGen::genCastExpr(const CastExpr *cast) {
+  llvm::Value *val = genExpr(cast->Expression.get());
+  if (!val)
+    return nullptr;
+  llvm::Type *targetType = resolveType(cast->TargetType, false);
+  if (!targetType)
+    return val;
+
+  llvm::Type *srcType = val->getType();
+  if (srcType->isIntegerTy() && targetType->isIntegerTy())
+    return m_Builder.CreateIntCast(val, targetType, true);
+
+  // Physical Interpretation: bitcast or int-ptr cast if types are different
+  if (srcType != targetType) {
+    if (srcType->isPointerTy() && targetType->isPointerTy()) {
+      return m_Builder.CreateBitCast(val, targetType);
+    }
+    if (srcType->isPointerTy() && targetType->isIntegerTy()) {
+      return m_Builder.CreatePtrToInt(val, targetType);
+    }
+    if (srcType->isIntegerTy() && targetType->isPointerTy()) {
+      return m_Builder.CreateIntToPtr(val, targetType);
+    }
+    // If one is not a pointer, we need alloca/bitcast (Zero-cost
+    // GEP/Address logic)
+    llvm::Value *tmp = m_Builder.CreateAlloca(srcType);
+    m_Builder.CreateStore(val, tmp);
+    llvm::Value *castPtr =
+        m_Builder.CreateBitCast(tmp, llvm::PointerType::getUnqual(targetType));
+    return m_Builder.CreateLoad(targetType, castPtr);
+  }
+  return val;
+}
+
+llvm::Value *CodeGen::genAllocExpr(const AllocExpr *ae) {
+  llvm::Function *allocHook = m_Module->getFunction("__toka_alloc");
+  if (!allocHook) {
+    // Declare it if not present
+    llvm::Type *sizeTy = llvm::Type::getInt64Ty(m_Context);
+    llvm::Type *retTy =
+        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context));
+    llvm::FunctionType *ft = llvm::FunctionType::get(retTy, {sizeTy}, false);
+    allocHook = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
+                                       "__toka_alloc", m_Module.get());
+  }
+
+  llvm::Type *elemTy = resolveType(ae->TypeName, false);
+  llvm::DataLayout dl(m_Module.get());
+  uint64_t size = dl.getTypeAllocSize(elemTy);
+  llvm::Value *sizeVal =
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), size);
+
+  if (ae->IsArray && ae->ArraySize) {
+    llvm::Value *count = genExpr(ae->ArraySize.get());
+    count = m_Builder.CreateIntCast(count, llvm::Type::getInt64Ty(m_Context),
+                                    false);
+    sizeVal = m_Builder.CreateMul(sizeVal, count);
+  }
+
+  llvm::Value *rawPtr = m_Builder.CreateCall(allocHook, sizeVal);
+  llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
+  llvm::Value *castedPtr = m_Builder.CreateBitCast(rawPtr, ptrTy);
+
+  if (ae->Initializer) {
+    // For now ignore initializer logic for malloc or handle struct init
+    // We assume InitStructExpr is handled separately but if we have new
+    // Struct { ... } We need to store it to malloc'd memory
+    llvm::Value *initVal = genExpr(ae->Initializer.get());
+    m_Builder.CreateStore(initVal, castedPtr);
+  }
+  return castedPtr;
+}
+
+llvm::Value *CodeGen::genMemberExpr(const MemberExpr *mem) {
+  llvm::Value *addr = genAddr(mem);
+  if (!addr)
+    return nullptr;
+
+  // Resolve element type for Load.
+  llvm::Type *resultTy = nullptr;
+  if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+    resultTy = gep->getResultElementType();
+  } else if (addr->getType()->isPointerTy()) {
+    // For Soul access (where genAddr returns the pointer value),
+    // the load should yield the pointed-to element (e.g. i8).
+    resultTy = llvm::Type::getInt8Ty(m_Context);
+  }
+
+  if (!resultTy)
+    return addr;
+
+  return m_Builder.CreateLoad(resultTy, addr, mem->Member);
+}
+
+llvm::Value *CodeGen::genIndexExpr(const ArrayIndexExpr *idxExpr) {
+  // Check for Array Shape Initialization
+  if (auto *var = dynamic_cast<const VariableExpr *>(idxExpr->Array.get())) {
+    if (m_Shapes.count(var->Name)) {
+      const ShapeDecl *sh = m_Shapes[var->Name];
+      if (sh->Kind == ShapeKind::Array) {
+        llvm::StructType *st = m_StructTypes[var->Name];
+        llvm::Value *alloca =
+            m_Builder.CreateAlloca(st, nullptr, var->Name + "_init");
+
+        for (size_t i = 0; i < idxExpr->Indices.size(); ++i) {
+          llvm::Value *val = genExpr(idxExpr->Indices[i].get());
+          if (!val)
+            return nullptr;
+          // GEP: struct 0, array i
+          llvm::Value *ptr = m_Builder.CreateInBoundsGEP(
+              st, alloca,
+              {m_Builder.getInt32(0), m_Builder.getInt32(0),
+               m_Builder.getInt32((uint32_t)i)});
+          m_Builder.CreateStore(val, ptr);
+        }
+        return m_Builder.CreateLoad(st, alloca);
+      }
+    }
+  }
+
+  // Normal Indexing
+  llvm::Value *addr = genAddr(idxExpr);
+  if (!addr)
+    return nullptr;
+  if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+    return m_Builder.CreateLoad(gep->getResultElementType(), addr);
+  }
+  return nullptr;
+}
+
+llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
+  const BinaryExpr *bin = expr;
+  if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" || bin->Op == "*=" ||
+      bin->Op == "/=") {
+    llvm::Value *ptr = genAddr(bin->LHS.get());
+    if (!ptr) {
+      return nullptr;
+    }
+
+    if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
+      if (!m_ValueIsMutable[varLHS->Name]) {
+        error(bin, "Cannot mutate immutable variable '" + varLHS->Name + "'");
+        return nullptr;
+      }
+      if (!varLHS->IsMutable) {
+        error(bin, "Missing '#' token for mutation of '" + varLHS->Name + "'");
+        return nullptr;
+      }
+    }
+
+    llvm::Value *rhsVal = genExpr(bin->RHS.get());
+    if (!rhsVal)
+      return nullptr;
+
+    llvm::Type *destType = nullptr;
+    if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
+      std::string baseName = varLHS->Name;
+      while (!baseName.empty() &&
+             (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
+              baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!')) {
+        baseName = baseName.substr(1);
+      }
+      while (!baseName.empty() &&
+             (baseName.back() == '#' || baseName.back() == '?' ||
+              baseName.back() == '!')) {
+        baseName.pop_back();
+      }
+
+      if (m_ValueIsReference[baseName])
+        destType = m_ValueElementTypes[baseName];
+      else
+        destType = m_ValueTypes[baseName];
+    } else if (auto *memLHS =
+                   dynamic_cast<const MemberExpr *>(bin->LHS.get())) {
+      // Find struct type and field index to get destType
+      llvm::Value *objAddr = nullptr;
+      llvm::Type *objType = nullptr;
+
+      // Helper to get base variable name from expression
+      std::function<std::string(const Expr *)> getBaseName =
+          [&](const Expr *e) -> std::string {
+        if (auto *v = dynamic_cast<const VariableExpr *>(e)) {
+          return v->Name;
+        } else if (auto *p = dynamic_cast<const PostfixExpr *>(e)) {
+          return getBaseName(p->LHS.get());
+        } else if (auto *u = dynamic_cast<const UnaryExpr *>(e)) {
+          // Handle *ptr or &ptr if needed, though usually MemberExpr object
+          // is simple
+          return getBaseName(u->RHS.get());
+        }
+        return "";
+      };
+
+      std::string baseName = getBaseName(memLHS->Object.get());
+
+      // Clean up morphology decorators
+      while (!baseName.empty() &&
+             (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
+              baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!')) {
+        baseName = baseName.substr(1);
+      }
+      while (!baseName.empty() &&
+             (baseName.back() == '#' || baseName.back() == '?' ||
+              baseName.back() == '!')) {
+        baseName.pop_back();
+      }
+
+      if (!baseName.empty() && m_ValueElementTypes.count(baseName)) {
+        objType = m_ValueElementTypes[baseName];
+      } else {
+        objType = genExpr(memLHS->Object.get())->getType();
+      }
+
+      if (objType && objType->isStructTy()) {
+        llvm::StructType *st = llvm::cast<llvm::StructType>(objType);
+        std::string memberName = memLHS->Member;
+        while (!memberName.empty() &&
+               (memberName[0] == '^' || memberName[0] == '*' ||
+                memberName[0] == '&' || memberName[0] == '#' ||
+                memberName[0] == '~' || memberName[0] == '!')) {
+          memberName = memberName.substr(1);
+        }
+
+        std::string stName = m_TypeToName[st];
+
+        if (!stName.empty()) {
+          auto &fields = m_StructFieldNames[stName];
+
+          for (int i = 0; i < (int)fields.size(); ++i) {
+            std::string fn = fields[i];
+
+            while (!fn.empty() &&
+                   (fn[0] == '^' || fn[0] == '*' || fn[0] == '&' ||
+                    fn[0] == '#' || fn[0] == '~' || fn[0] == '!')) {
+              fn = fn.substr(1);
+            }
+            while (!fn.empty() &&
+                   (fn.back() == '#' || fn.back() == '?' || fn.back() == '!')) {
+              fn.pop_back();
+            }
+
+            if (fn == memberName) {
+              destType = st->getElementType(i);
+              break;
+            }
           }
-          return m_Builder.CreateLoad(st, alloca);
+        }
+      }
+    } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
+      destType = gep->getResultElementType();
+    } else if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
+      destType = ai->getAllocatedType();
+    } else if (auto *unary = dynamic_cast<const UnaryExpr *>(bin->LHS.get())) {
+      if (unary->Op == TokenType::Star) {
+        // Dereference assignment: *ptr = val
+        // Use RHS of UnaryExpr to find the element type
+        std::string baseName = "";
+        if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+          baseName = v->Name;
+        } else if (auto *m =
+                       dynamic_cast<const MemberExpr *>(unary->RHS.get())) {
+          baseName = m->Member;
+        }
+
+        if (!baseName.empty()) {
+          while (!baseName.empty() &&
+                 (baseName[0] == '*' || baseName[0] == '#' ||
+                  baseName[0] == '&' || baseName[0] == '^' ||
+                  baseName[0] == '~' || baseName[0] == '!'))
+            baseName = baseName.substr(1);
+          while (!baseName.empty() &&
+                 (baseName.back() == '#' || baseName.back() == '?' ||
+                  baseName.back() == '!'))
+            baseName.pop_back();
+
+          if (m_ValueElementTypes.count(baseName)) {
+            destType = m_ValueElementTypes[baseName];
+          }
+        }
+
+        if (!destType) {
+          // Fallback: use LLVM type of ptr if possible
+          if (ptr->getType()->isPointerTy()) {
+            // In LLVM 17+, we can't easily get element type from ptr type
+            // So we might need to rely on the AST type if we had it.
+            // For now, try to find in m_ValueTypes
+            if (!baseName.empty() && m_ValueTypes.count(baseName)) {
+              destType = m_ValueTypes[baseName];
+            }
+          }
+        }
+      }
+    } else if (auto *post = dynamic_cast<const PostfixExpr *>(bin->LHS.get())) {
+      if (post->Op == TokenType::TokenWrite) {
+        if (auto *var = dynamic_cast<const VariableExpr *>(post->LHS.get())) {
+          std::string baseName = var->Name;
+          while (!baseName.empty() &&
+                 (baseName[0] == '*' || baseName[0] == '#' ||
+                  baseName[0] == '&' || baseName[0] == '^' ||
+                  baseName[0] == '~' || baseName[0] == '!'))
+            baseName = baseName.substr(1);
+          while (!baseName.empty() &&
+                 (baseName.back() == '#' || baseName.back() == '?' ||
+                  baseName.back() == '!'))
+            baseName.pop_back();
+
+          if (m_ValueElementTypes.count(baseName)) {
+            destType = m_ValueElementTypes[baseName];
+          }
         }
       }
     }
 
-    // Normal Indexing
-    llvm::Value *addr = genAddr(idxExpr);
-    if (!addr)
+    if (!destType) {
+      error(bin, "Could not determine destination type for assignment");
       return nullptr;
-    if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
-      return m_Builder.CreateLoad(gep->getResultElementType(), addr);
     }
+
+    if (bin->Op != "=") {
+      // Compound: LHS = LHS op RHS
+      llvm::Value *lhsVal = m_Builder.CreateLoad(destType, ptr);
+      if (lhsVal->getType() != rhsVal->getType()) {
+        error(bin, "Type mismatch in compound assignment");
+        return nullptr;
+      }
+
+      llvm::Value *res = nullptr;
+      if (lhsVal->getType()->isFloatingPointTy()) {
+        if (bin->Op == "+=")
+          res = m_Builder.CreateFAdd(lhsVal, rhsVal);
+        else if (bin->Op == "-=")
+          res = m_Builder.CreateFSub(lhsVal, rhsVal);
+        else if (bin->Op == "*=")
+          res = m_Builder.CreateFMul(lhsVal, rhsVal);
+        else if (bin->Op == "/=")
+          res = m_Builder.CreateFDiv(lhsVal, rhsVal);
+      } else {
+        if (bin->Op == "+=")
+          res = m_Builder.CreateAdd(lhsVal, rhsVal);
+        else if (bin->Op == "-=")
+          res = m_Builder.CreateSub(lhsVal, rhsVal);
+        else if (bin->Op == "*=")
+          res = m_Builder.CreateMul(lhsVal, rhsVal);
+        else if (bin->Op == "/=")
+          res = m_Builder.CreateSDiv(lhsVal, rhsVal);
+      }
+
+      rhsVal = res;
+    }
+
+    if (destType != rhsVal->getType()) {
+      error(bin, "Type mismatch in assignment");
+      return nullptr;
+    }
+
+    m_Builder.CreateStore(rhsVal, ptr);
+    return rhsVal;
+  }
+
+  // Logical Operators (Short-circuiting)
+  if (bin->Op == "&&") {
+    llvm::Value *lhs = genExpr(bin->LHS.get());
+    if (!lhs)
+      return nullptr;
+    if (!lhs->getType()->isIntegerTy(1))
+      lhs = m_Builder.CreateICmpNE(
+          lhs, llvm::ConstantInt::get(lhs->getType(), 0), "tobool");
+
+    llvm::Function *TheFunction = m_Builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *EntryBB = m_Builder.GetInsertBlock();
+    llvm::BasicBlock *RHSBB =
+        llvm::BasicBlock::Create(m_Context, "land.rhs", TheFunction);
+    llvm::BasicBlock *MergeBB = llvm::BasicBlock::Create(m_Context, "land.end");
+
+    m_Builder.CreateCondBr(lhs, RHSBB, MergeBB);
+
+    // Eval RHS
+    m_Builder.SetInsertPoint(RHSBB);
+    llvm::Value *rhs = genExpr(bin->RHS.get());
+    if (!rhs)
+      return nullptr;
+    if (!rhs->getType()->isIntegerTy(1))
+      rhs = m_Builder.CreateICmpNE(
+          rhs, llvm::ConstantInt::get(rhs->getType(), 0), "tobool");
+
+    m_Builder.CreateBr(MergeBB);
+    RHSBB = m_Builder.GetInsertBlock();
+
+    // Merge
+    MergeBB->insertInto(TheFunction);
+    m_Builder.SetInsertPoint(MergeBB);
+    llvm::PHINode *PN =
+        m_Builder.CreatePHI(llvm::Type::getInt1Ty(m_Context), 2, "land.val");
+    PN->addIncoming(llvm::ConstantInt::getFalse(m_Context), EntryBB);
+    PN->addIncoming(rhs, RHSBB);
+    return PN;
+  }
+
+  if (bin->Op == "||") {
+    llvm::Value *lhs = genExpr(bin->LHS.get());
+    if (!lhs)
+      return nullptr;
+    if (!lhs->getType()->isIntegerTy(1))
+      lhs = m_Builder.CreateICmpNE(
+          lhs, llvm::ConstantInt::get(lhs->getType(), 0), "tobool");
+
+    llvm::Function *TheFunction = m_Builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *EntryBB = m_Builder.GetInsertBlock();
+    llvm::BasicBlock *RHSBB =
+        llvm::BasicBlock::Create(m_Context, "lor.rhs", TheFunction);
+    llvm::BasicBlock *MergeBB = llvm::BasicBlock::Create(m_Context, "lor.end");
+
+    m_Builder.CreateCondBr(lhs, MergeBB, RHSBB);
+
+    // Eval RHS
+    m_Builder.SetInsertPoint(RHSBB);
+    llvm::Value *rhs = genExpr(bin->RHS.get());
+    if (!rhs)
+      return nullptr;
+    if (!rhs->getType()->isIntegerTy(1))
+      rhs = m_Builder.CreateICmpNE(
+          rhs, llvm::ConstantInt::get(rhs->getType(), 0), "tobool");
+
+    m_Builder.CreateBr(MergeBB);
+    RHSBB = m_Builder.GetInsertBlock();
+
+    // Merge
+    MergeBB->insertInto(TheFunction);
+    m_Builder.SetInsertPoint(MergeBB);
+    llvm::PHINode *PN =
+        m_Builder.CreatePHI(llvm::Type::getInt1Ty(m_Context), 2, "lor.val");
+    PN->addIncoming(llvm::ConstantInt::getTrue(m_Context), EntryBB);
+    PN->addIncoming(rhs, RHSBB);
+    return PN;
+  }
+
+  // Standard Arithmetic and Comparisons
+  llvm::Value *lhs = genExpr(bin->LHS.get());
+  if (!lhs) {
     return nullptr;
   }
+
+  // Dead Instruction Probes: If the block was terminated during LHS
+  // evaluation, we must not attempt to emit more instructions.
+  if (!m_Builder.GetInsertBlock() ||
+      m_Builder.GetInsertBlock()->getTerminator()) {
+    return nullptr;
+  }
+
+  llvm::Value *rhs = genExpr(bin->RHS.get());
+  if (!rhs) {
+    return nullptr;
+  }
+
+  if (!m_Builder.GetInsertBlock() ||
+      m_Builder.GetInsertBlock()->getTerminator()) {
+    return nullptr;
+  }
+
+  llvm::Type *lhsType = lhs->getType();
+  llvm::Type *rhsType = rhs->getType();
+
+  bool isPtrArith =
+      (lhsType->isPointerTy() && rhsType->isIntegerTy()) ||
+      (rhsType->isPointerTy() && lhsType->isIntegerTy() && bin->Op == "+");
+
+  if (lhsType != rhsType && !isPtrArith) {
+    if (lhsType->isPointerTy() && rhsType->isPointerTy()) {
+      rhs = m_Builder.CreateBitCast(rhs, lhsType);
+    } else if (lhsType->isIntegerTy() && rhsType->isIntegerTy()) {
+      // Promote to widest
+      if (lhsType->getIntegerBitWidth() < rhsType->getIntegerBitWidth()) {
+        lhs = m_Builder.CreateSExt(lhs, rhsType, "lhs_ext");
+        lhsType = rhsType;
+      } else if (lhsType->getIntegerBitWidth() >
+                 rhsType->getIntegerBitWidth()) {
+        rhs = m_Builder.CreateSExt(rhs, lhsType, "rhs_ext");
+        rhsType = lhsType;
+      }
+    } else {
+      error(bin, "Type mismatch in binary expression");
+      return nullptr;
+    }
+  }
+
+  // 'is' operator (Null Check)
+  if (bin->Op == "is") {
+    if (lhsType->isPointerTy()) {
+      return m_Builder.CreateIsNotNull(lhs, "is_not_null");
+    }
+    return llvm::ConstantInt::getTrue(m_Context);
+  }
+
+  if (!lhsType->isIntOrIntVectorTy() && !lhsType->isPtrOrPtrVectorTy()) {
+    std::string s;
+    llvm::raw_string_ostream os(s);
+    lhsType->print(os);
+    error(bin, "Invalid type for comparison: " + os.str() +
+                   ". Comparisons are only allowed for scalars "
+                   "(integers/pointers).");
+    return nullptr;
+  }
+
+  if (bin->Op == "+") {
+    if (lhs->getType()->isPointerTy()) {
+      // Find elemTy
+      llvm::Type *elemTy = nullptr;
+      if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
+        elemTy = m_ValueElementTypes[ve->Name];
+      } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(lhs)) {
+        elemTy = gep->getResultElementType();
+      }
+      if (!elemTy)
+        elemTy = llvm::Type::getInt8Ty(m_Context);
+
+      // Ensure RHS is 64-bit for GEP
+      if (rhs->getType()->isIntegerTy() &&
+          rhs->getType()->getIntegerBitWidth() < 64) {
+        rhs = m_Builder.CreateSExt(rhs, llvm::Type::getInt64Ty(m_Context),
+                                   "idx_ext");
+      }
+      return m_Builder.CreateGEP(elemTy, lhs, {rhs}, "ptradd");
+    }
+    return m_Builder.CreateAdd(lhs, rhs, "addtmp");
+  }
+  if (bin->Op == "-") {
+    if (lhs->getType()->isPointerTy()) {
+      llvm::Type *elemTy = nullptr;
+      if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
+        elemTy = m_ValueElementTypes[ve->Name];
+      }
+      if (!elemTy)
+        elemTy = llvm::Type::getInt8Ty(m_Context);
+      llvm::Value *negR = m_Builder.CreateNeg(rhs);
+      return m_Builder.CreateGEP(elemTy, lhs, {negR}, "ptrsub");
+    }
+    return m_Builder.CreateSub(lhs, rhs, "subtmp");
+  }
+  if (bin->Op == "*")
+    return m_Builder.CreateMul(lhs, rhs, "multmp");
+  if (bin->Op == "/")
+    return m_Builder.CreateSDiv(lhs, rhs, "divtmp");
+  if (bin->Op == "<") {
+    return m_Builder.CreateICmpSLT(lhs, rhs, "lt_tmp");
+  }
+  if (bin->Op == ">") {
+    return m_Builder.CreateICmpSGT(lhs, rhs, "gt_tmp");
+  }
+  if (bin->Op == "<=") {
+    return m_Builder.CreateICmpSLE(lhs, rhs, "le_tmp");
+  }
+  if (bin->Op == ">=") {
+    return m_Builder.CreateICmpSGE(lhs, rhs, "ge_tmp");
+  }
+  if (bin->Op == "==") {
+    if (lhs->getType() != rhs->getType()) {
+      if (lhs->getType()->isIntegerTy() && rhs->getType()->isIntegerTy()) {
+        if (lhs->getType()->getIntegerBitWidth() >
+            rhs->getType()->getIntegerBitWidth())
+          rhs = m_Builder.CreateZExt(rhs, lhs->getType());
+        else
+          lhs = m_Builder.CreateZExt(lhs, rhs->getType());
+      }
+    }
+    return m_Builder.CreateICmpEQ(lhs, rhs, "eq_tmp");
+  }
+  if (bin->Op == "!=")
+    return m_Builder.CreateICmpNE(lhs, rhs, "ne_tmp");
   return nullptr;
 }
 

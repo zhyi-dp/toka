@@ -114,6 +114,13 @@ private:
   void genShape(const ShapeDecl *sh);
   void genImpl(const ImplDecl *impl, bool declOnly = false);
   llvm::Value *genMatchExpr(const MatchExpr *expr);
+  llvm::Value *genBinaryExpr(const BinaryExpr *expr);
+  llvm::Value *genAllocExpr(const AllocExpr *expr);
+  llvm::Value *genMemberExpr(const MemberExpr *expr);
+  llvm::Value *genIndexExpr(const ArrayIndexExpr *expr);
+  llvm::Value *genVariableExpr(const VariableExpr *expr);
+  llvm::Value *genLiteralExpr(const Expr *expr);
+  llvm::Value *genCastExpr(const CastExpr *expr);
   void genPatternBinding(const MatchArm::Pattern *pat, llvm::Value *targetAddr,
                          llvm::Type *targetType);
   llvm::Value *genMethodCall(const MethodCallExpr *expr);
