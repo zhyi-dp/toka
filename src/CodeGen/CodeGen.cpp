@@ -738,261 +738,18 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
   }
 
   if (auto *ie = dynamic_cast<const IfExpr *>(expr)) {
-    // Track result via alloca if this if yields a value (determined by
-    // PassExpr)
-    llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
-        m_Builder.getInt32Ty(), nullptr, "if_result_addr");
-    // Initialize with 0 or some default
-    m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
-
-    llvm::Value *cond = genExpr(ie->Condition.get());
-    if (!cond)
-      return nullptr;
-    if (!cond->getType()->isIntegerTy(1)) {
-      cond = m_Builder.CreateICmpNE(
-          cond, llvm::ConstantInt::get(cond->getType(), 0), "ifcond");
-    }
-
-    llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-    llvm::BasicBlock *thenBB = llvm::BasicBlock::Create(m_Context, "then", f);
-    llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(m_Context, "else");
-    llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(m_Context, "ifcont");
-
-    m_Builder.CreateCondBr(cond, thenBB, elseBB);
-
-    m_Builder.SetInsertPoint(thenBB);
-    m_CFStack.push_back(
-        {"", mergeBB, nullptr, resultAddr, m_ScopeStack.size()});
-    genStmt(ie->Then.get());
-    m_CFStack.pop_back();
-    llvm::BasicBlock *thenEndBB = m_Builder.GetInsertBlock();
-    if (thenEndBB && !thenEndBB->getTerminator())
-      m_Builder.CreateBr(mergeBB);
-
-    elseBB->insertInto(f);
-    m_Builder.SetInsertPoint(elseBB);
-    if (ie->Else) {
-      m_CFStack.push_back(
-          {"", mergeBB, nullptr, resultAddr, m_ScopeStack.size()});
-      genStmt(ie->Else.get());
-      m_CFStack.pop_back();
-    }
-    llvm::BasicBlock *elseEndBB = m_Builder.GetInsertBlock();
-    if (elseEndBB && !elseEndBB->getTerminator())
-      m_Builder.CreateBr(mergeBB);
-
-    mergeBB->insertInto(f);
-    m_Builder.SetInsertPoint(mergeBB);
-    return m_Builder.CreateLoad(m_Builder.getInt32Ty(), resultAddr,
-                                "if_result");
+    return genIfExpr(ie);
   }
 
   if (auto *we = dynamic_cast<const WhileExpr *>(expr)) {
-    llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-    llvm::BasicBlock *condBB =
-        llvm::BasicBlock::Create(m_Context, "while_cond", f);
-    llvm::BasicBlock *loopBB =
-        llvm::BasicBlock::Create(m_Context, "while_loop");
-    llvm::BasicBlock *elseBB =
-        llvm::BasicBlock::Create(m_Context, "while_else");
-    llvm::BasicBlock *afterBB =
-        llvm::BasicBlock::Create(m_Context, "while_after");
-
-    // Result via alloca
-    llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
-        m_Builder.getInt32Ty(), nullptr, "while_result_addr");
-    m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
-
-    m_Builder.CreateBr(condBB);
-    m_Builder.SetInsertPoint(condBB);
-    llvm::Value *cond = genExpr(we->Condition.get());
-    m_Builder.CreateCondBr(cond, loopBB, elseBB);
-
-    loopBB->insertInto(f);
-    m_Builder.SetInsertPoint(loopBB);
-    std::string myLabel = "";
-    if (!m_CFStack.empty() && m_CFStack.back().BreakTarget == nullptr)
-      myLabel = m_CFStack.back().Label;
-
-    m_CFStack.push_back(
-        {myLabel, afterBB, condBB, resultAddr, m_ScopeStack.size()});
-    genStmt(we->Body.get());
-    m_CFStack.pop_back();
-    if (m_Builder.GetInsertBlock() &&
-        !m_Builder.GetInsertBlock()->getTerminator())
-      m_Builder.CreateBr(condBB);
-
-    elseBB->insertInto(f);
-    m_Builder.SetInsertPoint(elseBB);
-    if (we->ElseBody) {
-      m_CFStack.push_back(
-          {"", afterBB, nullptr, resultAddr, m_ScopeStack.size()});
-      genStmt(we->ElseBody.get());
-      m_CFStack.pop_back();
-    }
-    if (m_Builder.GetInsertBlock() &&
-        !m_Builder.GetInsertBlock()->getTerminator())
-      m_Builder.CreateBr(afterBB);
-
-    afterBB->insertInto(f);
-    m_Builder.SetInsertPoint(afterBB);
-    return m_Builder.CreateLoad(m_Builder.getInt32Ty(), resultAddr,
-                                "while_result");
+    return genWhileExpr(we);
   }
 
   if (auto *le = dynamic_cast<const LoopExpr *>(expr)) {
-    llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-    llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(m_Context, "loop", f);
-    llvm::BasicBlock *afterBB =
-        llvm::BasicBlock::Create(m_Context, "loop_after");
-
-    // Result via alloca
-    llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
-        m_Builder.getInt32Ty(), nullptr, "loop_result_addr");
-    m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
-
-    m_Builder.CreateBr(loopBB);
-    m_Builder.SetInsertPoint(loopBB);
-    std::string myLabel = "";
-    if (!m_CFStack.empty() && m_CFStack.back().BreakTarget == nullptr)
-      myLabel = m_CFStack.back().Label;
-
-    m_CFStack.push_back(
-        {myLabel, afterBB, loopBB, resultAddr, m_ScopeStack.size()});
-    genStmt(le->Body.get());
-    m_CFStack.pop_back();
-    if (m_Builder.GetInsertBlock() &&
-        !m_Builder.GetInsertBlock()->getTerminator())
-      m_Builder.CreateBr(loopBB);
-
-    afterBB->insertInto(f);
-    m_Builder.SetInsertPoint(afterBB);
-    return m_Builder.CreateLoad(m_Builder.getInt32Ty(), resultAddr,
-                                "loop_result");
+    return genLoopExpr(le);
   }
   if (auto *fe = dynamic_cast<const ForExpr *>(expr)) {
-    llvm::Value *collVal = genExpr(fe->Collection.get());
-    if (!collVal)
-      return nullptr;
-
-    llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-
-    // Only support Array/Slice iteration for now
-    if (!collVal->getType()->isPointerTy() &&
-        !collVal->getType()->isArrayTy()) {
-      error(fe, "Only arrays and pointers can be iterated in for loops");
-      return nullptr;
-    }
-
-    llvm::BasicBlock *condBB =
-        llvm::BasicBlock::Create(m_Context, "for_cond", f);
-    llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(m_Context, "for_loop");
-    llvm::BasicBlock *incrBB = llvm::BasicBlock::Create(m_Context, "for_incr");
-    llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(m_Context, "for_else");
-    llvm::BasicBlock *afterBB =
-        llvm::BasicBlock::Create(m_Context, "for_after");
-
-    // Result via alloca
-    llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
-        m_Builder.getInt32Ty(), nullptr, "for_result_addr");
-    m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
-
-    // Loop index
-    llvm::AllocaInst *idxAlloca = m_Builder.CreateAlloca(
-        llvm::Type::getInt32Ty(m_Context), nullptr, "for_idx");
-    m_Builder.CreateStore(
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0),
-        idxAlloca);
-
-    m_Builder.CreateBr(condBB);
-    m_Builder.SetInsertPoint(condBB);
-
-    llvm::Value *currIdx = m_Builder.CreateLoad(
-        llvm::Type::getInt32Ty(m_Context), idxAlloca, "curr_idx");
-    llvm::Value *limit = nullptr;
-    if (collVal->getType()->isArrayTy()) {
-      limit = llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context),
-                                     collVal->getType()->getArrayNumElements());
-    } else {
-      // TODO: handle dynamic slices/vectors
-      limit = llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 10);
-    }
-    llvm::Value *cond = m_Builder.CreateICmpULT(currIdx, limit, "forcond");
-    m_Builder.CreateCondBr(cond, loopBB, elseBB);
-
-    loopBB->insertInto(f);
-    m_Builder.SetInsertPoint(loopBB);
-
-    // Define loop variable
-    m_ScopeStack.push_back({});
-    llvm::Type *elemTy = collVal->getType()->isArrayTy()
-                             ? collVal->getType()->getArrayElementType()
-                             : llvm::Type::getInt32Ty(m_Context);
-    llvm::Value *elemPtr = nullptr;
-    if (collVal->getType()->isPointerTy()) {
-      elemPtr = m_Builder.CreateGEP(elemTy, collVal, {currIdx});
-    } else {
-      llvm::Value *allocaColl = m_Builder.CreateAlloca(collVal->getType());
-      m_Builder.CreateStore(collVal, allocaColl);
-      elemPtr = m_Builder.CreateGEP(
-          collVal->getType(), allocaColl,
-          {llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0),
-           currIdx});
-    }
-    std::string vName = fe->VarName;
-    while (!vName.empty() &&
-           (vName[0] == '*' || vName[0] == '#' || vName[0] == '&' ||
-            vName[0] == '^' || vName[0] == '~' || vName[0] == '!'))
-      vName = vName.substr(1);
-    while (!vName.empty() &&
-           (vName.back() == '#' || vName.back() == '?' || vName.back() == '!'))
-      vName.pop_back();
-
-    llvm::Value *elem = m_Builder.CreateLoad(elemTy, elemPtr, vName);
-    llvm::AllocaInst *vAlloca =
-        m_Builder.CreateAlloca(elem->getType(), nullptr, vName);
-    m_Builder.CreateStore(elem, vAlloca);
-    m_NamedValues[vName] = vAlloca;
-    m_ValueTypes[vName] = elem->getType();
-    m_ValueElementTypes[vName] = elemTy; // Store elem type for reference
-
-    std::string myLabel = "";
-    if (!m_CFStack.empty() && m_CFStack.back().BreakTarget == nullptr)
-      myLabel = m_CFStack.back().Label;
-
-    m_CFStack.push_back(
-        {myLabel, afterBB, incrBB, resultAddr, m_ScopeStack.size()});
-    genStmt(fe->Body.get());
-    m_CFStack.pop_back();
-    cleanupScopes(m_ScopeStack.size() - 1);
-    m_ScopeStack.pop_back();
-
-    if (m_Builder.GetInsertBlock() &&
-        !m_Builder.GetInsertBlock()->getTerminator())
-      m_Builder.CreateBr(incrBB);
-
-    incrBB->insertInto(f);
-    m_Builder.SetInsertPoint(incrBB);
-    llvm::Value *nextIdx = m_Builder.CreateAdd(
-        currIdx, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-    m_Builder.CreateStore(nextIdx, idxAlloca);
-    m_Builder.CreateBr(condBB);
-
-    elseBB->insertInto(f);
-    m_Builder.SetInsertPoint(elseBB);
-    if (fe->ElseBody) {
-      m_CFStack.push_back(
-          {"", afterBB, nullptr, resultAddr, m_ScopeStack.size()});
-      genStmt(fe->ElseBody.get());
-      m_CFStack.pop_back();
-    }
-    if (m_Builder.GetInsertBlock() &&
-        !m_Builder.GetInsertBlock()->getTerminator())
-      m_Builder.CreateBr(afterBB);
-    afterBB->insertInto(f);
-    m_Builder.SetInsertPoint(afterBB);
-    return m_Builder.CreateLoad(m_Builder.getInt32Ty(), resultAddr,
-                                "for_result");
+    return genForExpr(fe);
   }
   if (auto *me = dynamic_cast<const MatchExpr *>(expr)) {
     return genMatchExpr(me);
@@ -1986,6 +1743,105 @@ llvm::Value *CodeGen::genUnaryExpr(const UnaryExpr *unary) {
     return m_Builder.CreateNeg(rhs, "negtmp");
   }
   return nullptr;
+}
+
+llvm::Value *CodeGen::genIfExpr(const IfExpr *ie) {
+  // Track result via alloca if this if yields a value (determined by
+  // PassExpr)
+  llvm::AllocaInst *resultAddr =
+      m_Builder.CreateAlloca(m_Builder.getInt32Ty(), nullptr, "if_result_addr");
+  // Initialize with 0 or some default
+  m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
+
+  llvm::Value *cond = genExpr(ie->Condition.get());
+  if (!cond)
+    return nullptr;
+  if (!cond->getType()->isIntegerTy(1)) {
+    cond = m_Builder.CreateICmpNE(
+        cond, llvm::ConstantInt::get(cond->getType(), 0), "ifcond");
+  }
+
+  llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock *thenBB = llvm::BasicBlock::Create(m_Context, "then", f);
+  llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(m_Context, "else");
+  llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(m_Context, "ifcont");
+
+  m_Builder.CreateCondBr(cond, thenBB, elseBB);
+
+  m_Builder.SetInsertPoint(thenBB);
+  m_CFStack.push_back({"", mergeBB, nullptr, resultAddr, m_ScopeStack.size()});
+  genStmt(ie->Then.get());
+  m_CFStack.pop_back();
+  llvm::BasicBlock *thenEndBB = m_Builder.GetInsertBlock();
+  if (thenEndBB && !thenEndBB->getTerminator())
+    m_Builder.CreateBr(mergeBB);
+
+  elseBB->insertInto(f);
+  m_Builder.SetInsertPoint(elseBB);
+  if (ie->Else) {
+    m_CFStack.push_back(
+        {"", mergeBB, nullptr, resultAddr, m_ScopeStack.size()});
+    genStmt(ie->Else.get());
+    m_CFStack.pop_back();
+  }
+  llvm::BasicBlock *elseEndBB = m_Builder.GetInsertBlock();
+  if (elseEndBB && !elseEndBB->getTerminator())
+    m_Builder.CreateBr(mergeBB);
+
+  mergeBB->insertInto(f);
+  m_Builder.SetInsertPoint(mergeBB);
+  return m_Builder.CreateLoad(m_Builder.getInt32Ty(), resultAddr, "if_result");
+}
+
+llvm::Value *CodeGen::genWhileExpr(const WhileExpr *we) {
+  llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock *condBB =
+      llvm::BasicBlock::Create(m_Context, "while_cond", f);
+  llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(m_Context, "while_loop");
+  llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(m_Context, "while_else");
+  llvm::BasicBlock *afterBB =
+      llvm::BasicBlock::Create(m_Context, "while_after");
+
+  // Result via alloca
+  llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
+      m_Builder.getInt32Ty(), nullptr, "while_result_addr");
+  m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
+
+  m_Builder.CreateBr(condBB);
+  m_Builder.SetInsertPoint(condBB);
+  llvm::Value *cond = genExpr(we->Condition.get());
+  m_Builder.CreateCondBr(cond, loopBB, elseBB);
+
+  loopBB->insertInto(f);
+  m_Builder.SetInsertPoint(loopBB);
+  std::string myLabel = "";
+  if (!m_CFStack.empty() && m_CFStack.back().BreakTarget == nullptr)
+    myLabel = m_CFStack.back().Label;
+
+  m_CFStack.push_back(
+      {myLabel, afterBB, condBB, resultAddr, m_ScopeStack.size()});
+  genStmt(we->Body.get());
+  m_CFStack.pop_back();
+  if (m_Builder.GetInsertBlock() &&
+      !m_Builder.GetInsertBlock()->getTerminator())
+    m_Builder.CreateBr(condBB);
+
+  elseBB->insertInto(f);
+  m_Builder.SetInsertPoint(elseBB);
+  if (we->ElseBody) {
+    m_CFStack.push_back(
+        {"", afterBB, nullptr, resultAddr, m_ScopeStack.size()});
+    genStmt(we->ElseBody.get());
+    m_CFStack.pop_back();
+  }
+  if (m_Builder.GetInsertBlock() &&
+      !m_Builder.GetInsertBlock()->getTerminator())
+    m_Builder.CreateBr(afterBB);
+
+  afterBB->insertInto(f);
+  m_Builder.SetInsertPoint(afterBB);
+  return m_Builder.CreateLoad(m_Builder.getInt32Ty(), resultAddr,
+                              "while_result");
 }
 
 llvm::Value *CodeGen::genAllocExpr(const AllocExpr *ae) {
@@ -3055,6 +2911,156 @@ void CodeGen::error(const ASTNode *node, const std::string &message) {
   } else {
     std::cerr << "error: " << message << "\n";
   }
+}
+
+llvm::Value *CodeGen::genLoopExpr(const LoopExpr *le) {
+  llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(m_Context, "loop", f);
+  llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(m_Context, "loop_after");
+
+  // Result via alloca
+  llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
+      m_Builder.getInt32Ty(), nullptr, "loop_result_addr");
+  m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
+
+  m_Builder.CreateBr(loopBB);
+  m_Builder.SetInsertPoint(loopBB);
+  std::string myLabel = "";
+  if (!m_CFStack.empty() && m_CFStack.back().BreakTarget == nullptr)
+    myLabel = m_CFStack.back().Label;
+
+  m_CFStack.push_back(
+      {myLabel, afterBB, loopBB, resultAddr, m_ScopeStack.size()});
+  genStmt(le->Body.get());
+  m_CFStack.pop_back();
+  if (m_Builder.GetInsertBlock() &&
+      !m_Builder.GetInsertBlock()->getTerminator())
+    m_Builder.CreateBr(loopBB);
+
+  afterBB->insertInto(f);
+  m_Builder.SetInsertPoint(afterBB);
+  return m_Builder.CreateLoad(m_Builder.getInt32Ty(), resultAddr,
+                              "loop_result");
+}
+
+llvm::Value *CodeGen::genForExpr(const ForExpr *fe) {
+  llvm::Value *collVal = genExpr(fe->Collection.get());
+  if (!collVal)
+    return nullptr;
+
+  llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+
+  // Only support Array/Slice iteration for now
+  if (!collVal->getType()->isPointerTy() && !collVal->getType()->isArrayTy()) {
+    error(fe, "Only arrays and pointers can be iterated in for loops");
+    return nullptr;
+  }
+
+  llvm::BasicBlock *condBB = llvm::BasicBlock::Create(m_Context, "for_cond", f);
+  llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(m_Context, "for_loop");
+  llvm::BasicBlock *incrBB = llvm::BasicBlock::Create(m_Context, "for_incr");
+  llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(m_Context, "for_else");
+  llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(m_Context, "for_after");
+
+  // Result via alloca
+  llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
+      m_Builder.getInt32Ty(), nullptr, "for_result_addr");
+  m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
+
+  // Loop index
+  llvm::AllocaInst *idxAlloca = m_Builder.CreateAlloca(
+      llvm::Type::getInt32Ty(m_Context), nullptr, "for_idx");
+  m_Builder.CreateStore(
+      llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0), idxAlloca);
+
+  m_Builder.CreateBr(condBB);
+  m_Builder.SetInsertPoint(condBB);
+
+  llvm::Value *currIdx = m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context),
+                                              idxAlloca, "curr_idx");
+  llvm::Value *limit = nullptr;
+  if (collVal->getType()->isArrayTy()) {
+    limit = llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context),
+                                   collVal->getType()->getArrayNumElements());
+  } else {
+    // TODO: handle dynamic slices/vectors
+    limit = llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 10);
+  }
+  llvm::Value *cond = m_Builder.CreateICmpULT(currIdx, limit, "forcond");
+  m_Builder.CreateCondBr(cond, loopBB, elseBB);
+
+  loopBB->insertInto(f);
+  m_Builder.SetInsertPoint(loopBB);
+
+  // Define loop variable
+  m_ScopeStack.push_back({});
+  llvm::Type *elemTy = collVal->getType()->isArrayTy()
+                           ? collVal->getType()->getArrayElementType()
+                           : llvm::Type::getInt32Ty(m_Context);
+  llvm::Value *elemPtr = nullptr;
+  if (collVal->getType()->isPointerTy()) {
+    elemPtr = m_Builder.CreateGEP(elemTy, collVal, {currIdx});
+  } else {
+    llvm::Value *allocaColl = m_Builder.CreateAlloca(collVal->getType());
+    m_Builder.CreateStore(collVal, allocaColl);
+    elemPtr = m_Builder.CreateGEP(
+        collVal->getType(), allocaColl,
+        {llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0),
+         currIdx});
+  }
+  std::string vName = fe->VarName;
+  while (!vName.empty() &&
+         (vName[0] == '*' || vName[0] == '#' || vName[0] == '&' ||
+          vName[0] == '^' || vName[0] == '~' || vName[0] == '!'))
+    vName = vName.substr(1);
+  while (!vName.empty() &&
+         (vName.back() == '#' || vName.back() == '?' || vName.back() == '!'))
+    vName.pop_back();
+
+  llvm::Value *elem = m_Builder.CreateLoad(elemTy, elemPtr, vName);
+  llvm::AllocaInst *vAlloca =
+      m_Builder.CreateAlloca(elem->getType(), nullptr, vName);
+  m_Builder.CreateStore(elem, vAlloca);
+  m_NamedValues[vName] = vAlloca;
+  m_ValueTypes[vName] = elem->getType();
+  m_ValueElementTypes[vName] = elemTy; // Store elem type for reference
+
+  std::string myLabel = "";
+  if (!m_CFStack.empty() && m_CFStack.back().BreakTarget == nullptr)
+    myLabel = m_CFStack.back().Label;
+
+  m_CFStack.push_back(
+      {myLabel, afterBB, incrBB, resultAddr, m_ScopeStack.size()});
+  genStmt(fe->Body.get());
+  m_CFStack.pop_back();
+  cleanupScopes(m_ScopeStack.size() - 1);
+  m_ScopeStack.pop_back();
+
+  if (m_Builder.GetInsertBlock() &&
+      !m_Builder.GetInsertBlock()->getTerminator())
+    m_Builder.CreateBr(incrBB);
+
+  incrBB->insertInto(f);
+  m_Builder.SetInsertPoint(incrBB);
+  llvm::Value *nextIdx = m_Builder.CreateAdd(
+      currIdx, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+  m_Builder.CreateStore(nextIdx, idxAlloca);
+  m_Builder.CreateBr(condBB);
+
+  elseBB->insertInto(f);
+  m_Builder.SetInsertPoint(elseBB);
+  if (fe->ElseBody) {
+    m_CFStack.push_back(
+        {"", afterBB, nullptr, resultAddr, m_ScopeStack.size()});
+    genStmt(fe->ElseBody.get());
+    m_CFStack.pop_back();
+  }
+  if (m_Builder.GetInsertBlock() &&
+      !m_Builder.GetInsertBlock()->getTerminator())
+    m_Builder.CreateBr(afterBB);
+  afterBB->insertInto(f);
+  m_Builder.SetInsertPoint(afterBB);
+  return m_Builder.CreateLoad(m_Builder.getInt32Ty(), resultAddr, "for_result");
 }
 
 llvm::Value *CodeGen::genMatchExpr(const MatchExpr *expr) {
