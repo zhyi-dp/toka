@@ -277,6 +277,54 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
   // 'is' operator - Specialized 'peek' evaluation to avoid destructive moves
   if (bin->Op == "is") {
+    // Special handling for 'var is nullptr' (or '~var is nullptr') to avoid
+    // unsafe dereferencing
+    const VariableExpr *targetVar = nullptr;
+    const Expr *currentLHS = bin->LHS.get();
+
+    // Peel all UnaryExpr layers (e.g. ~?p -> Unary(~) -> Unary(?) -> Var(p))
+    while (true) {
+      if (auto *ve = dynamic_cast<const VariableExpr *>(currentLHS)) {
+        targetVar = ve;
+        break;
+      } else if (auto *ue = dynamic_cast<const UnaryExpr *>(currentLHS)) {
+        currentLHS = ue->RHS.get();
+      } else {
+        break;
+      }
+    }
+
+    if (targetVar) {
+      if (dynamic_cast<const NullExpr *>(bin->RHS.get())) {
+        // Get the base name sans morphology
+        std::string baseName = targetVar->Name;
+        while (!baseName.empty() && (baseName[0] == '*' || baseName[0] == '#' ||
+                                     baseName[0] == '&' || baseName[0] == '^' ||
+                                     baseName[0] == '~' || baseName[0] == '!'))
+          baseName = baseName.substr(1);
+        while (!baseName.empty() &&
+               (baseName.back() == '#' || baseName.back() == '?' ||
+                baseName.back() == '!'))
+          baseName.pop_back();
+
+        if (m_Symbols.count(baseName)) {
+          TokaSymbol &sym = m_Symbols[baseName];
+          // Shared Pointer: { ptr, ptr }
+          if (sym.morphology == Morphology::Shared) {
+            llvm::Value *identity = sym.allocaPtr;
+            if (identity) {
+              // Get pointer to the first element (data ptr)
+              llvm::Value *dataPtrAddr = m_Builder.CreateStructGEP(
+                  sym.soulType, identity, 0, "sh_data_ptr_addr");
+              llvm::Value *dataPtr = m_Builder.CreateLoad(
+                  m_Builder.getPtrTy(), dataPtrAddr, "sh_data_ptr");
+              return m_Builder.CreateIsNull(dataPtr, "sh_is_null");
+            }
+          }
+        }
+      }
+    }
+
     auto evaluatePeek = [&](const Expr *e) -> llvm::Value * {
       const Expr *target = e;
       if (auto *u = dynamic_cast<const UnaryExpr *>(e)) {
@@ -287,10 +335,6 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
       }
       if (auto *v = dynamic_cast<const VariableExpr *>(target)) {
         std::string baseName = v->Name;
-        while (!baseName.empty() && (baseName[0] == '*' || baseName[0] == '#' ||
-                                     baseName[0] == '&' || baseName[0] == '^' ||
-                                     baseName[0] == '~' || baseName[0] == '!'))
-          baseName = baseName.substr(1);
         while (!baseName.empty() &&
                (baseName.back() == '#' || baseName.back() == '?' ||
                 baseName.back() == '!'))
@@ -317,6 +361,18 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
     // Special Case: 'expr is nullptr' (Null check)
     if (dynamic_cast<const NullExpr *>(bin->RHS.get())) {
+      while (lhsVal->getType()->isStructTy() &&
+             lhsVal->getType()->getStructNumElements() == 1) {
+        lhsVal = m_Builder.CreateExtractValue(lhsVal, 0);
+      }
+
+      if (lhsVal->getType()->isIntegerTy()) {
+        // ADDR0 is null?
+        return m_Builder.CreateICmpEQ(
+            lhsVal, llvm::ConstantInt::get(lhsVal->getType(), 0),
+            "is_null_int");
+      }
+
       return m_Builder.CreateIsNull(lhsVal, "is_null");
     }
 
@@ -441,7 +497,19 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   if (bin->Op == ">=") {
     return m_Builder.CreateICmpSGE(lhs, rhs, "ge_tmp");
   }
-  if (bin->Op == "==") {
+  if (bin->Op == "==" || bin->Op == "!=") {
+    // 1. Unwrap Single-Element Structs (Strong Types)
+    auto unwrap = [&](llvm::Value *v) -> llvm::Value * {
+      while (v->getType()->isStructTy() &&
+             v->getType()->getStructNumElements() == 1) {
+        v = m_Builder.CreateExtractValue(v, 0);
+      }
+      return v;
+    };
+
+    lhs = unwrap(lhs);
+    rhs = unwrap(rhs);
+
     if (lhs->getType() != rhs->getType()) {
       if (lhs->getType()->isIntegerTy() && rhs->getType()->isIntegerTy()) {
         if (lhs->getType()->getIntegerBitWidth() >
@@ -451,14 +519,36 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
           lhs = m_Builder.CreateZExt(lhs, rhs->getType());
       } else if (lhs->getType()->isPointerTy() &&
                  rhs->getType()->isPointerTy()) {
-        // LLVM requires pointers to be same type for ICmp
         rhs = m_Builder.CreateBitCast(rhs, lhs->getType());
+      } else {
+        // Ptr vs Int Mismatch (e.g. ptr == ADDR0)
+        if (lhs->getType()->isPointerTy() && rhs->getType()->isIntegerTy()) {
+          lhs = m_Builder.CreatePtrToInt(lhs, rhs->getType());
+        } else if (lhs->getType()->isIntegerTy() &&
+                   rhs->getType()->isPointerTy()) {
+          rhs = m_Builder.CreatePtrToInt(rhs, lhs->getType());
+        }
       }
     }
-    return m_Builder.CreateICmpEQ(lhs, rhs, "eq_tmp");
+
+    // Final check to avoid assertion
+    if (!lhs->getType()->isIntOrIntVectorTy() &&
+        !lhs->getType()->isPtrOrPtrVectorTy()) {
+      // If still struct (e.g. multi-field shape), comparison is invalid
+      // unless we implement deep comparison (not done yet)
+      // error(bin, "Cannot compare compound types");
+      // return llvm::ConstantInt::getFalse(m_Context);
+      // For now, let it fail or default
+    }
+    llvm::Value *cmp = m_Builder.CreateICmpEQ(lhs, rhs, "eq_tmp");
+    if (bin->Op == "!=")
+      return m_Builder.CreateNot(cmp, "ne_tmp");
+    return cmp;
   }
-  if (bin->Op == "!=")
-    return m_Builder.CreateICmpNE(lhs, rhs, "ne_tmp");
+  if (bin->Op == "!=") {
+    // Should have been handled above
+    return nullptr;
+  }
   return nullptr;
 }
 
@@ -1406,10 +1496,14 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
     if (callee && i < callee->getFunctionType()->getNumParams())
       pTy = callee->getFunctionType()->getParamType(i);
 
-    bool isCaptured = (pTy && (pTy->isPointerTy() && (funcDecl || extDecl)));
+    bool isCaptured = false;
 
     if (funcDecl && i < funcDecl->Args.size()) {
       llvm::Type *logicalTy = resolveType(funcDecl->Args[i].Type, false);
+      if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
+        isCaptured = true;
+    } else if (extDecl && i < extDecl->Args.size()) {
+      llvm::Type *logicalTy = resolveType(extDecl->Args[i].Type, false);
       if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
         isCaptured = true;
     }
@@ -1446,7 +1540,7 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
     }
     argsV.push_back(val);
   }
-  return m_Builder.CreateCall(callee, argsV);
+  return m_Builder.CreateCall(callee->getFunctionType(), callee, argsV);
 }
 
 llvm::Value *CodeGen::genPostfixExpr(const PostfixExpr *post) {
@@ -1652,6 +1746,80 @@ llvm::Value *CodeGen::genNewExpr(const NewExpr *newExpr) {
   }
 
   return heapPtr;
+}
+
+llvm::Value *CodeGen::genTupleExpr(const TupleExpr *expr) {
+  std::vector<llvm::Constant *> consts;
+  std::vector<llvm::Value *> values;
+  bool allConst = true;
+
+  for (auto &e : expr->Elements) {
+    llvm::Value *v = genExpr(e.get());
+    if (!v)
+      return nullptr;
+    values.push_back(v);
+    if (auto *c = llvm::dyn_cast<llvm::Constant>(v)) {
+      consts.push_back(c);
+    } else {
+      allConst = false;
+    }
+  }
+
+  if (allConst) {
+    return llvm::ConstantStruct::getAnon(m_Context, consts);
+  }
+
+  std::vector<llvm::Type *> types;
+  for (auto *v : values)
+    types.push_back(v->getType());
+  llvm::StructType *st = llvm::StructType::get(m_Context, types);
+  llvm::Value *val = llvm::UndefValue::get(st);
+  for (size_t i = 0; i < values.size(); ++i) {
+    val = m_Builder.CreateInsertValue(val, values[i], i);
+  }
+  return val;
+}
+
+llvm::Value *CodeGen::genArrayExpr(const ArrayExpr *expr) {
+  if (expr->Elements.empty())
+    return nullptr;
+
+  std::vector<llvm::Constant *> consts;
+  std::vector<llvm::Value *> values;
+  bool allConst = true;
+
+  for (auto &e : expr->Elements) {
+    llvm::Value *v = genExpr(e.get());
+    if (!v)
+      return nullptr;
+    values.push_back(v);
+    if (auto *c = llvm::dyn_cast<llvm::Constant>(v)) {
+      consts.push_back(c);
+    } else {
+      allConst = false;
+    }
+  }
+
+  llvm::Type *elemTy = values[0]->getType();
+  llvm::ArrayType *arrTy = llvm::ArrayType::get(elemTy, values.size());
+
+  if (allConst) {
+    return llvm::ConstantArray::get(arrTy, consts);
+  }
+
+  llvm::Value *val = llvm::UndefValue::get(arrTy);
+  for (size_t i = 0; i < values.size(); ++i) {
+    llvm::Value *elt = values[i];
+    if (elt->getType() != elemTy) {
+      // Minimal cast attempt for safety
+      if (elt->getType()->isIntegerTy() && elemTy->isIntegerTy())
+        elt = m_Builder.CreateIntCast(elt, elemTy, true);
+      else if (elt->getType()->isPointerTy() && elemTy->isPointerTy())
+        elt = m_Builder.CreateBitCast(elt, elemTy);
+    }
+    val = m_Builder.CreateInsertValue(val, elt, i);
+  }
+  return val;
 }
 
 } // namespace toka

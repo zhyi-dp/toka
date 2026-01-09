@@ -93,6 +93,15 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                        argDecl.IsShared, argDecl.IsReference,
                        argDecl.IsMutable || argDecl.IsValueMutable,
                        argDecl.IsNullable || argDecl.IsPointerNullable, pTy);
+
+    // CRITICAL: Captured arguments (Implicit Pointers) must use Pointer mode
+    // so getEntityAddr loads the real address from the alloca.
+    if (isCaptured) {
+      sym.mode = AddressingMode::Pointer;
+      if (sym.indirectionLevel == 0)
+        sym.indirectionLevel = 1;
+    }
+
     sym.isRebindable = argDecl.IsRebindable;
     sym.isContinuous = pTy->isArrayTy();
     m_Symbols[argName] = sym;

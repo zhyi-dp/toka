@@ -30,6 +30,10 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
       dynamic_cast<const StringExpr *>(expr)) {
     return genLiteralExpr(expr);
   }
+  if (auto e = dynamic_cast<const TupleExpr *>(expr))
+    return genTupleExpr(e);
+  if (auto e = dynamic_cast<const ArrayExpr *>(expr))
+    return genArrayExpr(e);
 
   // 3. 内存与成员访问
   if (auto e = dynamic_cast<const MemberExpr *>(expr))

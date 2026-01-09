@@ -265,6 +265,7 @@ If no label is provided, `break` and `continue` target the innermost loop.
     - **Physical Rule**: Function arguments that are **Shapes (Structs/Tuples/Arrays)** or marked as **Mutable (`#`)** are passed as **Addresses** (pointers) in the LLVM IR, even if they appear as "pass-by-value" in source.
     - **Invisible Implementation**: Inside the function, these arguments are registered as **Implicit Pointers** (`isImplicitPtr = true`).
     - **Semantic Symmetry**: The source code treats them as values, but the CodeGen performs an automatic **Soul Extraction** (Load) before any access, ensuring "Value Semantics" are maintained over "Pointer Reality".
+    - **Raw Pointers**: Raw pointers (`*T`) are treated as primitive values (Address Integer) and passed by value, NOT by address (unless captured for mutation).
     - Immutable primitives remain simple pass-by-value (copy).
 
 ### 4.2 Explicit Mutation Requirement

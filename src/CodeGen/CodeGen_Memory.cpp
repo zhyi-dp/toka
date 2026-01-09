@@ -369,10 +369,21 @@ llvm::Value *CodeGen::getEntityAddr(const std::string &name) {
     if (auto *glob = m_Module->getNamedGlobal(baseName)) {
       return glob;
     }
+    std::cerr << "CodeGen Internal Error: Symbol '" << baseName
+              << "' not found in getEntityAddr (and not global)\n";
     return nullptr;
   }
 
   TokaSymbol &sym = it->second;
+  if (!sym.allocaPtr) {
+    std::cerr << "CodeGen Internal Error: Symbol '" << baseName
+              << "' has null allocaPtr\n";
+    return nullptr;
+  }
+
+  // std::cerr << "DEBUG: getEntityAddr: " << baseName << " mode=" <<
+  // (int)sym.mode << " level=" << sym.indirectionLevel << "\n";
+
   llvm::Value *current = sym.allocaPtr; // Identity (Box)
 
   // 1. Direct Mode: Box is the Soul
@@ -381,15 +392,10 @@ llvm::Value *CodeGen::getEntityAddr(const std::string &name) {
   }
 
   // 2. Pointer Mode: Peeling Recursive loads
+  // LLVM 17 requires explicit type for loads.
   for (int i = 0; i < sym.indirectionLevel; ++i) {
     current = m_Builder.CreateLoad(m_Builder.getPtrTy(), current,
                                    baseName + ".peel_layer");
-  }
-
-  // 3. Reference Mode: Additional implicit load
-  if (sym.mode == AddressingMode::Reference) {
-    current = m_Builder.CreateLoad(m_Builder.getPtrTy(), current,
-                                   baseName + ".deref_ref");
   }
 
   return current;

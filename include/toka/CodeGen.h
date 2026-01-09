@@ -141,6 +141,8 @@ private:
   llvm::Value *genIndexExpr(const ArrayIndexExpr *expr);
   llvm::Value *genVariableExpr(const VariableExpr *expr);
   llvm::Value *genLiteralExpr(const Expr *expr);
+  llvm::Value *genTupleExpr(const TupleExpr *expr);
+  llvm::Value *genArrayExpr(const ArrayExpr *expr);
   llvm::Value *genCastExpr(const CastExpr *expr);
   llvm::Value *genUnaryExpr(const UnaryExpr *expr);
   llvm::Value *genIfExpr(const IfExpr *expr);

@@ -77,27 +77,41 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
         if (shTy->isStructTy()) {
           llvm::Value *sh = m_Builder.CreateLoad(shTy, it->Alloca, "sh_pop");
           llvm::Value *refPtr = m_Builder.CreateExtractValue(sh, 1, "ref_ptr");
-          llvm::Value *count = m_Builder.CreateLoad(
-              llvm::Type::getInt32Ty(m_Context), refPtr, "ref_count");
-          llvm::Value *dec = m_Builder.CreateSub(
-              count,
-              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-          m_Builder.CreateStore(dec, refPtr);
-          llvm::Value *isZero = m_Builder.CreateICmpEQ(
-              dec,
-              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+          llvm::Value *refIsNotNull =
+              m_Builder.CreateIsNotNull(refPtr, "ref_not_null");
+
           llvm::Function *f = currBB->getParent();
           if (f) {
+            llvm::BasicBlock *decBB =
+                llvm::BasicBlock::Create(m_Context, "sh_dec", f);
+            llvm::BasicBlock *afterDecBB =
+                llvm::BasicBlock::Create(m_Context, "sh_after_dec", f);
+
+            m_Builder.CreateCondBr(refIsNotNull, decBB, afterDecBB);
+            m_Builder.SetInsertPoint(decBB);
+
+            llvm::Value *count = m_Builder.CreateLoad(
+                llvm::Type::getInt32Ty(m_Context), refPtr, "ref_count");
+            llvm::Value *dec = m_Builder.CreateSub(
+                count,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+            m_Builder.CreateStore(dec, refPtr);
+            llvm::Value *isZero = m_Builder.CreateICmpEQ(
+                dec,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+
             llvm::BasicBlock *freeBB =
                 llvm::BasicBlock::Create(m_Context, "sh_free", f);
-            llvm::BasicBlock *contBB =
-                llvm::BasicBlock::Create(m_Context, "sh_cont", f);
-            m_Builder.CreateCondBr(isZero, freeBB, contBB);
+            // Reuse afterDecBB as continuation
+            m_Builder.CreateCondBr(isZero, freeBB, afterDecBB);
+
             m_Builder.SetInsertPoint(freeBB);
             llvm::Function *freeFunc = m_Module->getFunction("free");
             if (freeFunc) {
               llvm::Value *data =
                   m_Builder.CreateExtractValue(sh, 0, "data_ptr");
+              // Check data for null not strictly needed if refPtr valid?
+              // But refPtr controls lifecycle.
               m_Builder.CreateCall(
                   freeFunc, m_Builder.CreateBitCast(
                                 data, llvm::PointerType::getUnqual(
@@ -107,9 +121,10 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
                                 refPtr, llvm::PointerType::getUnqual(
                                             llvm::Type::getInt8Ty(m_Context))));
             }
-            m_Builder.CreateBr(contBB);
-            m_Builder.SetInsertPoint(contBB);
-            currBB = contBB;
+            m_Builder.CreateBr(afterDecBB);
+
+            m_Builder.SetInsertPoint(afterDecBB);
+            currBB = afterDecBB;
           }
         }
       } else if (it->IsUniquePointer && it->Alloca) {
