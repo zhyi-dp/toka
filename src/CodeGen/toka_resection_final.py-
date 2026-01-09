@@ -1,0 +1,97 @@
+import os
+
+# ================= 1. 配置物理参数 =================
+SOURCE_FILE = "CodeGen.cpp" # 备份好的原单体文件
+OUTPUT_DIR = "src/CodeGen"
+HEADER_CONTENT = """#include "toka/CodeGen.h"
+#include <cctype>
+#include <iostream>
+#include <set>
+#include <typeinfo>
+
+namespace toka {
+"""
+FOOTER_CONTENT = "\n} // namespace toka"
+
+# ================= 2. 核心映射表 =================
+MAPPING = {
+    "CodeGen_Expr.cpp": [
+        "genBinaryExpr", "genUnaryExpr", "genCastExpr", "genVariableExpr", 
+        "genLiteralExpr", "genMatchExpr", "genIfExpr", "genWhileExpr", 
+        "genLoopExpr", "genForExpr", "genPatternBinding"
+    ],
+    "CodeGen_Stmt.cpp": [
+        "genReturnStmt", "genBlockStmt", "genDeleteStmt", "cleanupScopes"
+    ],
+    "CodeGen_Memory.cpp": [
+        "genAllocExpr", "genFreeStmt", "genMemberExpr", "genIndexExpr", 
+        "genAddr", "getEntityAddr", "getIdentityAddr", 
+        "emitEntityAddr", "emitHandleAddr"
+    ],
+    "CodeGen_Decl.cpp": [
+        "genFunction", "genVariableDecl", "genDestructuringDecl", "genGlobal", 
+        "genExtern", "genShape", "genImpl", "genMethodCall", "resolveType"
+    ],
+    "CodeGen.cpp": [
+        "discover", "resolveSignatures", "generate", "print", "error"
+    ]
+}
+
+def extract_function_physical(content, func_name):
+    """
+    通过物理扫描定位 CodeGen::func_name 并提取完整大括号块
+    """
+    target = f"CodeGen::{func_name}"
+    target_idx = content.find(target)
+    if target_idx == -1: return None
+
+    # 溯源到行首作为起点
+    start_pos = content.rfind('\n', 0, target_idx) + 1
+    # 找第一个 '{'
+    brace_start = content.find('{', target_idx)
+    if brace_start == -1: return None
+    
+    # 大括号计数匹配
+    count = 0
+    for i in range(brace_start, len(content)):
+        if content[i] == '{': count += 1
+        elif content[i] == '}': count -= 1
+        if count == 0:
+            return content[start_pos : i + 1].strip()
+    return None
+
+def main():
+    if not os.path.exists(SOURCE_FILE):
+        print(f"找不到源文件: {SOURCE_FILE}")
+        return
+
+    with open(SOURCE_FILE, 'r', encoding='utf-8') as f:
+        full_content = f.read()
+
+    if not os.path.exists(OUTPUT_DIR): os.makedirs(OUTPUT_DIR)
+
+    for filename, funcs in MAPPING.items():
+        print(f"正在物理分拣: {filename}")
+        chunk = HEADER_CONTENT + "\n"
+        
+        # 特别处理主调度中心，确保路由逻辑
+        if filename == "CodeGen.cpp":
+            # 这里我为你保留一个逻辑出口，手动填补你刚改好的 Dispatcher 内容
+            print(f"  [Notice] {filename} 已包含分发器存根")
+
+        success_count = 0
+        for f_name in funcs:
+            body = extract_function_physical(full_content, f_name)
+            if body:
+                chunk += body + "\n\n"
+                success_count += 1
+            else:
+                print(f"  [Warning] 未能物理定位到函数: {f_name}")
+        
+        chunk += FOOTER_CONTENT
+        with open(os.path.join(OUTPUT_DIR, filename), 'w', encoding='utf-8') as f:
+            f.write(chunk)
+        print(f"  完成！提取了 {success_count} 个物理块。")
+
+if __name__ == "__main__":
+    main()

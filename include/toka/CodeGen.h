@@ -96,7 +96,7 @@ private:
   void cleanupScopes(size_t targetDepth);
   llvm::Value *genExpr(const Expr *expr);
   llvm::Value *genAddr(const Expr *expr);
-  llvm::Value *getVarAddr(const std::string &name);
+  // llvm::Value *getVarAddr(const std::string &name);
 
   // Address Layering Protocol
   llvm::Value *getEntityAddr(const std::string &name);
