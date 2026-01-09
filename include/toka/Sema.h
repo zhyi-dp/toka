@@ -110,6 +110,8 @@ private:
   // TypeName -> {MethodName -> ReturnType}
   std::map<std::string, std::map<std::string, std::string>> MethodMap;
   std::map<std::string, TraitDecl *> TraitMap;
+  // Key: "StructName@TraitName" -> {MethodName -> FunctionDecl*}
+  std::map<std::string, std::map<std::string, FunctionDecl *>> ImplMap;
   std::map<std::string, std::vector<EncapEntry>> EncapMap;
   std::string CurrentFunctionReturnType;
   std::string m_LastBorrowSource;

@@ -93,6 +93,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                        argDecl.IsShared, argDecl.IsReference,
                        argDecl.IsMutable || argDecl.IsValueMutable,
                        argDecl.IsNullable || argDecl.IsPointerNullable, pTy);
+    m_ValueTypeNames[argName] = argDecl.Type;
 
     // CRITICAL: Captured arguments (Implicit Pointers) must use Pointer mode
     // so getEntityAddr loads the real address from the alloca.
@@ -639,6 +640,34 @@ void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
     } else {
       error(decl, "Trait '" + decl->TraitName + "' not found");
     }
+
+    // Generate VTable
+    if (trait && !declOnly) {
+      std::vector<llvm::Constant *> vtableMethods;
+      llvm::Type *voidPtrTy =
+          llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context));
+      for (const auto &method : trait->Methods) {
+        std::string implFuncName =
+            decl->TraitName + "_" + decl->TypeName + "_" + method->Name;
+        llvm::Function *f = m_Module->getFunction(implFuncName);
+        if (f) {
+          vtableMethods.push_back(llvm::ConstantExpr::getBitCast(f, voidPtrTy));
+        } else {
+          vtableMethods.push_back(llvm::Constant::getNullValue(voidPtrTy));
+        }
+      }
+
+      if (!vtableMethods.empty()) {
+        llvm::ArrayType *arrTy =
+            llvm::ArrayType::get(voidPtrTy, vtableMethods.size());
+        llvm::Constant *init = llvm::ConstantArray::get(arrTy, vtableMethods);
+        std::string vtableName =
+            "_VTable_" + decl->TypeName + "_" + decl->TraitName;
+        new llvm::GlobalVariable(*m_Module, arrTy, true,
+                                 llvm::GlobalValue::ExternalLinkage, init,
+                                 vtableName);
+      }
+    }
   }
 
   m_CurrentSelfType = "";
@@ -648,6 +677,82 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
   llvm::Value *objVal = genExpr(expr->Object.get());
   if (!objVal)
     return nullptr;
+
+  // --- Dynamic Dispatch (dyn @Trait) ---
+  std::string dynamicTypeName = "";
+  if (auto *ve = dynamic_cast<const VariableExpr *>(expr->Object.get())) {
+    if (m_ValueTypeNames.count(ve->Name)) {
+      std::string t = m_ValueTypeNames[ve->Name];
+      if (t.size() >= 4 && t.substr(0, 3) == "dyn") {
+        dynamicTypeName = t;
+      }
+    }
+  }
+
+  if (!dynamicTypeName.empty()) {
+    std::string traitName = "";
+    if (dynamicTypeName.find("dyn @") == 0)
+      traitName = dynamicTypeName.substr(5);
+    else if (dynamicTypeName.find("dyn@") == 0)
+      traitName = dynamicTypeName.substr(4);
+
+    if (!traitName.empty() && m_Traits.count(traitName)) {
+      const TraitDecl *trait = m_Traits[traitName];
+      int methodIdx = -1;
+      const FunctionDecl *methodDecl = nullptr;
+
+      for (size_t i = 0; i < trait->Methods.size(); ++i) {
+        if (trait->Methods[i]->Name == expr->Method) {
+          methodIdx = i;
+          methodDecl = trait->Methods[i].get();
+          break;
+        }
+      }
+
+      if (methodIdx != -1) {
+        // 1. Extract Data and VTable
+        llvm::Value *dataPtr =
+            m_Builder.CreateExtractValue(objVal, 0, "dyn_data");
+        llvm::Value *vtablePtr =
+            m_Builder.CreateExtractValue(objVal, 1, "dyn_vtable");
+
+        // 2. Load Function Pointer from VTable
+        llvm::Type *voidPtrTy =
+            llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context));
+        llvm::Type *vtableArrayTy =
+            llvm::PointerType::getUnqual(voidPtrTy); // i8**
+
+        llvm::Value *vtableArray =
+            m_Builder.CreateBitCast(vtablePtr, vtableArrayTy);
+        llvm::Value *funcPtrAddr =
+            m_Builder.CreateConstGEP1_32(voidPtrTy, vtableArray, methodIdx);
+        llvm::Value *voidFuncPtr = m_Builder.CreateLoad(voidPtrTy, funcPtrAddr);
+
+        // 3. Prepare Arguments
+        std::vector<llvm::Value *> args;
+        std::vector<llvm::Type *> argTypes;
+
+        // Self (dataPtr)
+        args.push_back(dataPtr); // i8* passed to opaque ptr
+        argTypes.push_back(llvm::PointerType::getUnqual(m_Context));
+
+        for (auto &arg : expr->Args) {
+          llvm::Value *av = genExpr(arg.get());
+          args.push_back(av);
+          argTypes.push_back(av->getType());
+        }
+
+        // 4. Determine Return Type
+        llvm::Type *retTy = resolveType(methodDecl->ReturnType, false);
+        llvm::FunctionType *ft =
+            llvm::FunctionType::get(retTy, argTypes, false);
+
+        // 5. Call
+        return m_Builder.CreateCall(ft, voidFuncPtr, args);
+      }
+    }
+  }
+  // --- End Dynamic Dispatch ---
 
   llvm::Type *ty = objVal->getType();
   llvm::Type *structTy = nullptr;
@@ -873,6 +978,14 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
   // Handle 'shape' keyword (e.g. shape(u8, u8))
   if (baseType.size() > 5 && baseType.substr(0, 5) == "shape") {
     return resolveType(baseType.substr(5), hasPointer);
+  }
+
+  // Handle Dynamic Traits (dyn @Trait)
+  if (baseType.size() >= 4 && baseType.substr(0, 3) == "dyn") {
+    // Fat Pointer: { void* data, void* vtable }
+    llvm::Type *voidPtr =
+        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context));
+    return llvm::StructType::get(m_Context, {voidPtr, voidPtr});
   }
 
   // Handle Shared Pointers (~Type): { T*, i32* }

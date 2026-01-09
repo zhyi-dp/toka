@@ -235,6 +235,15 @@ void Sema::registerGlobals(Module &M) {
       MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
       implemented.insert(Method->Name);
     }
+    // Populate ImplMap
+    if (!Impl->TraitName.empty()) {
+      std::string implKey = Impl->TypeName + "@" + Impl->TraitName;
+      // DEBUG
+      llvm::errs() << "DEBUG: Registering Impl Key: '" << implKey << "'\n";
+      for (auto &Method : Impl->Methods) {
+        ImplMap[implKey][Method->Name] = Method.get();
+      }
+    }
     // Handle Trait Defaults
     if (!Impl->TraitName.empty()) {
       if (TraitMap.count(Impl->TraitName)) {
@@ -1545,6 +1554,24 @@ std::string Sema::checkExpr(Expr *E) {
     return "*" + baseType;
   } else if (auto *Met = dynamic_cast<MethodCallExpr *>(E)) {
     std::string ObjType = resolveType(checkExpr(Met->Object.get()));
+
+    // Check for Dynamic Trait Object
+    if (ObjType.size() >= 4 && ObjType.substr(0, 3) == "dyn") {
+      std::string traitName = "";
+      if (ObjType.rfind("dyn @", 0) == 0)
+        traitName = ObjType.substr(5);
+      else if (ObjType.rfind("dyn@", 0) == 0)
+        traitName = ObjType.substr(4);
+
+      if (!traitName.empty() && TraitMap.count(traitName)) {
+        TraitDecl *TD = TraitMap[traitName];
+        for (auto &M : TD->Methods) {
+          if (M->Name == Met->Method)
+            return M->ReturnType;
+        }
+      }
+    }
+
     if (MethodMap.count(ObjType) && MethodMap[ObjType].count(Met->Method)) {
       return MethodMap[ObjType][Met->Method];
     }
@@ -1833,7 +1860,7 @@ std::string Sema::checkExpr(Expr *E) {
   }
 
   return "unknown";
-}
+} // namespace toka
 
 std::string Sema::resolveType(const std::string &Type) {
   size_t scopePos = Type.find("::");
@@ -1882,6 +1909,36 @@ bool Sema::isTypeCompatible(const std::string &Target,
   if (T == S)
     return true;
 
+  // Dynamic Trait Coercion (Unsizing)
+  if (T.size() >= 4 && T.substr(0, 3) == "dyn") {
+    std::string traitName = "";
+    if (T.rfind("dyn @", 0) == 0)
+      traitName = T.substr(5);
+    else if (T.rfind("dyn@", 0) == 0)
+      traitName = T.substr(4);
+
+    if (!traitName.empty()) {
+      // Strip morphology from S to find the Soul type
+      std::string baseS = S;
+      while (baseS.size() > 0 && (baseS[0] == '^' || baseS[0] == '*' ||
+                                  baseS[0] == '&' || baseS[0] == '~')) {
+        baseS = baseS.substr(1);
+      }
+      while (!baseS.empty() && (baseS.back() == '!' || baseS.back() == '?')) {
+        baseS.pop_back();
+      }
+
+      std::string implKey = baseS + "@" + traitName;
+      llvm::errs() << "DEBUG: Checking Impl Key: '" << implKey << "'\n";
+      // Check Contract
+      if (ImplMap.count(implKey)) {
+        return true;
+      }
+      // Fallthrough: if explicit match failed, maybe S is already dyn @Shape?
+      // (Handled by T==S above)
+    }
+  }
+
   // Integer Literal Promotion
   if ((T == "i32" || T == "u32" || T == "i64" || T == "u64" || T == "i8" ||
        T == "u8" || T == "i16" || T == "u16") &&
@@ -1911,8 +1968,8 @@ bool Sema::isTypeCompatible(const std::string &Target,
     return false;
   }
 
-  // Morphology Compatibility (ignore attributes like ! or ? for base match,
-  // but enforce nullable rules)
+  // Morphology Compatibility (ignore attributes like ! or ? for base
+  // match, but enforce nullable rules)
   if (!T.empty() && !S.empty() &&
       (T[0] == '^' || T[0] == '*' || T[0] == '~' || T[0] == '&') &&
       (S[0] == '^' || S[0] == '*' || S[0] == '~' || S[0] == '&')) {
@@ -1928,8 +1985,8 @@ bool Sema::isTypeCompatible(const std::string &Target,
     if (!SBase.empty() && (SBase[0] == '?' || SBase[0] == '!'))
       SBase = SBase.substr(1);
 
-    // If S is nullable and T is not, they are NOT compatible (save for null
-    // literal)
+    // If S is nullable and T is not, they are NOT compatible (save for
+    // null literal)
     bool SIsNullable = (S.size() > 1 && S[1] == '?');
     bool TIsNullable = (T.size() > 1 && T[1] == '?');
 
@@ -1941,17 +1998,18 @@ bool Sema::isTypeCompatible(const std::string &Target,
 
   if (S == "none") {
     // Value nulling: Requires the value type to have a nullable suffix
-    // But we must distinguish between ^?T (pointer nullable) and ^T? (value
-    // nullable) Actually in checkExpr(VariableExpr), we return baseType + "?"
-    // if either is nullable.
-    // To be strict, none should target the value attribute.
+    // But we must distinguish between ^?T (pointer nullable) and ^T?
+    // (value nullable) Actually in checkExpr(VariableExpr), we return
+    // baseType + "?" if either is nullable. To be strict, none should
+    // target the value attribute.
     if (!T.empty() && T.back() == '?') {
       return true;
     }
     return false;
   }
 
-  // Basic Tuple/Struct weak check: if both look like tuples, allow for now
+  // Basic Tuple/Struct weak check: if both look like tuples, allow for
+  // now
   if (T.size() > 0 && T[0] == '(' && S.size() > 0 && S[0] == '(')
     return true;
 

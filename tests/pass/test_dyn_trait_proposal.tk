@@ -1,0 +1,45 @@
+import std/io::println
+
+// 1. Trait Definition
+trait @Shape {
+    pub fn area(self) -> i32
+}
+
+// 2. Concrete Shapes
+shape Rect(w: i32, h: i32)
+shape Square(s: i32)
+
+// 3. Implementations
+impl Rect@Shape {
+    fn area(self) -> i32 { 
+        return self.w * self.h 
+    }
+}
+
+impl Square@Shape {
+    fn area(self) -> i32 { 
+        return self.s * self.s 
+    }
+}
+
+// 4. Dynamic Dispatch Function
+// 'dyn @Shape' implies a Trait Object.
+// The ABI will automatically pass this as a Fat Pointer (DataPtr, VTablePtr)
+// simply because it's a heavy/unsized type, similar to how Structs are passed by implicit ptr.
+fn print_dynamic_shape(s: dyn @Shape) {
+    // Dynamic dispatch happens here via VTable lookup
+    println("Dynamic Area: {}", s.area())
+}
+
+fn main() -> i32 {
+    auto r = Rect(w = 10, h = 20)
+    auto q = Square(s = 5)
+
+    // 5. Implicit Coercion (Unsizing)
+    // Coercing Rect (Concrete) -> dyn @Shape (Trait Object)
+    // No '&' needed. The compiler captures 'r' and 'q' in place.
+    print_dynamic_shape(r)
+    print_dynamic_shape(q)
+    
+    return 0
+}

@@ -1530,6 +1530,64 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
 
     if (i < callee->getFunctionType()->getNumParams()) {
       llvm::Type *paramType = callee->getFunctionType()->getParamType(i);
+
+      // Unsizing Coercion (Concrete -> dyn @Trait)
+      std::string targetArgType =
+          (funcDecl ? funcDecl->Args[i].Type
+                    : (extDecl ? extDecl->Args[i].Type : ""));
+      if (targetArgType.size() >= 4 && targetArgType.substr(0, 3) == "dyn") {
+        // 1. Identify Trait Name
+        std::string traitName = "";
+        if (targetArgType.find("dyn @") == 0)
+          traitName = targetArgType.substr(5);
+        else if (targetArgType.find("dyn@") == 0)
+          traitName = targetArgType.substr(4);
+
+        // 2. Identify Concrete Type Name
+        std::string concreteName = "";
+        const Expr *argExpr = call->Args[i].get();
+        if (auto *ve = dynamic_cast<const VariableExpr *>(argExpr)) {
+          if (m_ValueElementTypes.count(ve->Name)) {
+            llvm::Type *ct = m_ValueElementTypes[ve->Name];
+            if (m_TypeToName.count(ct))
+              concreteName = m_TypeToName[ct];
+          }
+        } else if (auto *ne = dynamic_cast<const NewExpr *>(argExpr)) {
+          concreteName = ne->Type;
+        } else if (auto *ie = dynamic_cast<const InitStructExpr *>(argExpr)) {
+          concreteName = ie->ShapeName;
+        }
+
+        // 3. Construct Fat Pointer
+        if (!concreteName.empty() && !traitName.empty()) {
+          std::string vtableName = "_VTable_" + concreteName + "_" + traitName;
+          llvm::GlobalVariable *vtable =
+              m_Module->getGlobalVariable(vtableName);
+          if (vtable) {
+            llvm::Type *fatPtrTy = resolveType(targetArgType, false);
+            llvm::Value *ctxPtr = m_Builder.CreateBitCast(
+                val,
+                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+            llvm::Value *vtablePtr = m_Builder.CreateBitCast(
+                vtable,
+                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
+
+            llvm::Value *fatPtr = llvm::UndefValue::get(fatPtrTy);
+            fatPtr = m_Builder.CreateInsertValue(fatPtr, ctxPtr, 0);
+            fatPtr = m_Builder.CreateInsertValue(fatPtr, vtablePtr, 1);
+
+            // Pass address of Fat Pointer (Struct)
+            llvm::AllocaInst *tmp =
+                m_Builder.CreateAlloca(fatPtrTy, nullptr, "dyn_tmp");
+            m_Builder.CreateStore(fatPtr, tmp);
+            val = tmp;
+            // Skip standard casting if we handled it here?
+            // paramType is ptr (to dyn struct). val is ptr (to dyn struct).
+            // types match.
+          }
+        }
+      }
+
       if (val->getType() != paramType) {
         if (val->getType()->isIntegerTy() && paramType->isIntegerTy()) {
           val = m_Builder.CreateIntCast(val, paramType, true);
