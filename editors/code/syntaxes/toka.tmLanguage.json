@@ -1,6 +1,7 @@
 {
     "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
     "name": "Toka",
+    "scopeName": "source.toka",
     "patterns": [
         {
             "include": "#comments"
@@ -54,26 +55,76 @@
         "keywords": {
             "patterns": [
                 {
-                    "name": "keyword.control.toka",
-                    "match": "\\b(if|else|while|loop|for|match|return|break|continue|pass|in|yield|to|or|await|async|suspend|cancel|defer)\\b"
+                    "comment": "Danger zone keyword - Targeted for Red",
+                    "name": "keyword.other.unsafe.toka",
+                    "match": "\\bunsafe\\b"
                 },
                 {
-                    "name": "keyword.other.toka",
-                    "match": "\\b(fn|auto|shape|extern|import|pub|mut|new|dyn|move|where|default|delete|del|final|as|is|alloc|free|unsafe|impl|encap)\\b"
+                    "comment": "Conditional and branching control",
+                    "name": "keyword.control.conditional.toka",
+                    "match": "\\b(if|else|match|case)\\b"
                 },
                 {
+                    "comment": "Loop and iteration control",
+                    "name": "keyword.control.repeat.toka",
+                    "match": "\\b(for|while|loop|to|in)\\b"
+                },
+                {
+                    "comment": "Control flow redirection",
+                    "name": "keyword.control.flow.toka",
+                    "match": "\\b(break|continue|return|yield|defer|pass)\\b"
+                },
+                {
+                    "comment": "Asynchronous and concurrency control",
+                    "name": "keyword.control.async.toka",
+                    "match": "\\b(async|await|suspend|cancel)\\b"
+                },
+                {
+                    "comment": "Structural and type definition keywords",
+                    "name": "storage.type.toka",
+                    "match": "\\b(fn|shape|trait|impl|type|alias|extern|crate)\\b"
+                },
+                {
+                    "comment": "Storage and access modifiers",
+                    "name": "storage.modifier.toka",
+                    "match": "\\b(pub|mut|const|packed|dyn|final|move|auto)\\b"
+                },
+                {
+                    "comment": "Memory management keywords",
+                    "name": "keyword.other.memory.toka",
+                    "match": "\\b(new|delete|del|alloc|free)\\b"
+                },
+                {
+                    "comment": "Expression and type-utility keywords",
+                    "name": "keyword.operator.expression.toka",
+                    "match": "\\b(as|is|where|default|or)\\b"
+                },
+                {
+                    "comment": "Module system",
+                    "name": "keyword.other.import.toka",
+                    "match": "\\bimport\\b"
+                },
+                {
+                    "comment": "Language constants",
                     "name": "constant.language.toka",
-                    "match": "\\b(true|false|nullptr|none|self|Self|main)\\b"
+                    "match": "\\b(true|false|none|nullptr)\\b"
+                },
+                {
+                    "comment": "Special language identifiers",
+                    "name": "variable.language.special.toka",
+                    "match": "\\b(self|Self|main)\\b"
                 }
             ]
         },
         "types": {
             "patterns": [
                 {
+                    "comment": "Primitive and built-in types",
                     "name": "support.type.primitive.toka",
                     "match": "\\b(i8|u8|i16|u16|i32|u32|i64|u64|f32|f64|bool|void|char|byte|str|Task|Channel|Fn)\\b"
                 },
                 {
+                    "comment": "User defined types (PascalCase)",
                     "name": "entity.name.type.toka",
                     "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
                 }
@@ -94,19 +145,23 @@
         "storage": {
             "patterns": [
                 {
-                    "name": "storage.modifier.mutability.write.toka",
+                    "comment": "Writable modifier (#) - Targeted for Red",
+                    "name": "storage.modifier.mutability.writable.toka",
                     "match": "#"
                 },
                 {
-                    "name": "storage.modifier.mutability.null.toka",
-                    "match": "\\?"
-                },
-                {
-                    "name": "storage.modifier.mutability.write-null.toka",
+                    "comment": "Writable and Nullable modifier (!) - Targeted for Red",
+                    "name": "storage.modifier.mutability.nullable.writable.toka",
                     "match": "!"
                 },
                 {
-                    "name": "storage.modifier.mutability.none.toka",
+                    "comment": "Nullable modifier (?)",
+                    "name": "storage.modifier.nullable.toka",
+                    "match": "\\?"
+                },
+                {
+                    "comment": "Immutable modifier ($) - Follows variable color",
+                    "name": "punctuation.definition.variable.toka",
                     "match": "\\$"
                 }
             ]
@@ -131,13 +186,14 @@
                 },
                 {
                     "name": "keyword.operator.toka",
-                    "match": "\\+|\\-|\\*|\\/|%|==|!=|<|>|<=|>=|=|::|\\.|,|:|;"
+                    "match": "==|!=|<=|>=|::|\\+|\\-|\\*|\\/|%|<|>|=|\\.|,|:|;"
                 }
             ]
         },
         "functions": {
             "patterns": [
                 {
+                    "comment": "Function calls",
                     "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
                     "captures": {
                         "1": {
@@ -147,6 +203,5 @@
                 }
             ]
         }
-    },
-    "scopeName": "source.toka"
+    }
 }

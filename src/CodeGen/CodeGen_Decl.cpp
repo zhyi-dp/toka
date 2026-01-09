@@ -89,37 +89,12 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     // 4. Register in Symbol Table (Soul/Identity)
     TokaSymbol sym;
     sym.allocaPtr = alloca;
-    sym.llvmType = pTy;
-
-    // Determine AddressingMode and IndirectionLevel
-    sym.indirectionLevel = 0;
-    std::string typeStr = argDecl.Type;
-    while (!typeStr.empty() &&
-           (typeStr[0] == '*' || typeStr[0] == '^' || typeStr[0] == '~')) {
-      sym.indirectionLevel++;
-      typeStr = typeStr.substr(1);
-    }
-
-    if (sym.indirectionLevel == 0 &&
-        (argDecl.HasPointer || argDecl.IsUnique || argDecl.IsShared ||
-         argDecl.IsReference)) {
-      sym.indirectionLevel = 1;
-    }
-
-    if (argDecl.IsReference) {
-      sym.mode = AddressingMode::Reference;
-      sym.indirectionLevel = 1; // & is effectively 1 level
-    } else if (argDecl.HasPointer || argDecl.IsUnique || argDecl.IsShared) {
-      sym.mode = AddressingMode::Pointer;
-    } else {
-      sym.mode = AddressingMode::Direct;
-    }
-
+    fillSymbolMetadata(sym, argDecl.Type, argDecl.HasPointer, argDecl.IsUnique,
+                       argDecl.IsShared, argDecl.IsReference,
+                       argDecl.IsMutable || argDecl.IsValueMutable,
+                       argDecl.IsNullable || argDecl.IsPointerNullable, pTy);
     sym.isRebindable = argDecl.IsRebindable;
     sym.isContinuous = pTy->isArrayTy();
-    sym.isImplicitPtr = isCaptured;
-    sym.isExplicitPtr = isExplicit;
-    sym.isMutable = argDecl.IsMutable || argDecl.IsValueMutable;
     m_Symbols[argName] = sym;
 
     // Backward compatibility maps
@@ -365,40 +340,14 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
 
   TokaSymbol sym;
   sym.allocaPtr = alloca;
-  sym.llvmType = elemTy;
-
-  // Calculate IndirectionLevel and Mode
-  sym.indirectionLevel = 0;
-  std::string ts = var->TypeName;
-  while (!ts.empty() && (ts[0] == '*' || ts[0] == '^' || ts[0] == '~')) {
-    sym.indirectionLevel++;
-    ts = ts.substr(1);
-  }
-
-  if (sym.indirectionLevel == 0 &&
-      (var->HasPointer || var->IsUnique || var->IsShared || var->IsReference)) {
-    sym.indirectionLevel = 1;
-  }
-
-  if (var->IsReference) {
-    sym.mode = AddressingMode::Reference;
-    sym.indirectionLevel = 1;
-  } else if (var->HasPointer || var->IsUnique || var->IsShared) {
-    sym.mode = AddressingMode::Pointer;
-  } else {
-    sym.mode = AddressingMode::Direct;
-  }
-
+  fillSymbolMetadata(sym, var->TypeName, var->HasPointer, var->IsUnique,
+                     var->IsShared, var->IsReference, var->IsMutable,
+                     var->IsNullable || var->IsPointerNullable, elemTy);
   sym.isRebindable = var->IsRebindable;
   sym.isContinuous =
       (elemTy && elemTy->isArrayTy()) ||
       (dynamic_cast<const AllocExpr *>(var->Init.get()) &&
        dynamic_cast<const AllocExpr *>(var->Init.get())->IsArray);
-
-  sym.isImplicitPtr = false;
-  sym.isExplicitPtr =
-      var->HasPointer || var->IsUnique || var->IsShared || var->IsReference;
-  sym.isMutable = var->IsMutable;
   m_Symbols[varName] = sym;
 
   m_NamedValues[varName] = alloca;
@@ -479,15 +428,11 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
 
     TokaSymbol sym;
     sym.allocaPtr = alloca;
-    sym.llvmType = ty;
-    sym.mode =
-        AddressingMode::Direct; // Destructuring typically yields direct values
-    sym.indirectionLevel = 0;
+    // For destructuring, metadata is often already flattened
+    fillSymbolMetadata(sym, "", false, false, false, false, v.IsMutable,
+                       v.IsNullable, ty);
     sym.isRebindable = false;
     sym.isContinuous = ty->isArrayTy();
-    sym.isImplicitPtr = false;
-    sym.isExplicitPtr = false;
-    sym.isMutable = v.IsMutable;
     m_Symbols[vName] = sym;
 
     if (!m_ScopeStack.empty()) {
@@ -545,10 +490,11 @@ void CodeGen::genGlobal(const Stmt *stmt) {
 
     TokaSymbol sym;
     sym.allocaPtr = globalVar;
-    sym.llvmType = type;
-    sym.isImplicitPtr = false;
-    sym.isExplicitPtr = var->HasPointer;
-    sym.isMutable = var->IsMutable;
+    fillSymbolMetadata(sym, var->TypeName, var->HasPointer, var->IsUnique,
+                       var->IsShared, var->IsReference, var->IsMutable,
+                       var->IsNullable || var->IsPointerNullable, type);
+    sym.isRebindable = var->IsRebindable;
+    sym.isContinuous = type->isArrayTy();
     m_Symbols[var->Name] = sym;
   } else {
     // We could support global destructuring here, but for now just skip or
@@ -846,6 +792,53 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
   }
 
   return m_Builder.CreateCall(callee, args);
+}
+
+void CodeGen::fillSymbolMetadata(TokaSymbol &sym, const std::string &typeStr,
+                                 bool hasPointer, bool isUnique, bool isShared,
+                                 bool isReference, bool isMutable,
+                                 bool isNullable, llvm::Type *allocaElemTy) {
+  sym.indirectionLevel = 0;
+  std::string ts = typeStr;
+
+  // 1. Peel recursive indirection prefixes
+  while (!ts.empty() && (ts[0] == '*' || ts[0] == '^' || ts[0] == '~')) {
+    sym.indirectionLevel++;
+    ts = ts.substr(1);
+  }
+
+  // 2. Determine Addressing Mode
+  if (isReference) {
+    sym.mode = AddressingMode::Reference;
+    sym.indirectionLevel = 1;
+  } else if (hasPointer || isUnique || isShared || sym.indirectionLevel > 0) {
+    sym.mode = AddressingMode::Pointer;
+    if (sym.indirectionLevel == 0)
+      sym.indirectionLevel = 1;
+  } else {
+    sym.mode = AddressingMode::Direct;
+  }
+
+  // 3. Extract Elemental Soul Type (the 'Meat')
+  sym.soulType = resolveType(ts, false);
+  if (!sym.soulType)
+    sym.soulType = allocaElemTy;
+
+  // 4. Morphology (Ownership/Cleanup)
+  if (isUnique)
+    sym.morphology = Morphology::Unique;
+  else if (isShared)
+    sym.morphology = Morphology::Shared;
+  else if (hasPointer)
+    sym.morphology = Morphology::Raw;
+  else
+    sym.morphology = Morphology::None;
+
+  // 5. Semantic flags
+  sym.isMutable = isMutable;
+  sym.isNullable = isNullable;
+  // Note: isRebindable is usually set separately based on '#' token presence
+  // but it's often linked to morphology in declarations.
 }
 
 llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {

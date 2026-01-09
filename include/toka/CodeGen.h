@@ -24,21 +24,28 @@ class ImplDecl;
 class MethodCallExpr;
 
 enum class AddressingMode {
-  Direct,   // Stack-allocated value (e.g. i32, Array [N])
-  Pointer,  // Explicit pointer (e.g. *i32, ^Point)
-  Reference // Implicit alias (&v)
+  Direct,   // Stack allocated value (Box is Soul): i32, [5]i32
+  Pointer,  // Pointer orbit (Address in Box): *i32, ^Point, ~Point
+  Reference // Implicit alias: &v
+};
+
+enum class Morphology {
+  None,   // Scalar/Value
+  Raw,    // * (Manual)
+  Unique, // ^ (Auto-Owned)
+  Shared  // ~ (Ref-counted)
 };
 
 struct TokaSymbol {
-  llvm::Value *allocaPtr; // Identity (alloca address / Identity Slot)
-  llvm::Type *llvmType;   // Soul Type (e.g. Point struct)
-  AddressingMode mode;    // Tracking the addressing orbit
-  int indirectionLevel;   // Pointer depth (1 for *, 2 for **)
-  bool isRebindable;      // # (Identity mutability)
-  bool isContinuous;      // Pointing to a sequence (alloc [N])
-  bool isImplicitPtr;     // Legacy support (to be unified)
-  bool isExplicitPtr;     // Legacy support
-  bool isMutable;         // Entity mutability
+  llvm::Value *allocaPtr; // Identity (The stationary "Box" address)
+  llvm::Type *soulType;   // Soul Type (Explicit layout for LLVM 17 GEP/Load)
+  AddressingMode mode;    // Path type
+  Morphology morphology;  // Ownership/Cleanup logic
+  int indirectionLevel;   // Depth (1 for *p, 2 for **p)
+  bool isRebindable;      // # on identity (Swappable address)
+  bool isMutable;         // # on entity (Writable data)
+  bool isContinuous;      // Sequence marker (alloc [N])
+  bool isNullable;        // ?/! marker
 };
 
 class CodeGen {
@@ -102,6 +109,10 @@ private:
   std::vector<std::vector<VariableScopeInfo>> m_ScopeStack;
 
   llvm::Type *resolveType(const std::string &baseType, bool hasPointer);
+  void fillSymbolMetadata(TokaSymbol &sym, const std::string &typeStr,
+                          bool hasPointer, bool isUnique, bool isShared,
+                          bool isReference, bool isMutable, bool isNullable,
+                          llvm::Type *allocaElemTy);
 
   void cleanupScopes(size_t targetDepth);
   llvm::Value *genExpr(const Expr *expr);

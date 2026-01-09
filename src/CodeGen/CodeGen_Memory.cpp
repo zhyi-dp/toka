@@ -187,11 +187,11 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
     if (sym.mode == AddressingMode::Direct) {
       // Stack-allocated array [N]: Base is the Identity Slot itself
       // Requires double-GEP: [0, index]
-      if (sym.llvmType->isArrayTy()) {
-        return m_Builder.CreateInBoundsGEP(sym.llvmType, currentBase,
+      if (sym.soulType->isArrayTy()) {
+        return m_Builder.CreateInBoundsGEP(sym.soulType, currentBase,
                                            {m_Builder.getInt32(0), indexValue});
       }
-      return m_Builder.CreateInBoundsGEP(sym.llvmType, currentBase, indexValue);
+      return m_Builder.CreateInBoundsGEP(sym.soulType, currentBase, indexValue);
     } else {
       // Pointer or Reference: Peel the onion
       // For Pointer, we need to load 'indirectionLevel' times to get to the
@@ -207,7 +207,7 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
       }
 
       // 3. Final GEP Calculation (Single-level for pointer-based arrays)
-      return m_Builder.CreateInBoundsGEP(sym.llvmType, currentBase, indexValue);
+      return m_Builder.CreateInBoundsGEP(sym.soulType, currentBase, indexValue);
     }
   }
 
@@ -373,21 +373,23 @@ llvm::Value *CodeGen::getEntityAddr(const std::string &name) {
   }
 
   TokaSymbol &sym = it->second;
-  llvm::Value *current = sym.allocaPtr;
+  llvm::Value *current = sym.allocaPtr; // Identity (Box)
 
+  // 1. Direct Mode: Box is the Soul
   if (sym.mode == AddressingMode::Direct) {
-    // Regular variable: the alloca is the data address
     return current;
   }
 
-  // Pointer or Reference: Peel the onion to find the Soul
-  int loads = sym.indirectionLevel;
-  if (sym.mode == AddressingMode::Reference)
-    loads = 1;
-
-  for (int i = 0; i < loads; ++i) {
+  // 2. Pointer Mode: Peeling Recursive loads
+  for (int i = 0; i < sym.indirectionLevel; ++i) {
     current = m_Builder.CreateLoad(m_Builder.getPtrTy(), current,
-                                   baseName + ".soul_step");
+                                   baseName + ".peel_layer");
+  }
+
+  // 3. Reference Mode: Additional implicit load
+  if (sym.mode == AddressingMode::Reference) {
+    current = m_Builder.CreateLoad(m_Builder.getPtrTy(), current,
+                                   baseName + ".deref_ref");
   }
 
   return current;
