@@ -141,5 +141,12 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
   }
 }
 
+llvm::Value *CodeGen::genUnsafeStmt(const UnsafeStmt *us) {
+  return genStmt(us->Statement.get());
+}
+
+llvm::Value *CodeGen::genExprStmt(const ExprStmt *es) {
+  return genExpr(es->Expression.get());
+}
 
 } // namespace toka

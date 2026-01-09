@@ -54,6 +54,20 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
     return genForExpr(e);
   if (auto e = dynamic_cast<const MethodCallExpr *>(expr))
     return genMethodCall(e);
+  if (auto e = dynamic_cast<const CallExpr *>(expr))
+    return genCallExpr(e);
+  if (auto e = dynamic_cast<const PostfixExpr *>(expr))
+    return genPostfixExpr(e);
+  if (auto e = dynamic_cast<const PassExpr *>(expr))
+    return genPassExpr(e);
+  if (auto e = dynamic_cast<const BreakExpr *>(expr))
+    return genBreakExpr(e);
+  if (auto e = dynamic_cast<const ContinueExpr *>(expr))
+    return genContinueExpr(e);
+  if (auto e = dynamic_cast<const UnsafeExpr *>(expr))
+    return genUnsafeExpr(e);
+  if (auto e = dynamic_cast<const NewExpr *>(expr))
+    return genNewExpr(e);
 
   return nullptr;
 }
@@ -74,6 +88,10 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
     return genDeleteStmt(s);
   if (auto s = dynamic_cast<const FreeStmt *>(stmt))
     return genFreeStmt(s);
+  if (auto s = dynamic_cast<const UnsafeStmt *>(stmt))
+    return genUnsafeStmt(s);
+  if (auto s = dynamic_cast<const ExprStmt *>(stmt))
+    return genExprStmt(s);
 
   // 如果 Stmt 是 Expr 的包装
   if (auto e = dynamic_cast<const Expr *>(stmt))
