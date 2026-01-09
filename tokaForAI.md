@@ -190,15 +190,9 @@ match res {
 
 #### 3.4.2 The `pass` Keyword & Type Softening
 `pass` delivers a value from a block.
-- **Rules**: Must be the last effective action in a block. If one branch matches `T` and another matches `none`, the resulting type is "softened" to `T!` (Nullable).
-- **Example**:
-  ```scala
-  auto val = match res {
-      auto Maybe::One(v) => pass v
-      Maybe::None => pass none
-  }
-  // val is inferred as i64!
-  ```
+- **Rules**: Must be the last effective action in a block. 
+- **Physical Reality**: `pass` is a **Zero-cost Abstraction**. It merely stores the result of the block expression into a pre-allocated "Result Alloca" in the parent scope.
+- **Type Softening**: If one branch matches `T` and another matches `none`, the resulting type is inferred as `T!` (Nullable).
 
 #### 3.4.3 Expression-based `if`
 ```scala
@@ -336,6 +330,13 @@ Toka CodeGen implements the **Address Layering Protocol** to manage symbol resol
     - If `isImplicitPtr` or `isExplicitPtr` is `true`, it performs an automatic `load ptr, ptr %identity` to retrieve the soul from the shell.
     - If not a pointer, it returns the `Identity` directly (Identity = Soul).
 
+**The Physical Model Guide:**
+
+| Concept Layer | LLVM Expression | CodeGen API | Usage Context |
+| :--- | :--- | :--- | :--- |
+| **Identity (躯壳)** | `alloca` / handle ptr | `getIdentityAddr()` | Reseat, Drop, Move, `&ref` |
+| **Soul (灵魂)** | Data Block ptr | `getEntityAddr()` | Member access `.`, Arry `[]`, `genExpr` |
+
 **Contract**: All field accesses (`GEP`) and data operations must be performed on the **Soul** address. All ownership transfers (Move/Drop) must be performed on the **Identity** address (to allow nulling).
 
 ### 4.5 Memory Management Hooks (MAGIC)
@@ -415,11 +416,32 @@ Toka uses a **Host-Based Permission Inheritance** system with **Explicit Slot Ov
     -   **Deep Conversion**: `if ~!ptr? is ~ptr`.
 -   **Type Narrowing (Sema Rule)**: Inside the `then` branch of an `is` check, the compiler must temporarily narrow the source variable's type (e.g., `HasNull` becomes `false`). Generated IR can then safely perform GEPs and Loads without further guards.
 
-| Source Declaration | Check/Unwrap Syntax | Resulting Binding |
-| :--- | :--- | :--- |
-|    auto ^?p = null | `if ^?p is ^p { printf("Not Null!\n") }` | `p`: Unique Non-null (Check only for now) |
-| `auto obj! = ...` | `if obj! is obj { ... }` | `obj`: Object Non-null |
-| `auto ~!ptr? = ...` | `if ~!ptr? is ~ptr { ... }` | `ptr`: Shared Non-null |
+### 6. Encapsulation (@encap)
+Toka uses a centralized access control mechanism via the `@encap` trait implementation.
+
+#### 6.1 The @encap Block
+Access control is NOT defined inline with field declarations. Instead, it is defined in an `impl Type@encap` block.
+- **Fields default to private**: Any field not mentioned in the `@encap` block is only visible within the file it was defined.
+- **`pub` field**: Visible to anyone who imports the module.
+- **`pub(crate)` field**: Visible within the same package.
+- **Exclusion Syntax**: `pub * ! field1, field2` means everything is public EXCEPT the listed fields (Reserved for future).
+
+```scala
+impl Device@encap {
+    pub public_config
+    pub(crate) crate_shared
+}
+```
+
+#### 6.2 Implementation Rules
+- Only ONE `@encap` block is allowed per type.
+- The `@encap` block must be in the same module as the type definition.
+- Methods can also be subjected to encapsulation (Planned).
+
+### 7. C Interop and the `libc_` Prefix
+Toka interacts with the C world using `extern` functions.
+- **Symbol Stripping**: Any `extern` function starting with `libc_` (e.g., `libc_malloc`) will have the prefix removed during the final linking stage.
+- **Pointer ABI**: When calling `libc_` functions, Toka's smart pointers (Identity) are automatically converted to raw `ptr` (Soul) to satisfy C calling conventions.
 
 #### C. Control Flow Analysis
 Sema must verify that:
@@ -463,8 +485,9 @@ Sema must verify that:
     - **Method ABI (Pass-By-Reference)**: 
         - For all `shape` (struct) methods, the `self` parameter MUST be passed as a pointer (`ptr`) in LLVM IR, regardless of whether it is mutable (`#`) or immutable.
         - This prevents structure-by-value copies and ensures ABI compatibility between `callee` and `caller`.
-    - **Dead Code & Terminator Safety**: Before emitting any instruction, CodeGen MUST check if the current block is terminated: `if (m_Builder.GetInsertBlock()->getTerminator()) return nullptr`.
-    - **Soul Extraction Requirement (Member Access)**: `MemberExpr` generation MUST call `getEntityAddr` first. If `isImplicitPtr` is true (capture), it loads the soul pointer; otherwise it uses the identity. This is the silver bullet for prevents stack-corrupted reads.
+    - **Dead Code & Terminator Safety**: Before emitting any instruction, CodeGen MUST check if the current block is terminated: `if (m_Builder.GetInsertBlock()->getTerminator()) return nullptr`. This is critical for `break/continue/return` logic.
+    - **Soul Extraction Requirement (Member Access)**: `MemberExpr` generation MUST call `getEntityAddr` first. If `isImplicitPtr` is true (capture), it loads the soul pointer; otherwise it uses the identity. This is the **Silver Bullet** for preventing corrupted reads.
+    - **Nesting Consistency**: Recursive destructuring (e.g. `auto Point(x, y) = p`) must apply the Soul Protocol at each level to ensure deep fields are extracted correctly.
     - **LLVM 17+ Opaque Pointers**: Since LLVM 17 uses `ptr` everywhere, CodeGen MUST pass types explicitly to `CreateLoad`, `CreateStructGEP`, etc. (e.g., `m_Builder.CreateLoad(expectedType, addr)`). Do NOT rely on `getPointerElementType()`.
     - **Multi-Pass Compilation Discovery**:
         - **Pass 1: Discovery**: Register names of Shapes, Functions, and Externs.
