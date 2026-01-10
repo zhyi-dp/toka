@@ -608,7 +608,11 @@ std::string Sema::checkExpr(Expr *E) {
     return "void";
 
   if (auto *Num = dynamic_cast<NumberExpr *>(E)) {
-    return "i32"; // Default for now
+    if (Num->Value > 9223372036854775807ULL)
+      return "u64";
+    if (Num->Value > 2147483647)
+      return "i64";
+    return "i32";
   } else if (auto *Flt = dynamic_cast<FloatExpr *>(E)) {
     return "f64";
   } else if (auto *Bool = dynamic_cast<BoolExpr *>(E)) {

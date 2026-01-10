@@ -174,25 +174,46 @@ Token Lexer::identifier() {
   return t;
 }
 
+#include <cctype>
+
 Token Lexer::number() {
   const char *start = m_Current;
   int line = m_Line;
   int col = m_Column;
 
+  // Hex: 0x...
+  if (peek() == '0' && (peekNext() == 'x' || peekNext() == 'X')) {
+    advance(); // 0
+    advance(); // x
+    while (isxdigit(peek()))
+      advance();
+    return Token{TokenType::Integer, std::string(start, m_Current), line, col};
+  }
+
   while (isDigit(peek()))
     advance();
+
+  // Float Part
+  bool isFloat = false;
   if (peek() == '.' && isDigit(peekNext())) {
+    isFloat = true;
     advance();
     while (isDigit(peek()))
       advance();
-    return Token{TokenType::Float, std::string(start, m_Current), line, col};
   }
 
-  // Handle specific type suffix like 10:u64 ? No, that's done in Parser
-  // (colon). But number literal might have suffix like 10L? Not in Toka spec
-  // yet.
+  // Scientific Notation (e.g. 1e10, 1.5e-5)
+  if (peek() == 'e' || peek() == 'E') {
+    isFloat = true;
+    advance(); // e
+    if (peek() == '+' || peek() == '-')
+      advance();
+    while (isDigit(peek()))
+      advance();
+  }
 
-  return Token{TokenType::Integer, std::string(start, m_Current), line, col};
+  TokenType type = isFloat ? TokenType::Float : TokenType::Integer;
+  return Token{type, std::string(start, m_Current), line, col};
 }
 
 Token Lexer::punctuation() {

@@ -720,6 +720,10 @@ llvm::Value *CodeGen::genVariableExpr(const VariableExpr *var) {
 
 llvm::Value *CodeGen::genLiteralExpr(const Expr *expr) {
   if (auto *num = dynamic_cast<const NumberExpr *>(expr)) {
+    if (num->Value > 2147483647) {
+      return llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context),
+                                    num->Value);
+    }
     return llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context),
                                   num->Value);
   }
@@ -1956,6 +1960,37 @@ llvm::Constant *CodeGen::genConstant(const Expr *expr, llvm::Type *targetType) {
       fields.push_back(c);
     }
     return llvm::ConstantStruct::get(st, fields);
+  }
+
+  if (auto *unary = dynamic_cast<const UnaryExpr *>(expr)) {
+    if (unary->Op == TokenType::Minus) {
+      llvm::Constant *rhs = genConstant(unary->RHS.get(), targetType);
+      if (rhs)
+        return llvm::ConstantExpr::getNeg(rhs);
+    }
+  }
+
+  if (auto *cast = dynamic_cast<const CastExpr *>(expr)) {
+    llvm::Type *destTy = resolveType(cast->TargetType, false);
+    if (!destTy)
+      return nullptr;
+
+    llvm::Constant *rhs = genConstant(cast->Expression.get());
+    if (!rhs)
+      return nullptr;
+
+    if (rhs->getType() == destTy)
+      return rhs;
+
+    if (destTy->isIntegerTy() && rhs->getType()->isIntegerTy()) {
+      return llvm::ConstantExpr::getIntegerCast(rhs, destTy, true);
+    } else if (destTy->isFloatingPointTy() && rhs->getType()->isIntegerTy()) {
+      return llvm::ConstantExpr::getSIToFP(rhs, destTy);
+    } else if (destTy->isIntegerTy() && rhs->getType()->isFloatingPointTy()) {
+      return llvm::ConstantExpr::getFPToSI(rhs, destTy);
+    } else {
+      return llvm::ConstantExpr::getBitCast(rhs, destTy);
+    }
   }
 
   return nullptr;

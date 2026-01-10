@@ -1,4 +1,5 @@
 import std/io::println
+import core/types::LIMITS
 
 shape Point (x :i32, y :i32)
 
@@ -33,5 +34,13 @@ fn main() -> i32 {
     auto p1 = Point(x = 100, y = 200)
     println("p1.x = {}", p1.x)
     println("p1.y = {}", p1.y)
+
+    // 6. Using LIMITS
+    println("LIMITS._u8.max = {}",LIMITS.u8.max)
+    println("LIMITS.f32.min_positive = {}",LIMITS.f32.min_positive as f64)
+    println("LIMITS.f32.epsilon = {}",LIMITS.f32.epsilon as f64)
+    println("LIMITS.f32.bits.infinity = {}",LIMITS.f32.bits.infinity)
+    println("LIMITS.f32.bits.nan = {}",LIMITS.f32.bits.nan)
+    println("LIMITS.f32.bits.neg_zero = {}",LIMITS.f32.bits.neg_zero)
     return 0
 }

@@ -12,10 +12,54 @@ pub type Addr = u64
 //No memory is allocated, and its address cannot be taken.
 pub const ADDR0 = 0:Addr
 
-pub const LIMITS = (
-    _u8 = (
+pub const LIMITS1 = (
+    u8 = (
         min = 0,
         max = 255,
         bits = 8,
     )
 )
+
+pub const LIMITS = (
+    // 整数边界：硬编码的物理极限
+    u8 = (
+        min = 0,
+        max = 255,
+        bits = 8,
+    ),
+    i32 = (
+        min = -2147483648,
+        max = 2147483647,
+        bits = 32,
+    ),
+    u64 = (
+        min = 0,
+        max = 18446744073709551615:u64,
+        bits = 64,
+    ),
+
+    // 平台相关的类型 (Pointer Sized Integers)
+    // 这些值不是写死的，而是编译器在构建时根据架构 (x64/ARM) 注入的
+    usize = (
+        min = 0,
+        // 在 64 位系统上是 u64.max，在 32 位上是 u32.max
+        max = 18446744073709551615:u64,
+        width = 8, // 8 或 4
+    ),
+
+    // 浮点数特性 (IEEE 754)
+    // 做高性能科学计算或图形学 (Graphics) 时必不可少
+    f32 = (
+        // 最小正值 (用于防止除以零)
+        min_positive = 1.17549435e-38,
+        // // 机器精度 (Machine Epsilon)
+        epsilon = 1.19209290e-07,
+        // 特殊值的位模式 (Bit Patterns)
+        // 系统编程有时需要直接操作这些位的二进制表示
+        bits = (
+            nan = 0x7fc00000, // Not a Number
+            infinity = 0x7f800000, // +Inf
+            neg_zero = 0x80000000, // -0.0
+        )
+    )
+) 

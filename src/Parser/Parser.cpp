@@ -175,7 +175,7 @@ std::unique_ptr<MatchArm::Pattern> Parser::parsePattern() {
     p->Name = advance().Text;
     if (previous().Kind == TokenType::Integer) {
       try {
-        p->LiteralVal = std::stoll(previous().Text);
+        p->LiteralVal = std::stoull(previous().Text, nullptr, 0);
       } catch (...) {
         p->LiteralVal = 0;
       }
@@ -272,7 +272,8 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
     kind = ShapeKind::Array;
     std::string elemTy = advance().Text;
     consume(TokenType::Semicolon, "Expected ';'");
-    arraySize = std::stoll(consume(TokenType::Integer, "Expected size").Text);
+    arraySize = std::stoull(consume(TokenType::Integer, "Expected size").Text,
+                            nullptr, 0);
     consume(TokenType::RBracket, "Expected ']'");
     ShapeMember m;
     m.Name = "0";
@@ -305,8 +306,8 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           consume(TokenType::RParen, "Expected ')'");
         }
         if (match(TokenType::Equal)) {
-          v.TagValue =
-              std::stoll(consume(TokenType::Integer, "Expected tag").Text);
+          v.TagValue = std::stoull(
+              consume(TokenType::Integer, "Expected tag").Text, nullptr, 0);
         }
         members.push_back(std::move(v));
         if (!check(TokenType::RParen))
@@ -803,7 +804,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
 
   if (match(TokenType::Integer)) {
     Token tok = previous();
-    auto node = std::make_unique<NumberExpr>(std::stoll(tok.Text));
+    auto node = std::make_unique<NumberExpr>(std::stoull(tok.Text, nullptr, 0));
     node->setLocation(tok, m_CurrentFile);
     expr = std::move(node);
   } else if (match(TokenType::Float)) {

@@ -31,8 +31,8 @@ class Stmt : public ASTNode {};
 
 class NumberExpr : public Expr {
 public:
-  int64_t Value;
-  NumberExpr(int64_t val) : Value(val) {}
+  uint64_t Value;
+  NumberExpr(uint64_t val) : Value(val) {}
   std::string toString() const override {
     return "Number(" + std::to_string(Value) + ")";
   }
@@ -340,8 +340,8 @@ public:
   struct Pattern : public ASTNode {
     enum Kind { Literal, Variable, Decons, Wildcard };
     Kind PatternKind;
-    std::string Name;       // For Variable/Decons (e.g., "Maybe::One")
-    int64_t LiteralVal = 0; // For Literal
+    std::string Name;        // For Variable/Decons (e.g., "Maybe::One")
+    uint64_t LiteralVal = 0; // For Literal
     bool IsReference = false;
     bool IsMutable = false;
     std::vector<std::unique_ptr<Pattern>> SubPatterns; // For Decons
