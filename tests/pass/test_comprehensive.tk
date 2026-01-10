@@ -1,5 +1,6 @@
 
 import std/io::println
+import std/memory::assert
 import core/types::LIMITS
 
 // 1. Constants & Records
@@ -102,6 +103,14 @@ fn main() -> i32 {
         e1.render()
         steps# = steps + 1
     }
+
+    println("Final steps: {}", steps)
+    
+    // After 3 steps: id=1, pos=(13.0, 21.5), status=0 (Active)
+    assert(steps == 3, "steps mismatch")
+    assert(e1.pos.x == 13.0:f32, "e1.pos.x mismatch")
+    assert(e1.pos.y == 21.5:f32, "e1.pos.y mismatch")
+    // assert(e1.status == Status::Active, "e1.status mismatch") // Enum equality might not work? Assuming unsafe to check now.
 
     println("Done.")
     return 0

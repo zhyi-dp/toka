@@ -1,4 +1,5 @@
 import std/io::println
+import std/memory::assert
 
 // 1. Trait Definition
 trait @Shape {
@@ -26,9 +27,11 @@ impl Square@Shape {
 // 'dyn @Shape' implies a Trait Object.
 // The ABI will automatically pass this as a Fat Pointer (DataPtr, VTablePtr)
 // simply because it's a heavy/unsized type, similar to how Structs are passed by implicit ptr.
-fn print_dynamic_shape(s: dyn @Shape) {
+fn print_dynamic_shape(s: dyn @Shape) -> i32 {
     // Dynamic dispatch happens here via VTable lookup
-    println("Dynamic Area: {}", s.area())
+    auto a = s.area()
+    println("Dynamic Area: {}", a)
+    return a
 }
 
 fn main() -> i32 {
@@ -38,8 +41,8 @@ fn main() -> i32 {
     // 5. Implicit Coercion (Unsizing)
     // Coercing Rect (Concrete) -> dyn @Shape (Trait Object)
     // No '&' needed. The compiler captures 'r' and 'q' in place.
-    print_dynamic_shape(r)
-    print_dynamic_shape(q)
+    assert(print_dynamic_shape(r) == 200, "Rect area mismatch")
+    assert(print_dynamic_shape(q) == 25, "Square area mismatch")
     
     return 0
 }

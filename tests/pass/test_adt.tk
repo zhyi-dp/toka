@@ -1,4 +1,6 @@
 import std/io::println
+import std/io::println
+import std/memory::assert
 
 shape State (
     On |
@@ -12,6 +14,7 @@ fn main() -> i32 {
     match s {
         On => {
             println("Matched On!\n")
+            assert(true, "Matched On")
         }
         Off => {
             println("Matched Off!\n")
@@ -25,6 +28,7 @@ fn main() -> i32 {
     match e {
         auto ErrCode(code) => {
             println("Matched ErrCode: {}", code)
+            assert(code == 404, "ErrCode mismatch")
         }
         _ => {
             println("Ignored\n")

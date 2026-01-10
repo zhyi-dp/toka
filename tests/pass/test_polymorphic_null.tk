@@ -1,5 +1,6 @@
 import std/io::println
-import core/types::*
+import std/memory::assert
+import core/types::ADDR0
 
 shape Data = (
     v: i32
@@ -11,6 +12,9 @@ fn main() -> i32 {
     unsafe {
         if *p1 == nullptr {
             println("Raw pointer null OK")
+            assert(true, "Raw pointer null OK")
+        } else {
+            assert(false, "Raw pointer should be null")
         }
     }
 
@@ -18,18 +22,21 @@ fn main() -> i32 {
     auto ^?p2# : Data = nullptr
     if ^?p2 is nullptr {
         println("Exclusive pointer null OK")
+        assert(true, "Exclusive pointer null OK")
     }
 
     // 3. Shared Pointer (Nullable)
     auto ~?p3# : Data = nullptr
     if ~?p3 is nullptr {
         println("Shared pointer null OK")
+        assert(true, "Shared pointer null OK")
     }
 
     // 4. Addr ADDR0 (Foundational)
     auto addr = ADDR0
     if addr == ADDR0 {
         println("Addr ADDR0 OK")
+        assert(true, "Addr ADDR0 OK")
     }
 
     println("All polymorphic null tests passed!")

@@ -1,4 +1,6 @@
 import std/io::println
+import std/io::println
+import std/memory::assert
 import std/memory::*
 
 shape Point (x: i32, y: i32)
@@ -18,6 +20,8 @@ fn main() -> i32 {
         
         // 4. Explicit pointer access: (*ptr)->y
         println("(*ptr)->y = {} (expected 20)", (*ptr)->y)
+        assert(ptr.x == 100, "ptr.x mismatch")
+        assert((*ptr)->y == 20, "(*ptr)->y mismatch")
         
         free *ptr
     }

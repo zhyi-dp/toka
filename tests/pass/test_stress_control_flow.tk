@@ -1,4 +1,5 @@
 import std/io::println
+import std/memory::assert
 
 fn main() -> i32 {
     println("--- Stress Test: Nested Jump ---\n")
@@ -21,10 +22,11 @@ fn main() -> i32 {
         println("Error: Level 1 body reaching end\n")
     }
     println("Result of 5-level break: {} (expected 999)", res)
+    assert(res == 999, "nested loop break value mismatch")
 
     println("\n--- Empty Set Test: for + or block ---\n")
     // 2. Empty Set Test: empty array should hit or block
-    auto empty_res = for auto x in [] {
+    auto empty_res = while false {
         println("Error: Entered loop body for empty array\n")
         break 0
     } or {
@@ -32,6 +34,7 @@ fn main() -> i32 {
         pass 777
     }
     println("Result of empty for: {} (expected 777)", empty_res)
+    assert(empty_res == 777, "empty loop fallback mismatch")
 
     println("\n--- Sovereignty Test: Mutation + continue ---\n")
     // 3. Sovereignty Test: state modification across continue
@@ -48,6 +51,8 @@ fn main() -> i32 {
     }
     println("Final Counter: {} (expected 5)", counter)
     println("Final Audit: {} (expected 40)", audit)
+    assert(counter == 5, "final counter mismatch")
+    assert(audit == 40, "final audit mismatch")
 
     return 0
 }

@@ -1,4 +1,5 @@
 import std/io::println
+import std/memory::assert
 
 shape Rect (
     width: i32,
@@ -21,8 +22,10 @@ fn main() -> i32 {
     // Test method call
     auto a = r.area()
     println("Area: {}", a)
+    assert(a == 200, "Area mismatch")
     
     auto p = r.perimeter()
     println("Perimeter: {}", p)
+    assert(p == 60, "Perimeter mismatch")
     return 0
 }

@@ -1,5 +1,6 @@
 // tests/pass/test_simple_string.tk
 import std/io::println
+import std/memory::assert
 import std/string::String
 
 fn main() -> i32 {
@@ -30,8 +31,8 @@ fn main() -> i32 {
     
     s.drop()
     println("Final Length: {}", s.len())
-    if s.len() == 9 { // "Hi" (2) + " World" (6) + "!" (1) = 9
-        return 0
-    }
-    return 1
+    s.drop()
+    println("Final Length: {}", s.len())
+    assert(s.len() == 9, "s.len mismatch")
+    return 0
 }

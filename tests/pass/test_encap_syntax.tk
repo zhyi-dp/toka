@@ -2,6 +2,7 @@
 // This file serves as a syntax specification for the @encap system.
 
 import std/io::println
+import std/memory::assert
 
 // 1. Physical Layout
 pub shape Device (
@@ -52,5 +53,8 @@ fn main() -> i32 {
     d#.crate_shared = 60
     //d#.internal_state = 10 // Error: internal_state is not public
     println("Encap syntax test parsed successfully.")
+    assert(d.public_config == 200, "public_config mismatch")
+    assert(d.crate_shared == 60, "crate_shared mismatch")
+    assert(d.internal_state == 0, "internal_state should be 0 (reset)")
     return 0
 }

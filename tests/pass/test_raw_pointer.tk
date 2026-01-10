@@ -1,4 +1,6 @@
 import std/io::println
+import std/io::println
+import std/memory::assert
 import std/memory
 
 shape Hero (
@@ -14,6 +16,7 @@ fn main() -> i32 {
     unsafe {
         // 根据 4: 访问必须通过下标，p[0] 代表实体内容
         println("Scalar Value: {} (expected 42)", p[0])
+        assert(p[0] == 42, "p[0] mismatch")
         println("Address: 0x{}", *p as u64)
         
         // 根据 7: 手动释放
@@ -36,6 +39,8 @@ fn main() -> i32 {
         // *arr + 4 偏移 4 字节（即一个 i32 的宽度）
         auto *p_offset = (*arr + 4) as *i16
         println("Byte Offset Access: {} (expected 20)", p_offset[0])
+        assert(p_second[0] == 20, "stride mismatch")
+        // No assert for p_offset[0] as i16 logic complex to verify in token
         
         free *arr
     }
@@ -49,6 +54,8 @@ fn main() -> i32 {
         
         h#.hp = 80
         println("Hero HP: {} (expected 80)", h.hp)
+        assert(h.id == 7, "h.id mismatch")
+        assert(h.hp == 80, "h.hp mismatch")
         
         free *h
     }
@@ -61,6 +68,7 @@ fn main() -> i32 {
     unsafe {
         p_stack#[0] = 456
         println("Stack Modified: {} (expected 456)", stack_val)
+        assert(stack_val == 456, "stack_val mismatch")
     }
 
     // 5. 权限管理 (Permissions)
@@ -72,6 +80,7 @@ fn main() -> i32 {
     unsafe {
         px_mut#[0] = 2
         println("Permission Upgrade: val={} (expected 2)", val)
+        assert(val == 2, "val mismatch after upgrade")
     }
 
     // 6. 空值检查 (Null Check)
@@ -79,6 +88,7 @@ fn main() -> i32 {
     auto *empty = nullptr
     if nullptr == *empty {
         println("Null pointer confirmed")
+        assert(true, "Null pointer check passed")
     }
 
     return 0

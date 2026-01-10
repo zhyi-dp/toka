@@ -1,4 +1,5 @@
 import std/io::println
+import std/memory::assert
 
 fn main() -> i32 {
     auto i# = 0
@@ -29,6 +30,7 @@ fn main() -> i32 {
         i# += 1
     }
     println("loop result: {}", res)
+    assert(res == 42, "loop result mismatch")
 
     // While as expression with yield
     auto j# = 0
@@ -44,5 +46,6 @@ fn main() -> i32 {
         pass 0
     }
     println("while result: {}", res2)
+    assert(res2 == 10, "while result mismatch")
     return 0
 }

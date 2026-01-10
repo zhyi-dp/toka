@@ -1,4 +1,5 @@
 import std/io::println
+import std/memory::assert
 import core/types::LIMITS
 
 shape Point (x :i32, y :i32)
@@ -9,6 +10,8 @@ fn main() -> i32 {
     auto r1 = (x = 100, y = 200)
     println("r1.x = {}", r1.x) 
     println("r1.y = {}", r1.y)
+    assert(r1.x == 100, "r1.x mismatch")
+    assert(r1.y == 200, "r1.y mismatch")
 
     // 2. Another one with same structure
     auto r2 = (
@@ -21,6 +24,8 @@ fn main() -> i32 {
     )
     println("r2.x = {}", r2.x)
     println("r2.xy.x = {}", r2.xy.x)
+    assert(r2.x == 300, "r2.x mismatch")
+    assert(r2.xy.x == 10, "r2.xy.x mismatch")
 
     // 3. Mixed types
     auto r3 = (name = "Toka", ver = 1)
@@ -36,6 +41,7 @@ fn main() -> i32 {
     println("p1.y = {}", p1.y)
 
     // 6. Using LIMITS
+    assert(LIMITS.u8.max == 255:u8, "LIMITS.u8.max mismatch")
     println("LIMITS._u8.max = {}",LIMITS.u8.max)
     println("LIMITS.f32.min_positive = {}",LIMITS.f32.min_positive as f64)
     println("LIMITS.f32.epsilon = {}",LIMITS.f32.epsilon as f64)

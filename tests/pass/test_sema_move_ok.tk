@@ -1,6 +1,7 @@
 shape Rect (w: i32, h: i32)
 
 import std/io::println
+import std/memory::assert
 
 fn main() -> i32 {
     auto ^r1 = new Rect(w=1, h=1)
@@ -9,5 +10,6 @@ fn main() -> i32 {
     // r2 is valid
     auto x = r2.w // OK
     println("Move OK: x is {}", x)
+    assert(x == 1, "x mismatch")
     return 0
 }

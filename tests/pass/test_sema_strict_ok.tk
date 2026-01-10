@@ -1,3 +1,5 @@
+import std/memory::assert
+
 fn main() -> i32 {
     // 1. Valid Arithmetic
     auto i = 1 + 2
@@ -9,5 +11,9 @@ fn main() -> i32 {
 
     // 3. Valid If Condition
     if true {}
+    
+    assert(i == 3, "i mismatch")
+    assert(b == false, "b logic mismatch (1==2)")
+    assert(b2 == true, "b2 logic mismatch (1<2)")
     return 0
 }

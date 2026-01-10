@@ -1,5 +1,6 @@
 // tests/pass/test_string_v13.tk
 import std/io::println
+import std/memory::assert
 import std/string::String
 
 fn main() -> i32 {
@@ -11,14 +12,16 @@ fn main() -> i32 {
     println("Length: {} (expected 5)", s.len())
     println("Capacity: {} (expected 6)", s.capacity())
 
-    if s.len() != 5 { return 1 }
+    println("Capacity: {} (expected 6)", s.capacity())
+
+    assert(s.len() == 5, "Initial length mismatch")
 
     // 2. Growth via push_str
     s.push_str(" Toka")
     println("Modified string: {}", s.as_ptr())
     println("New Length: {} (expected 10)", s.len())
     
-    if s.len() != 10 { return 2 }
+    assert(s.len() == 10, "Modified length mismatch")
 
     // 3. Repeated growth to trigger realloc
     s.push_str("! This is a long string to trigger realloc.")
@@ -26,7 +29,7 @@ fn main() -> i32 {
     println("Final Length: {}", s.len())
     println("Final Capacity: {}", s.capacity())
 
-    if s.len() <= 10 { return 3 }
+    assert(s.len() > 10, "Final length check failed")
 
     // 4. Memory Cleanup
     s.drop()

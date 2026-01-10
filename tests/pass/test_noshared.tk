@@ -1,4 +1,6 @@
 import std/io::println
+import std/io::println
+import std/memory::assert
 import std/memory
 
 shape Point (
@@ -39,12 +41,15 @@ fn main() -> i32 {
     println("[{}]p.x is {}, out loop {}", logi#++, p.x, i)
     p#.x = addx(p, 10)
     println("[{}]p.x is {} (after addx, should be 41)", logi#++, p.x)
+    assert(p.x == 41, "p.x mismatch after addx")
     
     addtox(p#, 10)
     println("[{}]p.x is {} (after addtox, should be 51 because of In-place Capture)", logi#++, p.x)
+    assert(p.x == 51, "p.x mismatch after addtox")
     
     addtox_useref(&p#, 10)
     println("[{}]p.x is {} (after addtox_useref, should be 61)", logi#++, p.x)
+    assert(p.x == 61, "p.x mismatch after addtox_useref")
 
     auto b# = true
     if (b) {
@@ -68,6 +73,7 @@ fn main() -> i32 {
     println("[{}]arr[1] is {}", logi#++, arr[1])
     arr#[2] = 40
     println("[{}]arr[2] is {}", logi#++, arr[2])
+    assert(arr[2] == 40, "arr[2] mismatch")
 
     auto tup = (1, "tuple", 1.1)
     println("[{}]tup.0 is {}", logi#++, tup.0)
@@ -98,7 +104,9 @@ fn main() -> i32 {
         println("[{}]Reference assignment works: a is {}", logi#++, a)
     } else {
         println("[{}]Reference assignment FAILED: a is {}", logi#++, a)
+        assert(false, "Ref assignment failed")
     }
+    assert(a == 20, "a value mismatch")
 
     {
         auto &c = &a // immutable ref
@@ -127,6 +135,7 @@ fn main() -> i32 {
         auto ^p = new Point(x=999, y=111, z=0)
         auto ^q = ^p
         println("[{}]Moved Heap Point: q.x={}", logi#++, q.x)
+        assert(q.x == 999, "Move semantics q.x mismatch")
     }
 
     {
