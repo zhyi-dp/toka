@@ -116,6 +116,8 @@ private:
 
   void cleanupScopes(size_t targetDepth);
   llvm::Value *genExpr(const Expr *expr);
+  llvm::Constant *genConstant(const Expr *expr,
+                              llvm::Type *targetType = nullptr);
   llvm::Value *genAddr(const Expr *expr);
   // llvm::Value *getVarAddr(const std::string &name);
 

@@ -2,6 +2,7 @@ import std/io::println
 
 shape Point (x :i32, y :i32)
 
+
 fn main() -> i32 {
     // 1. Basic anonymous record
     auto r1 = (x = 100, y = 200)

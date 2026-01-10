@@ -1915,4 +1915,50 @@ llvm::Value *CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
   return m_Builder.CreateLoad(recType, alloca);
 }
 
+llvm::Constant *CodeGen::genConstant(const Expr *expr, llvm::Type *targetType) {
+  if (auto *num = dynamic_cast<const NumberExpr *>(expr)) {
+    if (targetType && targetType->isIntegerTy()) {
+      return llvm::ConstantInt::get(targetType, num->Value);
+    }
+    return llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context),
+                                  num->Value);
+  }
+
+  if (auto *b = dynamic_cast<const BoolExpr *>(expr)) {
+    return llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context),
+                                  b->Value ? 1 : 0);
+  }
+
+  if (auto *flt = dynamic_cast<const FloatExpr *>(expr)) {
+    if (targetType && targetType->isFloatingPointTy())
+      return llvm::ConstantFP::get(targetType, flt->Value);
+    return llvm::ConstantFP::get(llvm::Type::getFloatTy(m_Context), flt->Value);
+  }
+
+  if (auto *rec = dynamic_cast<const AnonymousRecordExpr *>(expr)) {
+    std::string uniqueName = rec->AssignedTypeName;
+    if (uniqueName.empty())
+      return nullptr;
+
+    if (!m_StructTypes.count(uniqueName))
+      return nullptr;
+
+    llvm::StructType *st = m_StructTypes[uniqueName];
+    std::vector<llvm::Constant *> fields;
+    for (size_t i = 0; i < rec->Fields.size(); ++i) {
+      llvm::Type *elemTy = st->getElementType(i);
+      llvm::Constant *c = genConstant(rec->Fields[i].second.get(), elemTy);
+      if (!c) {
+        // Fallback: If we can't generate constant, maybe return null (error
+        // upstream)
+        return nullptr;
+      }
+      fields.push_back(c);
+    }
+    return llvm::ConstantStruct::get(st, fields);
+  }
+
+  return nullptr;
+}
+
 } // namespace toka

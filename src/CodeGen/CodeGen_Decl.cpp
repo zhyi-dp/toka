@@ -456,7 +456,20 @@ void CodeGen::genGlobal(const Stmt *stmt) {
   if (auto *var = dynamic_cast<const VariableDecl *>(stmt)) {
     llvm::Value *initVal = nullptr;
     if (var->Init) {
-      initVal = genExpr(var->Init.get());
+      // Try resolving type hint first
+      llvm::Type *hintType = nullptr;
+      if (!var->TypeName.empty()) {
+        hintType = resolveType(var->TypeName, var->HasPointer);
+      }
+
+      // Try compile-time constant generation first (Critical for Anonymous
+      // Records)
+      if (auto *c = genConstant(var->Init.get(), hintType)) {
+        initVal = c;
+      } else {
+        // Fallback to legacy genExpr (might crash if it uses instructions)
+        initVal = genExpr(var->Init.get());
+      }
     }
 
     llvm::Type *type = nullptr;
