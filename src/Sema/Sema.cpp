@@ -18,6 +18,13 @@ bool Sema::checkModule(Module &M) {
     checkFunction(Fn.get());
   }
 
+  // Transfer ownership of synthetic anonymous record shapes to the Module
+  // so CodeGen can see them as regular structs.
+  for (auto &S : SyntheticShapes) {
+    M.Shapes.push_back(std::move(S));
+  }
+  SyntheticShapes.clear();
+
   CurrentModule = nullptr;
   exitScope();
   return !HasError;
@@ -103,6 +110,7 @@ void Sema::registerGlobals(Module &M) {
   }
   for (auto &G : M.Globals) {
     if (auto *v = dynamic_cast<VariableDecl *>(G.get())) {
+
       ms.Globals[v->Name] = v;
       // In-line inference for global constants if TypeName is missing
       if (v->TypeName.empty() && v->Init) {
@@ -114,6 +122,12 @@ void Sema::registerGlobals(Module &M) {
           v->TypeName = "bool";
         } else if (dynamic_cast<StringExpr *>(v->Init.get())) {
           v->TypeName = "str";
+        } else {
+          // Last resort: run full checkExpr (e.g. for AnonymousRecordExpr)
+          std::string inferred = checkExpr(v->Init.get());
+          if (inferred != "unknown" && inferred != "void") {
+            v->TypeName = inferred;
+          }
         }
       }
     }
@@ -636,6 +650,46 @@ std::string Sema::checkExpr(Expr *E) {
       return ArrType.substr(1);
     }
     return ArrType;
+
+  } else if (auto *Rec = dynamic_cast<AnonymousRecordExpr *>(E)) {
+    // 1. Infer field types
+    std::vector<ShapeMember> members;
+    std::set<std::string> seenFields;
+
+    for (auto &f : Rec->Fields) {
+      if (seenFields.count(f.first)) {
+        error(Rec, "duplicate field '" + f.first + "' in anonymous record");
+      }
+      seenFields.insert(f.first);
+
+      std::string fieldT = checkExpr(f.second.get());
+      if (fieldT == "unknown")
+        return "unknown";
+
+      ShapeMember sm;
+      sm.Name = f.first;
+      sm.Type = fieldT;
+      members.push_back(sm);
+    }
+
+    // 2. Generate Unique Type Name
+    // Each anonymous record literal creates a distinct Nominal Type.
+    std::string UniqueName =
+        "__Toka_Anon_Rec_" + std::to_string(AnonRecordCounter++);
+    Rec->AssignedTypeName = UniqueName;
+
+    // 3. Create and Register Synthetic ShapeDecl
+    // We treat it as a regular Struct
+    auto SyntheticShape = std::make_unique<ShapeDecl>(
+        false, UniqueName, ShapeKind::Struct, members);
+
+    // Important: Register in ShapeMap so MemberExpr can find it
+    ShapeMap[UniqueName] = SyntheticShape.get();
+
+    // Store ownership
+    SyntheticShapes.push_back(std::move(SyntheticShape));
+
+    return UniqueName;
   } else if (auto *Deref = dynamic_cast<DereferenceExpr *>(E)) {
     std::string inner = checkExpr(Deref->Expression.get());
     if (inner == "unknown")

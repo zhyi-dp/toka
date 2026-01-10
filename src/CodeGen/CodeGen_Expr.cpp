@@ -1880,4 +1880,39 @@ llvm::Value *CodeGen::genArrayExpr(const ArrayExpr *expr) {
   return val;
 }
 
+llvm::Value *CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
+  std::string uniqueName = expr->AssignedTypeName;
+  if (uniqueName.empty()) {
+    error(expr, "Anonymous record missing type name");
+    return nullptr;
+  }
+
+  llvm::Type *recType = resolveType(uniqueName, false);
+  if (!recType) {
+    // It's possible the type wasn't created if it's unused?
+    // No, Sema moves it to Module, so discover() should have seen it.
+    // Try to fallback/check if it's in m_StructTypes directly?
+    if (m_StructTypes.count(uniqueName)) {
+      recType = m_StructTypes[uniqueName];
+    } else {
+      error(expr, "Anonymous record type '" + uniqueName + "' not found");
+      return nullptr;
+    }
+  }
+
+  llvm::Value *alloca = m_Builder.CreateAlloca(recType, nullptr, "anon_rec");
+
+  for (size_t i = 0; i < expr->Fields.size(); ++i) {
+    llvm::Value *val = genExpr(expr->Fields[i].second.get());
+    if (!val)
+      return nullptr;
+
+    // GEP to element i (Struct layout matches Fields order)
+    llvm::Value *ptr = m_Builder.CreateStructGEP(recType, alloca, i);
+    m_Builder.CreateStore(val, ptr);
+  }
+
+  return m_Builder.CreateLoad(recType, alloca);
+}
+
 } // namespace toka

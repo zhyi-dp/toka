@@ -920,27 +920,52 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     expr = std::make_unique<ArrayExpr>(std::move(elements));
   } else if (check(TokenType::LParen)) {
     Token tok = peek();
+
+    // Anonymous Record Detection: ( key = val ... )
+    bool isAnonRecord = false;
+    if (checkAt(1, TokenType::Identifier) && checkAt(2, TokenType::Equal)) {
+      isAnonRecord = true;
+    }
+
     consume(TokenType::LParen, "Expected '('");
-    // Grouping or Tuple
-    std::vector<std::unique_ptr<Expr>> elements;
-    bool isTuple = false;
-    if (!check(TokenType::RParen)) {
-      elements.push_back(parseExpr());
-      if (match(TokenType::Comma)) {
-        isTuple = true;
-        while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
-          elements.push_back(parseExpr());
-          match(TokenType::Comma);
+
+    if (isAnonRecord) {
+      std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
+      while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+        Token key = consume(TokenType::Identifier, "Expected field name");
+        consume(TokenType::Equal, "Expected '='");
+        auto val = parseExpr();
+        fields.push_back({key.Text, std::move(val)});
+        if (!check(TokenType::RParen)) {
+          consume(TokenType::Comma, "Expected ',' or ')'");
         }
       }
-    }
-    consume(TokenType::RParen, "Expected ')'");
-    if (isTuple || elements.empty()) {
-      auto node = std::make_unique<TupleExpr>(std::move(elements));
+      consume(TokenType::RParen, "Expected ')'");
+      auto node = std::make_unique<AnonymousRecordExpr>(std::move(fields));
       node->setLocation(tok, m_CurrentFile);
       expr = std::move(node);
     } else {
-      expr = std::move(elements[0]);
+      // Grouping or Tuple
+      std::vector<std::unique_ptr<Expr>> elements;
+      bool isTuple = false;
+      if (!check(TokenType::RParen)) {
+        elements.push_back(parseExpr());
+        if (match(TokenType::Comma)) {
+          isTuple = true;
+          while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+            elements.push_back(parseExpr());
+            match(TokenType::Comma);
+          }
+        }
+      }
+      consume(TokenType::RParen, "Expected ')'");
+      if (isTuple || elements.empty()) {
+        auto node = std::make_unique<TupleExpr>(std::move(elements));
+        node->setLocation(tok, m_CurrentFile);
+        expr = std::move(node);
+      } else {
+        expr = std::move(elements[0]);
+      }
     }
   } else if (match(TokenType::Identifier)) {
     Token name = previous();

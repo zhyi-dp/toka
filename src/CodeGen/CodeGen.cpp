@@ -32,6 +32,8 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
   }
   if (auto e = dynamic_cast<const TupleExpr *>(expr))
     return genTupleExpr(e);
+  if (auto e = dynamic_cast<const AnonymousRecordExpr *>(expr))
+    return genAnonymousRecordExpr(e);
   if (auto e = dynamic_cast<const ArrayExpr *>(expr))
     return genArrayExpr(e);
 

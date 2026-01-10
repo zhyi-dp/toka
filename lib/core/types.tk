@@ -11,3 +11,13 @@ pub type Addr = u64
 //It exists only as a compile-time value and is inlined directly by the compiler. 
 //No memory is allocated, and its address cannot be taken.
 pub const ADDR0 = 0:Addr
+
+/*
+pub const LIMITS = (
+    _u8 = (
+        min = 0,
+        max = 255,
+        bits = 8,
+    )
+)
+*/

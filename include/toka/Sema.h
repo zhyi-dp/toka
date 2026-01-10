@@ -140,6 +140,10 @@ private:
   };
   std::vector<ControlFlowInfo> m_ControlFlowStack;
 
+  // Anonymous Records
+  int AnonRecordCounter = 0;
+  std::vector<std::unique_ptr<ShapeDecl>> SyntheticShapes;
+
   void error(ASTNode *Node, const std::string &Msg);
 
   // Scope management

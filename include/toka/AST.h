@@ -267,6 +267,29 @@ public:
   std::string toString() const override { return "Init(" + ShapeName + ")"; }
 };
 
+class AnonymousRecordExpr : public Expr {
+public:
+  std::vector<std::pair<std::string, std::unique_ptr<Expr>>> Fields;
+  std::string AssignedTypeName; // Filled by Sema, used by CodeGen
+
+  AnonymousRecordExpr(
+      std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields)
+      : Fields(std::move(fields)) {}
+
+  std::string toString() const override {
+    std::string s = "AnonRecord(";
+    if (!AssignedTypeName.empty())
+      s += "[" + AssignedTypeName + "] ";
+    for (size_t i = 0; i < Fields.size(); ++i) {
+      if (i > 0)
+        s += ", ";
+      s += Fields[i].first + "=" + Fields[i].second->toString();
+    }
+    s += ")";
+    return s;
+  }
+};
+
 class CallExpr : public Expr {
 public:
   std::string Callee;

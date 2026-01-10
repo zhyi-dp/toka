@@ -1,0 +1,36 @@
+import std/io::println
+
+shape Point (x :i32, y :i32)
+
+fn main() -> i32 {
+    // 1. Basic anonymous record
+    auto r1 = (x = 100, y = 200)
+    println("r1.x = {}", r1.x) 
+    println("r1.y = {}", r1.y)
+
+    // 2. Another one with same structure
+    auto r2 = (
+        x = 300, 
+        y = 400,
+        xy = ( 
+            x = 10,
+            y = 20
+        )
+    )
+    println("r2.x = {}", r2.x)
+    println("r2.xy.x = {}", r2.xy.x)
+
+    // 3. Mixed types
+    auto r3 = (name = "Toka", ver = 1)
+    println("Lang: {}, Ver: {}", r3.name, r3.ver)
+
+    // 4. Nested
+    auto r4 = (top = (sub = 50))
+    println("r4.top.sub = {}", r4.top.sub)
+
+    // 5. Using named shape
+    auto p1 = Point(x = 100, y = 200)
+    println("p1.x = {}", p1.x)
+    println("p1.y = {}", p1.y)
+    return 0
+}

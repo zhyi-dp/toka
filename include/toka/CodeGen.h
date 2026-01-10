@@ -152,6 +152,7 @@ private:
   void genPatternBinding(const MatchArm::Pattern *pat, llvm::Value *targetAddr,
                          llvm::Type *targetType);
   llvm::Value *genInitStructExpr(const InitStructExpr *expr);
+  llvm::Value *genAnonymousRecordExpr(const AnonymousRecordExpr *expr);
   llvm::Value *genMethodCall(const MethodCallExpr *expr);
   llvm::Value *genCallExpr(const CallExpr *expr);
   llvm::Value *genPostfixExpr(const PostfixExpr *expr);
