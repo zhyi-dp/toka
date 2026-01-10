@@ -90,6 +90,21 @@ void Lexer::skipWhitespace() {
       // Comment
       while (peek() != '\n' && peek() != '\0')
         advance();
+    } else if (c == '/' && peekNext() == '*') {
+      // Multi-line Comment
+      advance(); // consume '/'
+      advance(); // consume '*'
+      while (peek() != '\0') {
+        if (peek() == '*' && peekNext() == '/') {
+          advance(); // consume '*'
+          advance(); // consume '/'
+          break;
+        }
+        if (peek() == '\n') {
+          m_HasNewline = true;
+        }
+        advance();
+      }
     } else {
       break;
     }
