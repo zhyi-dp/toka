@@ -1408,10 +1408,15 @@ std::string Sema::checkExpr(Expr *E) {
             }
           }
 
-          if (!isTypeCompatible(Fn->Args[i].Type, ArgType)) {
+          std::string ExpectedTy = Fn->Args[i].Type;
+          if (Fn->Args[i].HasPointer) {
+            ExpectedTy = "*" + ExpectedTy;
+          }
+
+          if (!isTypeCompatible(ExpectedTy, ArgType)) {
             error(Call->Args[i].get(), "argument type mismatch: expected '" +
-                                           Fn->Args[i].Type + "', got '" +
-                                           ArgType + "'");
+                                           ExpectedTy + "', got '" + ArgType +
+                                           "'");
           }
         }
       }

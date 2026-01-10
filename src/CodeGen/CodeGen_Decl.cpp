@@ -73,9 +73,10 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     }
 
     // 3. Address Layering Flags
-    bool isCaptured = (pTy->isStructTy() || pTy->isArrayTy() ||
-                       argDecl.IsMutable || argDecl.IsRebindable) &&
-                      !argDecl.IsReference;
+    bool isCaptured =
+        (pTy->isStructTy() || pTy->isArrayTy() || argDecl.IsMutable ||
+         argDecl.IsRebindable || argDecl.HasPointer) &&
+        !argDecl.IsReference;
     bool isExplicit = (argDecl.HasPointer || argDecl.IsUnique ||
                        argDecl.IsShared || argDecl.IsReference);
 

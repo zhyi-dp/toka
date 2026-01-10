@@ -6,6 +6,7 @@ pub alias isize = i64
 //Defines a strong type: creates a unique semantic identity that shares the same physical memory layout as the base type.
 //It enforces strict type isolation, requiring explicit conversion to prevent accidental type confusion and enhance memory safety.
 pub type Addr = u64
+pub type char = i8
 
 //A named literal (Symbolic Constant). 
 //It exists only as a compile-time value and is inlined directly by the compiler. 

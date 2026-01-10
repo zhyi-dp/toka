@@ -1379,6 +1379,11 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
             std::string semanticType = "";
             const Expr *argExpr = call->Args[argIndex].get();
 
+            // Unwrap unary expressions (e.g. *ptr, &ptr) to find source var
+            while (auto *ue = dynamic_cast<const UnaryExpr *>(argExpr)) {
+              argExpr = ue->RHS.get();
+            }
+
             if (auto *ve = dynamic_cast<const VariableExpr *>(argExpr)) {
               semanticType = m_ValueTypeNames[ve->Name];
             } else if (auto *ce = dynamic_cast<const CallExpr *>(argExpr)) {
@@ -1390,8 +1395,10 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
               semanticType = "str";
             }
 
-            if (semanticType == "str" || semanticType == "*i8" ||
-                semanticType == "^i8") {
+            // Only 'char' types (which alias i8) or literals are strings.
+            // *char means explicit pointer to char -> string.
+            if (semanticType == "str" || semanticType == "char" ||
+                semanticType == "*char") {
               spec = "%s";
             } else {
               spec = "%p"; // Default to address

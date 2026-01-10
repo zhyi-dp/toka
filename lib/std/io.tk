@@ -1,8 +1,9 @@
 // lib/std/io.tk
 // Standard Input/Output using libc.
+import core/types::char
 
-extern fn printf(*s: i8, ...) -> i32
-extern fn puts(*s: i8) -> i32
+extern fn printf(*s: char, ...) -> i32
+extern fn puts(*s: char) -> i32
 
 // Intrinsic: handled by compiler magic
-extern fn println(*fmt: i8, ...) -> void
+extern fn println(*fmt: char, ...) -> void
