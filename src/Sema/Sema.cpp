@@ -821,6 +821,9 @@ std::string Sema::checkExpr(Expr *E) {
   } else if (auto *ve = dynamic_cast<VariableExpr *>(E)) {
     SymbolInfo Info;
     if (!CurrentScope->lookup(ve->Name, Info)) {
+      if (ShapeMap.count(ve->Name) || TypeAliasMap.count(ve->Name)) {
+        return ve->Name;
+      }
       error(ve, "use of undeclared identifier '" + ve->Name + "'");
       return "unknown";
     }
@@ -1787,6 +1790,9 @@ std::string Sema::checkExpr(Expr *E) {
 
           if (requestedPrefix.empty()) {
             // obj.field -> Entity (Pointer itself if it's a pointer)
+            if (SD->Kind == ShapeKind::Enum) {
+              return ObjType;
+            }
             return fullType;
           } else if (requestedPrefix == "*") {
             // obj.*field -> Identity (Address stored in the pointer)

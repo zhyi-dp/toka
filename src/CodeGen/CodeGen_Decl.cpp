@@ -94,6 +94,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                        argDecl.IsMutable || argDecl.IsValueMutable,
                        argDecl.IsNullable || argDecl.IsPointerNullable, pTy);
     m_ValueTypeNames[argName] = argDecl.Type;
+    m_ValueElementTypes[argName] = pTy;
 
     // CRITICAL: Captured arguments (Implicit Pointers) must use Pointer mode
     // so getEntityAddr loads the real address from the alloca.
@@ -907,6 +908,17 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
       }
     } else {
       argVal = genExpr(expr->Args[i].get());
+
+      // Implicit By-Ref Fix for Method Arguments
+      if (argVal && callee->arg_size() > i + 1) {
+        llvm::Type *paramTy = callee->getFunctionType()->getParamType(i + 1);
+        if (paramTy->isPointerTy() && argVal->getType()->isStructTy()) {
+          llvm::AllocaInst *tmp = m_Builder.CreateAlloca(
+              argVal->getType(), nullptr, "arg_byref_tmp");
+          m_Builder.CreateStore(argVal, tmp);
+          argVal = tmp;
+        }
+      }
     }
 
     if (!argVal)

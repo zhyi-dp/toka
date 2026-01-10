@@ -12,12 +12,10 @@ pub type Addr = u64
 //No memory is allocated, and its address cannot be taken.
 pub const ADDR0 = 0:Addr
 
-pub const LIMITS1 = (
-    u8 = (
-        min = 0,
-        max = 255,
-        bits = 8,
-    )
+pub const U8_LIMITS = (
+    min = 0,
+    max = 255,
+    bits = 8,
 )
 
 pub const LIMITS = (

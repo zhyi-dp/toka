@@ -1,0 +1,108 @@
+
+import std/io::println
+import core/types::LIMITS
+
+// 1. Constants & Records
+// const APP_CONFIG = (
+//     name = "ParticleSim",
+//     version = 1,
+// )
+
+// 2. Enum
+shape Status (
+    Active = 0 |
+    Inactive = 1 |
+    Paused = 2
+)
+
+// 3. Trait
+trait @Renderable {
+    fn render(self) -> i32
+}
+
+// 4. Structs
+shape Point (
+    x: f32,
+    y: f32
+)
+
+shape Entity (
+    id: i32,
+    pos: Point,
+    status: Status
+)
+
+// 5. Implementation
+impl Point {
+    // In-place capture of self
+    fn add(self#, other: Point) -> i32 {
+        self#.x = self.x + other.x
+        self#.y = self.y + other.y
+        return 0
+    }
+}
+
+// Trait Implementation
+impl Entity@Renderable {
+    fn render(self) -> i32 {
+        println("Entity[{}] at ({}, {}) Status: {}", 
+            self.id, self.pos.x, self.pos.y, self.status)
+        return 0
+    }
+}
+
+// In-place capture of e
+fn simulate(e#: Entity) -> bool {
+    // Match
+    match e.status {
+        Status::Inactive => return false
+        _ => {}
+    }
+
+    // Hex Literal Check
+    if e.id > 0xFF {
+        println("Warning: High ID {}", e.id)
+    }
+
+    // Use # for mutable access
+    e#.pos.add(Point(x=1.0:f32, y=0.5:f32))
+
+    // Scientific Float
+    if e#.pos.x > 1.0e3:f32 {
+        // Mutation requires #
+        e#.status = Status::Inactive
+        return false
+    }
+
+    return true
+}
+
+fn main() -> i32 {
+    // println("Starting {} v{}", APP_CONFIG.name, APP_CONFIG.version)
+
+    auto dt = 1.6e-2 
+
+    // Value allocation (Stack)
+    auto e1# = Entity(
+        id = 1,
+        pos = Point(10.0:f32, 20.0:f32),
+        status = Status::Active
+    )
+
+    // auto loop variable
+    auto steps# = 0
+    while steps < 3 {
+        println("Step: {}, dt: {}", steps, dt)
+        
+        // Pass mutable ref
+        if !simulate(e1#) {
+            break
+        }
+
+        e1.render()
+        steps# = steps + 1
+    }
+
+    println("Done.")
+    return 0
+}

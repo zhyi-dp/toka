@@ -596,7 +596,8 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
         depth--;
 
       if (depth == 0 && (isEndOfStatement() || check(TokenType::Equal) ||
-                         check(TokenType::Comma) || check(TokenType::RParen)))
+                         check(TokenType::Comma) || check(TokenType::RParen) ||
+                         check(TokenType::LBrace)))
         break;
       typeName += advance().Text;
     }
@@ -741,7 +742,8 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
               check(TokenType::DoubleEqual) || check(TokenType::Neq) ||
               check(TokenType::Less) || check(TokenType::Greater) ||
               check(TokenType::KwIs) || check(TokenType::And) ||
-              check(TokenType::Or) || check(TokenType::EndOfFile)) {
+              check(TokenType::Or) || check(TokenType::LBrace) ||
+              check(TokenType::EndOfFile)) {
             break;
           }
         }

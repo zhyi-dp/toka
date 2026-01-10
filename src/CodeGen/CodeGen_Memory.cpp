@@ -71,6 +71,44 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
 }
 
 llvm::Value *CodeGen::genMemberExpr(const MemberExpr *mem) {
+  if (mem->IsStatic) {
+    // 1. Get Type Name
+    std::string typeName = "";
+    if (auto *ve = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
+      typeName = ve->Name;
+    }
+    // 2. Check if Enum Variant
+    if (m_Shapes.count(typeName) &&
+        m_Shapes[typeName]->Kind == ShapeKind::Enum) {
+      int tag = -1;
+      const ShapeDecl *sh = m_Shapes[typeName];
+      for (size_t i = 0; i < sh->Members.size(); ++i) {
+        if (sh->Members[i].Name == mem->Member) {
+          tag = (sh->Members[i].TagValue != -1) ? (int)sh->Members[i].TagValue
+                                                : (int)i;
+          break;
+        }
+      }
+      if (tag != -1) {
+        llvm::Value *tagVal =
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), tag);
+        // Enums are Shapes (Structs), so return { tag }
+        if (m_StructTypes.count(typeName)) {
+          llvm::StructType *st = m_StructTypes[typeName];
+          llvm::Value *res = llvm::UndefValue::get(st);
+          // Dynamically determine tag type (i8, i32, etc.)
+          llvm::Type *tagTy = st->getElementType(0);
+          llvm::Value *typedTagVal = llvm::ConstantInt::get(tagTy, tag);
+          res = m_Builder.CreateInsertValue(res, typedTagVal, 0);
+          return res;
+        }
+        return tagVal;
+      }
+    }
+    // Fallback or other static members
+    return nullptr;
+  }
+
   llvm::Value *addr = genAddr(mem);
   if (!addr)
     return nullptr;

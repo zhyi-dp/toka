@@ -436,7 +436,8 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     }
   }
 
-  if (!lhsType->isIntOrIntVectorTy() && !lhsType->isPtrOrPtrVectorTy()) {
+  if (!lhsType->isIntOrIntVectorTy() && !lhsType->isPtrOrPtrVectorTy() &&
+      !lhsType->isFloatingPointTy()) {
     std::string s;
     llvm::raw_string_ostream os(s);
     lhsType->print(os);
@@ -444,6 +445,29 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
                    ". Comparisons are only allowed for scalars "
                    "(integers/pointers).");
     return nullptr;
+  }
+
+  if (lhsType->isFloatingPointTy() && rhsType->isFloatingPointTy()) {
+    if (bin->Op == "+")
+      return m_Builder.CreateFAdd(lhs, rhs, "addtmp");
+    if (bin->Op == "-")
+      return m_Builder.CreateFSub(lhs, rhs, "subtmp");
+    if (bin->Op == "*")
+      return m_Builder.CreateFMul(lhs, rhs, "multmp");
+    if (bin->Op == "/")
+      return m_Builder.CreateFDiv(lhs, rhs, "divtmp");
+    if (bin->Op == "<")
+      return m_Builder.CreateFCmpOLT(lhs, rhs, "lt_tmp");
+    if (bin->Op == ">")
+      return m_Builder.CreateFCmpOGT(lhs, rhs, "gt_tmp");
+    if (bin->Op == "<=")
+      return m_Builder.CreateFCmpOLE(lhs, rhs, "le_tmp");
+    if (bin->Op == ">=")
+      return m_Builder.CreateFCmpOGE(lhs, rhs, "ge_tmp");
+    if (bin->Op == "==")
+      return m_Builder.CreateFCmpOEQ(lhs, rhs, "eq_tmp");
+    if (bin->Op == "!=")
+      return m_Builder.CreateFCmpONE(lhs, rhs, "ne_tmp");
   }
 
   if (bin->Op == "+") {
@@ -655,6 +679,17 @@ llvm::Value *CodeGen::genCastExpr(const CastExpr *cast) {
   llvm::Type *srcType = val->getType();
   if (srcType->isIntegerTy() && targetType->isIntegerTy())
     return m_Builder.CreateIntCast(val, targetType, true);
+
+  // Floating Point Conversions
+  if (srcType->isFloatingPointTy() && targetType->isFloatingPointTy()) {
+    return m_Builder.CreateFPCast(val, targetType, "fp_cast");
+  }
+  if (srcType->isFloatingPointTy() && targetType->isIntegerTy()) {
+    return m_Builder.CreateFPToSI(val, targetType, "fp_to_int");
+  }
+  if (srcType->isIntegerTy() && targetType->isFloatingPointTy()) {
+    return m_Builder.CreateSIToFP(val, targetType, "int_to_fp");
+  }
 
   // Physical Interpretation: bitcast or int-ptr cast if types are different
   if (srcType != targetType) {
@@ -1361,6 +1396,37 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
             } else {
               spec = "%p"; // Default to address
             }
+          } else if (ty->isStructTy()) {
+            // Attempt to unwrap struct (e.g. Enum { tag }, or StrongType { val
+            // })
+            llvm::Value *unwrapped = pVal;
+            llvm::Type *innerTy = ty;
+            while (innerTy->isStructTy() &&
+                   innerTy->getStructNumElements() > 0) {
+              unwrapped = m_Builder.CreateExtractValue(unwrapped, 0);
+              innerTy = unwrapped->getType();
+            }
+
+            // Re-evaluate type
+            if (innerTy->isIntegerTy()) {
+              if (innerTy->getIntegerBitWidth() > 32) {
+                spec = "%lld";
+                pVal = unwrapped;
+              } else {
+                spec = "%d";
+                pVal = m_Builder.CreateZExtOrBitCast(
+                    unwrapped, llvm::Type::getInt32Ty(m_Context));
+              }
+            } else if (innerTy->isFloatTy() || innerTy->isDoubleTy()) {
+              spec = "%f";
+              pVal = unwrapped;
+              if (innerTy->isFloatTy())
+                pVal = m_Builder.CreateFPExt(pVal, m_Builder.getDoubleTy());
+            } else {
+              spec = "?Struct?";
+              // Don't pass struct to printf, it crashes lli
+              pVal = llvm::ConstantInt::get(m_Builder.getInt32Ty(), 0);
+            }
           } else {
             spec = "?"; // Unknown
           }
@@ -1405,8 +1471,20 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
       std::string mangledName = optName + "_" + varName;
       if (auto *f = m_Module->getFunction(mangledName)) {
         std::vector<llvm::Value *> args;
-        for (auto &arg : call->Args) {
-          args.push_back(genExpr(arg.get()));
+        for (size_t i = 0; i < call->Args.size(); ++i) {
+          llvm::Value *argVal = genExpr(call->Args[i].get());
+          if (i < f->getFunctionType()->getNumParams()) {
+            llvm::Type *paramTy = f->getFunctionType()->getParamType(i);
+            if (argVal && paramTy->isPointerTy() &&
+                argVal->getType()->isStructTy()) {
+              // Implicit By-Ref for Structs: Pass Address of Temp
+              llvm::AllocaInst *tmp = m_Builder.CreateAlloca(
+                  argVal->getType(), nullptr, "arg_tmp_byref");
+              m_Builder.CreateStore(argVal, tmp);
+              argVal = tmp;
+            }
+          }
+          args.push_back(argVal);
         }
         if (!args.empty() && !args.back())
           return nullptr;
@@ -1530,6 +1608,18 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
       error(call, "Failed to generate argument " + std::to_string(i) + " for " +
                       call->Callee);
       return nullptr;
+    }
+
+    // Fallback: If we generated a Value (e.g. Struct) but Function expects
+    // Pointer (Implicit ByRef), wrap it now.
+    if (val && i < callee->getFunctionType()->getNumParams()) {
+      llvm::Type *paramTy = callee->getFunctionType()->getParamType(i);
+      if (paramTy->isPointerTy() && val->getType()->isStructTy()) {
+        llvm::AllocaInst *tmp = m_Builder.CreateAlloca(val->getType(), nullptr,
+                                                       "arg_fallback_byref");
+        m_Builder.CreateStore(val, tmp);
+        val = tmp;
+      }
     }
 
     if (i < callee->getFunctionType()->getNumParams()) {
