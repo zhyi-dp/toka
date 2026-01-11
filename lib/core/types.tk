@@ -13,14 +13,8 @@ pub type char = i8
 //No memory is allocated, and its address cannot be taken.
 pub const ADDR0 = 0:Addr
 
-pub const U8_LIMITS = (
-    min = 0,
-    max = 255,
-    bits = 8,
-)
-
 pub const LIMITS = (
-    // 整数边界：硬编码的物理极限
+    // Integer boundaries: Hard-coded physical limits
     u8 = (
         min = 0,
         max = 255,
@@ -37,28 +31,30 @@ pub const LIMITS = (
         bits = 64,
     ),
 
-    // 平台相关的类型 (Pointer Sized Integers)
-    // 这些值不是写死的，而是编译器在构建时根据架构 (x64/ARM) 注入的
+    // Platform-dependent types (Pointer Sized Integers)
+    // These values are injected by the compiler at build time 
+    // based on the target architecture (x64/ARM).
     usize = (
         min = 0,
-        // 在 64 位系统上是 u64.max，在 32 位上是 u32.max
+        // Represents u64.max on 64-bit systems or u32.max on 32-bit systems
         max = 18446744073709551615:u64,
-        width = 8, // 8 或 4
+        width = 8, // Usually 8 or 4 (bytes)
     ),
 
-    // 浮点数特性 (IEEE 754)
-    // 做高性能科学计算或图形学 (Graphics) 时必不可少
+    // Floating-point characteristics (IEEE 754)
+    // Essential for high-performance scientific computing or graphics
     f32 = (
-        // 最小正值 (用于防止除以零)
+        // Smallest positive normalized value (useful for epsilon-checks)
         min_positive = 1.17549435e-38,
-        // // 机器精度 (Machine Epsilon)
+        // Machine Epsilon: Difference between 1.0 and the next representable value
         epsilon = 1.19209290e-07,
-        // 特殊值的位模式 (Bit Patterns)
-        // 系统编程有时需要直接操作这些位的二进制表示
+        
+        // Bit patterns for special values
+        // Crucial for systems programming requiring direct binary manipulation
         bits = (
-            nan = 0x7fc00000, // Not a Number
-            infinity = 0x7f800000, // +Inf
+            nan = 0x7fc00000,      // Not a Number
+            infinity = 0x7f800000, // +Infinity
             neg_zero = 0x80000000, // -0.0
         )
     )
-) 
+)

@@ -1,27 +1,38 @@
+// tests/pass/test_comprehensive.tk
+// A comprehensive tour of Toka v1.3 features
 
 import std/io::println
 import std/memory::assert
 import core/types::LIMITS
+import std/string::String
 
-// 1. Constants & Records
-// const APP_CONFIG = (
-//     name = "ParticleSim",
-//     version = 1,
-// )
+// --- 1. Enumerations & ADTs ---
 
-// 2. Enum
 shape Status (
     Active = 0 |
     Inactive = 1 |
     Paused = 2
 )
 
-// 3. Trait
+shape Color (
+    Red |
+    Green |
+    Blue |
+    Custom(u8, u8, u8)
+)
+
+// --- 2. Traits ---
+
 trait @Renderable {
     fn render(self) -> i32
 }
 
-// 4. Structs
+trait @Identity {
+    fn get_id(self) -> i32
+}
+
+// --- 3. Structs ---
+
 shape Point (
     x: f32,
     y: f32
@@ -30,47 +41,54 @@ shape Point (
 shape Entity (
     id: i32,
     pos: Point,
-    status: Status
+    status: Status,
+    name: String
 )
 
-// 5. Implementation
+// --- 4. Implementations ---
+
 impl Point {
-    // In-place capture of self
-    fn add(self#, other: Point) -> i32 {
+    // Method with mutable self (in-place capture)
+    fn add(self#, other: Point) {
         self#.x = self.x + other.x
         self#.y = self.y + other.y
-        return 0
     }
 }
 
-// Trait Implementation
 impl Entity@Renderable {
     fn render(self) -> i32 {
-        println("Entity[{}] at ({}, {}) Status: {}", 
-            self.id, self.pos.x, self.pos.y, self.status)
-        return 0
+        // Accessing underlying pointer of String
+        println("Rendering Entity '{}' (#{}) at ({}, {}) Status: {}", 
+            self.name.as_ptr(), self.id, self.pos.x, self.pos.y, self.status)
+        return 1
     }
 }
 
-// In-place capture of e
+impl Entity@Identity {
+    fn get_id(self) -> i32 {
+        return self.id
+    }
+}
+
+// Polymorphic function accepting a Trait Object
+fn print_id(obj: dyn @Identity) {
+    println("ID is: {}", obj.get_id())
+}
+
+// --- 5. Logic & Control Flow ---
+
 fn simulate(e#: Entity) -> bool {
-    // Match
+    // specific ADT match
     match e.status {
         Status::Inactive => return false
         _ => {}
     }
 
-    // Hex Literal Check
-    if e.id > 0xFF {
-        println("Warning: High ID {}", e.id)
-    }
-
-    // Use # for mutable access
+    // struct mutation
     e#.pos.add(Point(x=1.0:f32, y=0.5:f32))
 
-    // Scientific Float
-    if e#.pos.x > 1.0e3:f32 {
-        // Mutation requires #
+    // logic check
+    if e.pos.x > 100.0:f32 {
         e#.status = Status::Inactive
         return false
     }
@@ -78,40 +96,104 @@ fn simulate(e#: Entity) -> bool {
     return true
 }
 
+fn color_to_hex(c: Color) -> i32 {
+    // ADT Pattern Matching with Destructuring
+    // Note: Implicitly namespaced variants or explicit?
+    // Using matches with 'Color::' prefix for clarity
+    return match c {
+        Color::Red => pass 0xFF0000
+        Color::Green => pass 0x00FF00
+        Color::Blue => pass 0x0000FF
+        auto Color::Custom(r, g, b) => {
+            // Expression block with 'pass'
+            pass (r as i32) * 65536 + (g as i32) * 256 + (b as i32)
+        }
+    }
+}
+
+// --- 6. Main Execution ---
+
 fn main() -> i32 {
-    // println("Starting {} v{}", APP_CONFIG.name, APP_CONFIG.version)
+    println("--- Toka Comprehensive Test ---")
 
-    auto dt = 1.6e-2 
-
-    // Value allocation (Stack)
+    // 6.1 String & Allocations
+    auto name_str = String::from("Hero")
+    
+    // stack allocation
+    // Entity takes ownership of the String buffer (via bitwise copy)
     auto e1# = Entity(
         id = 1,
         pos = Point(10.0:f32, 20.0:f32),
-        status = Status::Active
+        status = Status::Active,
+        name = name_str 
     )
 
-    // auto loop variable
+    // 6.2 Trait Object (Polymorphism)
+    print_id(e1)
+
+    // 6.3 Loop & Logic
     auto steps# = 0
-    while steps < 3 {
-        println("Step: {}, dt: {}", steps, dt)
-        
-        // Pass mutable ref
-        if !simulate(e1#) {
-            break
-        }
-
-        e1.render()
-        steps# = steps + 1
-    }
-
-    println("Final steps: {}", steps)
+    auto max_steps = 3
     
-    // After 3 steps: id=1, pos=(13.0, 21.5), status=0 (Active)
-    assert(steps == 3, "steps mismatch")
-    assert(e1.pos.x == 13.0:f32, "e1.pos.x mismatch")
-    assert(e1.pos.y == 21.5:f32, "e1.pos.y mismatch")
-    // assert(e1.status == Status::Active, "e1.status mismatch") // Enum equality might not work? Assuming unsafe to check now.
+    // Loop expression with result
+    auto result_code = loop {
+        if steps >= max_steps {
+            break 200 // OK
+        }
+        
+        println("Step: {}", steps)
+        if !simulate(e1#) {
+            break 500 // Error
+        }
+        
+        // Assert intermediate state by calling render
+        e1.render()
+        steps# += 1
+    }
+    
+    println("Loop finished with code: {}", result_code)
+    assert(result_code == 200, "Loop result mismatch")
+    assert(steps == 3, "Step count mismatch")
+    
+    // Verifying mutation results
+    // Init: (10, 20). 3 steps of (+1.0, +0.5).
+    // Final: (13.0, 21.5)
+    assert(e1.pos.x == 13.0:f32, "pos.x mismatch")
+    assert(e1.pos.y == 21.5:f32, "pos.y mismatch")
 
-    println("Done.")
+    // 6.4 ADT & Pattern Matching
+    auto c1 = Color::Red()
+    auto c2 = Color::Custom(10, 20, 30) // 0x0A141E
+    
+    auto h1 = color_to_hex(c1)
+    auto h2 = color_to_hex(c2)
+    
+    println("Color Red: 0x{}", h1)
+    println("Color Custom: 0x{}", h2)
+    
+    assert(h1 == 0xFF0000, "Red hex mismatch")
+    assert(h2 == 0x0A141E, "Custom hex mismatch")
+
+    // 6.5 Unique Pointer & Move Semantics
+    {
+        println("\n-- Testing Unique Pointers --")
+        // Heap allocation
+        auto ^ptr = new Point(x=999.0:f32, y=888.0:f32)
+        println("Heap Point: ({}, {})", ptr.x, ptr.y)
+        
+        // Pointer Move
+        auto ^ptr2 = ^ptr
+        // ptr is now moved-from
+        println("Moved Point: ({}, {})", ptr2.x, ptr2.y)
+        assert(ptr2.x == 999.0:f32, "Moved pointer value mismatch")
+        // Automatic cleanup of ptr2 at end of scope
+    }
+    
+    // 6.6 Manual cleanup of String inside Entity 
+    // Manual drop because we don't have automatic struct destructors yet
+    println("\nCleaning up...")
+    e1.name.drop() 
+    
+    println("All comprehensive tests passed.")
     return 0
 }

@@ -1,5 +1,11 @@
-// lib/std/memory.tk
-// Standard memory management using libc.
+// =============================================================================
+// TOKA COMPILER INTERFACE: Libc Integration
+//
+// NOTE: Adding support for additional libc functions in this file does NOT 
+// require any modifications to the Toka compiler itself. The compiler 
+// automatically resolves these 'extern' declarations by mapping them to 
+// the corresponding symbols in the linked C standard library.
+// =============================================================================
 
 import core/types::{usize, Addr, char}
 import std/io::println
@@ -9,10 +15,9 @@ extern fn libc_free(*ptr: void) -> void
 extern fn libc_memcpy(*dest: void, *src: void, n: usize) -> usize
 extern fn libc_memset(*dest: void, val: i32, n: usize) -> usize
 extern fn libc_abort() -> void
+extern fn libc_time() -> i64
 
 // export Magic Hooks
-// 编译器在处理 'alloc' 和 'free' 关键字时会寻找这些符号
-
 pub fn __toka_alloc(size: usize) -> *void {
     unsafe {
         return libc_malloc(size)
@@ -40,17 +45,22 @@ pub fn __toka_memcpy(*dest#: void, *src: void, len: usize) {
     }
 }
 
+pub fn __toka_time() -> i64 {
+    unsafe {
+        return libc_time()
+    }
+}
+
 pub fn __toka_panic(*message: char) {
-    println("Panic: {}", *message)
+    println("Panic: {}, time: {}", *message, __toka_time())
     unsafe {
         libc_abort()
     }
 }
 
-// toka 标准库伪代码
+// TODO: __FILE__ and __LINE__
 pub fn assert(condition: bool, message: str) {
     if !condition {
-        // 这里的 panic 最好能自动获取调用处的 __FILE__ 和 __LINE__
         __toka_panic(message as *char)
     }
 }

@@ -844,20 +844,42 @@ llvm::Value *CodeGen::genMatchExpr(const MatchExpr *expr) {
         if (!arm->Pat->SubPatterns.empty() && variant) {
           llvm::Value *payloadAddr =
               m_Builder.CreateStructGEP(targetType, targetAddr, 1);
-          // Payload is often modeled as bytes, cast it
-          llvm::Type *payloadType = resolveType(variant->Type, false);
-          if (payloadType) {
-            llvm::Value *castAddr = m_Builder.CreateBitCast(
-                payloadAddr, llvm::PointerType::getUnqual(payloadType));
-            // Bind subpatterns
+
+          llvm::Type *payloadLayoutType = nullptr;
+          std::vector<llvm::Type *> fieldTypes;
+
+          if (!variant->SubMembers.empty()) {
+            for (const auto &f : variant->SubMembers) {
+              fieldTypes.push_back(resolveType(f.Type, false));
+            }
+            payloadLayoutType =
+                llvm::StructType::get(m_Context, fieldTypes, true);
+          } else if (!variant->Type.empty()) {
+            payloadLayoutType = resolveType(variant->Type, false);
+          }
+
+          if (payloadLayoutType) {
+            llvm::Value *variantAddr = m_Builder.CreateBitCast(
+                payloadAddr, llvm::PointerType::getUnqual(payloadLayoutType));
+
             for (size_t i = 0; i < arm->Pat->SubPatterns.size(); ++i) {
-              // If reference, pass address directly, not value.
-              // CodeGen::genPatternBinding handles 'IsReference' logic but
-              // needs correct address. castAddr IS the address of payload.
-              // For multi-field payloads, we would GEP. For now assume single
-              // payload if not tuple.
-              genPatternBinding(arm->Pat->SubPatterns[i].get(), castAddr,
-                                payloadType);
+              // Safety check
+              if (fieldTypes.empty() && i > 0)
+                break;
+              if (!fieldTypes.empty() && i >= fieldTypes.size())
+                break;
+
+              llvm::Value *fieldAddr = variantAddr;
+              llvm::Type *fieldTy = payloadLayoutType;
+
+              if (!fieldTypes.empty()) {
+                fieldAddr = m_Builder.CreateStructGEP(payloadLayoutType,
+                                                      variantAddr, i);
+                fieldTy = fieldTypes[i];
+              }
+
+              genPatternBinding(arm->Pat->SubPatterns[i].get(), fieldAddr,
+                                fieldTy);
             }
           }
         }
@@ -1528,25 +1550,40 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
           llvm::Value *tagAddr =
               m_Builder.CreateStructGEP(st, alloca, 0, "tag_addr");
           m_Builder.CreateStore(
-              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), tag),
+              llvm::ConstantInt::get(llvm::Type::getInt8Ty(m_Context), tag),
               tagAddr);
 
-          if (targetVar && !targetVar->Type.empty()) {
-            llvm::Value *payloadAddr =
-                m_Builder.CreateStructGEP(st, alloca, 1, "payload_addr");
-            llvm::Type *payloadType = resolveType(targetVar->Type, false);
+          if (targetVar) {
+            llvm::Type *payloadType = nullptr;
+            std::vector<llvm::Type *> fieldTypes;
+
+            if (!targetVar->SubMembers.empty()) {
+              for (auto &f : targetVar->SubMembers) {
+                fieldTypes.push_back(resolveType(f.Type, false));
+              }
+              payloadType = llvm::StructType::get(m_Context, fieldTypes, true);
+            } else if (!targetVar->Type.empty()) {
+              payloadType = resolveType(targetVar->Type, false);
+            }
+
             if (payloadType) {
+              llvm::Value *payloadAddr =
+                  m_Builder.CreateStructGEP(st, alloca, 1, "payload_addr");
               llvm::Value *castPtr = m_Builder.CreateBitCast(
                   payloadAddr, llvm::PointerType::getUnqual(payloadType));
-              if (args.size() == 1) {
-                m_Builder.CreateStore(args[0], castPtr);
-              } else if (payloadType->isStructTy()) {
-                for (size_t i = 0;
-                     i < args.size() && i < payloadType->getStructNumElements();
+
+              if (!targetVar->SubMembers.empty()) {
+                // Multi-field Tuple Payload
+                for (size_t i = 0; i < args.size() && i < fieldTypes.size();
                      ++i) {
                   llvm::Value *fPtr =
                       m_Builder.CreateStructGEP(payloadType, castPtr, i);
                   m_Builder.CreateStore(args[i], fPtr);
+                }
+              } else {
+                // Single Payload
+                if (args.size() == 1) {
+                  m_Builder.CreateStore(args[0], castPtr);
                 }
               }
             }

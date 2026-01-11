@@ -595,13 +595,22 @@ void CodeGen::genShape(const ShapeDecl *sh) {
     // Tagged Union: { i8 tag, [Payload] }
     uint64_t maxPayloadSize = 0;
     for (const auto &variant : sh->Members) {
-      if (variant.Type.empty())
-        continue;
-      llvm::Type *t = resolveType(variant.Type, false);
-      if (!t)
-        continue;
-      maxPayloadSize = std::max(
-          maxPayloadSize, (uint64_t)DL.getTypeAllocSize(t).getFixedValue());
+      uint64_t variantSize = 0;
+      if (!variant.SubMembers.empty()) {
+        std::vector<llvm::Type *> fieldTypes;
+        for (const auto &field : variant.SubMembers) {
+          fieldTypes.push_back(resolveType(field.Type, false));
+        }
+        // Use packed layout to estimate consistent payload size
+        llvm::StructType *st =
+            llvm::StructType::get(m_Context, fieldTypes, true);
+        variantSize = DL.getTypeAllocSize(st).getFixedValue();
+      } else if (!variant.Type.empty()) {
+        llvm::Type *t = resolveType(variant.Type, false);
+        if (t)
+          variantSize = DL.getTypeAllocSize(t).getFixedValue();
+      }
+      maxPayloadSize = std::max(maxPayloadSize, variantSize);
     }
     body.push_back(llvm::Type::getInt8Ty(m_Context)); // Tag
     if (maxPayloadSize > 0) {

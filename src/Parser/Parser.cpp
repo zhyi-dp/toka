@@ -302,7 +302,16 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
         ShapeMember v;
         v.Name = consume(TokenType::Identifier, "Expected variant").Text;
         if (match(TokenType::LParen)) {
-          v.Type = advance().Text;
+          v.SubKind = ShapeKind::Tuple;
+          while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+            ShapeMember field;
+            field.Type = advance().Text;
+            v.SubMembers.push_back(std::move(field));
+            if (!check(TokenType::RParen))
+              match(TokenType::Comma);
+          }
+          std::cerr << "DEBUG: Parsed Variant " << v.Name << " with "
+                    << v.SubMembers.size() << " fields." << std::endl;
           consume(TokenType::RParen, "Expected ')'");
         }
         if (match(TokenType::Equal)) {

@@ -328,13 +328,36 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
 
       if (foundMemb) {
         if (Pat->SubPatterns.size() > 0) {
-          if (foundMemb->Type.empty()) {
+          if (foundMemb->Type.empty() && foundMemb->SubMembers.empty()) {
             error(static_cast<ASTNode *>(Pat),
                   "variant '" + variantName + "' takes no payload");
           } else {
-            // For now assume single payload if not tuple
-            checkPattern(Pat->SubPatterns[0].get(), foundMemb->Type,
-                         SourceIsMutable);
+            if (!foundMemb->SubMembers.empty()) {
+              // Multi-field tuple variant
+              if (Pat->SubPatterns.size() != foundMemb->SubMembers.size()) {
+                error(static_cast<ASTNode *>(Pat),
+                      "variant '" + variantName + "' expects " +
+                          std::to_string(foundMemb->SubMembers.size()) +
+                          " fields, but got " +
+                          std::to_string(Pat->SubPatterns.size()));
+              } else {
+                for (size_t i = 0; i < Pat->SubPatterns.size(); ++i) {
+                  // Rebind check
+                  checkPattern(Pat->SubPatterns[i].get(),
+                               foundMemb->SubMembers[i].Type, SourceIsMutable);
+                }
+              }
+            } else {
+              // Legacy single-field variant
+              if (Pat->SubPatterns.size() != 1) {
+                error(static_cast<ASTNode *>(Pat),
+                      "variant '" + variantName +
+                          "' expects 1 field, but got " +
+                          std::to_string(Pat->SubPatterns.size()));
+              }
+              checkPattern(Pat->SubPatterns[0].get(), foundMemb->Type,
+                           SourceIsMutable);
+            }
           }
         }
       } else {
