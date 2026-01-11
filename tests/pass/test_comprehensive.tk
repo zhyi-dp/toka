@@ -127,6 +127,7 @@ fn main() -> i32 {
         status = Status::Active,
         name = name_str 
     )
+    println("hello {}",e1.name.c_str())
 
     // 6.2 Trait Object (Polymorphism)
     print_id(e1)

@@ -1413,8 +1413,13 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
                 semanticType = m_Functions[ce->Callee]->ReturnType;
               else if (m_Externs.count(ce->Callee))
                 semanticType = m_Externs[ce->Callee]->ReturnType;
+            } else if (auto *me =
+                           dynamic_cast<const MethodCallExpr *>(argExpr)) {
+              // Heuristics for methods
+              if (me->Method == "c_str")
+                semanticType = "*char";
             } else if (dynamic_cast<const StringExpr *>(argExpr)) {
-              semanticType = "str";
+              semanticType = "*char";
             }
 
             // Only 'char' types (which alias i8) or literals are strings.

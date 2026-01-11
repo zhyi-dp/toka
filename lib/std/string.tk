@@ -3,7 +3,7 @@
 // Version: 1.3.1 (In-Place Capture & Strict Morphology)
 // ==========================================
 
-import core/types::{usize,Addr,ADDR0}
+import core/types::{char,usize,Addr,ADDR0}
 
 // ------------------------------------------------------
 // 1. External C Interface (libc)
@@ -93,6 +93,11 @@ impl String {
     pub fn as_ptr(self) -> *i8 {
         // self.*buf 访问的是 buf 指针变量里存储的地址 (Slot A)
         return self.*buf
+    }
+
+    pub fn c_str(self) -> *char {
+        // self.*buf 访问的是 buf 指针变量里存储的地址 (Slot A)
+        return self.*buf as *char
     }
     
     // === 修改器 (Mutation) ===
