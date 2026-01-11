@@ -6,7 +6,7 @@
 
 namespace toka {
 
-llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
+PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   const BinaryExpr *bin = expr;
   if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" || bin->Op == "*=" ||
       bin->Op == "/=") {
@@ -60,7 +60,8 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
       return nullptr;
     }
 
-    llvm::Value *rhsVal = genExpr(bin->RHS.get());
+    PhysEntity rhsVal_ent = genExpr(bin->RHS.get()).load(m_Builder);
+    llvm::Value *rhsVal = rhsVal_ent.load(m_Builder);
     if (!rhsVal)
       return nullptr;
 
@@ -93,7 +94,7 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
         if (m_Symbols.count(baseName))
           objType = m_Symbols[baseName].soulType;
         else
-          objType = genExpr(memLHS->Object.get())->getType();
+          objType = genExpr(memLHS->Object.get()).load(m_Builder)->getType();
 
         if (objType && objType->isStructTy()) {
           llvm::StructType *st = llvm::cast<llvm::StructType>(objType);
@@ -200,7 +201,8 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
   // Logical Operators (Short-circuiting)
   if (bin->Op == "&&") {
-    llvm::Value *lhs = genExpr(bin->LHS.get());
+    PhysEntity lhs_ent = genExpr(bin->LHS.get()).load(m_Builder);
+    llvm::Value *lhs = lhs_ent.load(m_Builder);
     if (!lhs)
       return nullptr;
     if (!lhs->getType()->isIntegerTy(1))
@@ -217,7 +219,8 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
     // Eval RHS
     m_Builder.SetInsertPoint(RHSBB);
-    llvm::Value *rhs = genExpr(bin->RHS.get());
+    PhysEntity rhs_ent = genExpr(bin->RHS.get()).load(m_Builder);
+    llvm::Value *rhs = rhs_ent.load(m_Builder);
     if (!rhs)
       return nullptr;
     if (!rhs->getType()->isIntegerTy(1))
@@ -238,7 +241,8 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   }
 
   if (bin->Op == "||") {
-    llvm::Value *lhs = genExpr(bin->LHS.get());
+    PhysEntity lhs_ent = genExpr(bin->LHS.get()).load(m_Builder);
+    llvm::Value *lhs = lhs_ent.load(m_Builder);
     if (!lhs)
       return nullptr;
     if (!lhs->getType()->isIntegerTy(1))
@@ -255,7 +259,8 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
     // Eval RHS
     m_Builder.SetInsertPoint(RHSBB);
-    llvm::Value *rhs = genExpr(bin->RHS.get());
+    PhysEntity rhs_ent = genExpr(bin->RHS.get()).load(m_Builder);
+    llvm::Value *rhs = rhs_ent.load(m_Builder);
     if (!rhs)
       return nullptr;
     if (!rhs->getType()->isIntegerTy(1))
@@ -341,11 +346,11 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
           baseName.pop_back();
 
         if (m_ValueIsShared.count(baseName) && m_ValueIsShared[baseName]) {
-          return genExpr(target);
+          return genExpr(target).load(m_Builder);
         }
         return getEntityAddr(v->Name);
       }
-      return genExpr(e);
+      return genExpr(e).load(m_Builder);
     };
 
     llvm::Value *lhsVal = evaluatePeek(bin->LHS.get());
@@ -384,7 +389,8 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   }
 
   // Standard Arithmetic and Comparisons
-  llvm::Value *lhs = genExpr(bin->LHS.get());
+  PhysEntity lhs_ent = genExpr(bin->LHS.get()).load(m_Builder);
+  llvm::Value *lhs = lhs_ent.load(m_Builder);
   if (!lhs) {
     return nullptr;
   }
@@ -394,7 +400,8 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     return nullptr;
   }
 
-  llvm::Value *rhs = genExpr(bin->RHS.get());
+  PhysEntity rhs_ent = genExpr(bin->RHS.get()).load(m_Builder);
+  llvm::Value *rhs = rhs_ent.load(m_Builder);
   if (!rhs) {
     return nullptr;
   }
@@ -576,7 +583,7 @@ llvm::Value *CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   return nullptr;
 }
 
-llvm::Value *CodeGen::genUnaryExpr(const UnaryExpr *unary) {
+PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
   if (unary->Op == TokenType::PlusPlus || unary->Op == TokenType::MinusMinus) {
     llvm::Value *addr = genAddr(unary->RHS.get());
     if (!addr)
@@ -655,7 +662,8 @@ llvm::Value *CodeGen::genUnaryExpr(const UnaryExpr *unary) {
     return genExpr(unary->RHS.get());
   }
 
-  llvm::Value *rhs = genExpr(unary->RHS.get());
+  PhysEntity rhs_ent = genExpr(unary->RHS.get()).load(m_Builder);
+  llvm::Value *rhs = rhs_ent.load(m_Builder);
   if (!rhs)
     return nullptr;
   if (unary->Op == TokenType::Bang) {
@@ -668,8 +676,9 @@ llvm::Value *CodeGen::genUnaryExpr(const UnaryExpr *unary) {
   return nullptr;
 }
 
-llvm::Value *CodeGen::genCastExpr(const CastExpr *cast) {
-  llvm::Value *val = genExpr(cast->Expression.get());
+PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
+  PhysEntity val_ent = genExpr(cast->Expression.get()).load(m_Builder);
+  llvm::Value *val = val_ent.load(m_Builder);
   if (!val)
     return nullptr;
   llvm::Type *targetType = resolveType(cast->TargetType, false);
@@ -713,7 +722,7 @@ llvm::Value *CodeGen::genCastExpr(const CastExpr *cast) {
   return val;
 }
 
-llvm::Value *CodeGen::genVariableExpr(const VariableExpr *var) {
+PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
   llvm::Value *soulAddr = getEntityAddr(var->Name);
   if (!soulAddr) {
     return nullptr;
@@ -750,10 +759,16 @@ llvm::Value *CodeGen::genVariableExpr(const VariableExpr *var) {
     soulType = m_Builder.getPtrTy();
   }
 
-  return m_Builder.CreateLoad(soulType, soulAddr, var->Name);
+  std::string typeName = "";
+  if (m_ValueTypeNames.count(baseName))
+    typeName = m_ValueTypeNames[baseName];
+  else if (m_TypeToName.count(soulType))
+    typeName = m_TypeToName[soulType];
+
+  return PhysEntity(soulAddr, typeName, soulType, true);
 }
 
-llvm::Value *CodeGen::genLiteralExpr(const Expr *expr) {
+PhysEntity CodeGen::genLiteralExpr(const Expr *expr) {
   if (auto *num = dynamic_cast<const NumberExpr *>(expr)) {
     if (num->Value > 2147483647) {
       return llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context),
@@ -779,8 +794,9 @@ llvm::Value *CodeGen::genLiteralExpr(const Expr *expr) {
   return nullptr;
 }
 
-llvm::Value *CodeGen::genMatchExpr(const MatchExpr *expr) {
-  llvm::Value *targetVal = genExpr(expr->Target.get());
+PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
+  PhysEntity targetVal_ent = genExpr(expr->Target.get()).load(m_Builder);
+  llvm::Value *targetVal = targetVal_ent.load(m_Builder);
   if (!targetVal)
     return nullptr;
 
@@ -937,7 +953,7 @@ llvm::Value *CodeGen::genMatchExpr(const MatchExpr *expr) {
   return m_Builder.CreateLoad(resultType, resultAddr, "match_result");
 }
 
-llvm::Value *CodeGen::genIfExpr(const IfExpr *ie) {
+PhysEntity CodeGen::genIfExpr(const IfExpr *ie) {
   // Track result via alloca if this if yields a value (determined by
   // PassExpr)
   llvm::AllocaInst *resultAddr =
@@ -945,7 +961,8 @@ llvm::Value *CodeGen::genIfExpr(const IfExpr *ie) {
   // Initialize with 0 or some default
   m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
 
-  llvm::Value *cond = genExpr(ie->Condition.get());
+  PhysEntity cond_ent = genExpr(ie->Condition.get()).load(m_Builder);
+  llvm::Value *cond = cond_ent.load(m_Builder);
   if (!cond)
     return nullptr;
   if (!cond->getType()->isIntegerTy(1)) {
@@ -985,7 +1002,7 @@ llvm::Value *CodeGen::genIfExpr(const IfExpr *ie) {
   return m_Builder.CreateLoad(m_Builder.getInt32Ty(), resultAddr, "if_result");
 }
 
-llvm::Value *CodeGen::genWhileExpr(const WhileExpr *we) {
+PhysEntity CodeGen::genWhileExpr(const WhileExpr *we) {
   llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
   llvm::BasicBlock *condBB =
       llvm::BasicBlock::Create(m_Context, "while_cond", f);
@@ -1001,7 +1018,8 @@ llvm::Value *CodeGen::genWhileExpr(const WhileExpr *we) {
 
   m_Builder.CreateBr(condBB);
   m_Builder.SetInsertPoint(condBB);
-  llvm::Value *cond = genExpr(we->Condition.get());
+  PhysEntity cond_ent = genExpr(we->Condition.get()).load(m_Builder);
+  llvm::Value *cond = cond_ent.load(m_Builder);
   m_Builder.CreateCondBr(cond, loopBB, elseBB);
 
   loopBB->insertInto(f);
@@ -1036,7 +1054,7 @@ llvm::Value *CodeGen::genWhileExpr(const WhileExpr *we) {
                               "while_result");
 }
 
-llvm::Value *CodeGen::genLoopExpr(const LoopExpr *le) {
+PhysEntity CodeGen::genLoopExpr(const LoopExpr *le) {
   llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
   llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(m_Context, "loop", f);
   llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(m_Context, "loop_after");
@@ -1066,8 +1084,9 @@ llvm::Value *CodeGen::genLoopExpr(const LoopExpr *le) {
                               "loop_result");
 }
 
-llvm::Value *CodeGen::genForExpr(const ForExpr *fe) {
-  llvm::Value *collVal = genExpr(fe->Collection.get());
+PhysEntity CodeGen::genForExpr(const ForExpr *fe) {
+  PhysEntity collVal_ent = genExpr(fe->Collection.get()).load(m_Builder);
+  llvm::Value *collVal = collVal_ent.load(m_Builder);
   if (!collVal)
     return nullptr;
 
@@ -1246,7 +1265,7 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
   }
 }
 
-llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
+PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
   // Primitives as constructors: i32(42)
   if (call->Callee == "i32" || call->Callee == "u32" || call->Callee == "i64" ||
       call->Callee == "u64" || call->Callee == "f32" || call->Callee == "f64" ||
@@ -1256,7 +1275,8 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
     llvm::Type *targetTy = resolveType(call->Callee, false);
     if (call->Args.empty())
       return llvm::Constant::getNullValue(targetTy);
-    llvm::Value *val = genExpr(call->Args[0].get());
+    PhysEntity val_ent = genExpr(call->Args[0].get()).load(m_Builder);
+    llvm::Value *val = val_ent.load(m_Builder);
     if (!val)
       return nullptr;
     if (val->getType() != targetTy) {
@@ -1320,7 +1340,8 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
         }
 
         if (memberIdx >= 0 && memberIdx < (int)sh->Members.size()) {
-          llvm::Value *val = genExpr(valExpr);
+          PhysEntity val_ent = genExpr(valExpr).load(m_Builder);
+          llvm::Value *val = val_ent.load(m_Builder);
           if (!val)
             return nullptr;
 
@@ -1376,11 +1397,18 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
 
       // Print argument
       if (argIndex < (int)call->Args.size()) {
-        llvm::Value *val = genExpr(call->Args[argIndex].get());
+        PhysEntity val_ent = genExpr(call->Args[argIndex].get());
+        // Note: genExpr returns PhysEntity. DO NOT LOAD YET if we want Type
+        // info.
+
+        llvm::Value *val = val_ent.load(m_Builder);
         if (val) {
           llvm::Type *ty = val->getType();
           std::string spec = "";
           llvm::Value *pVal = val;
+
+          // Use Entity Type Name if available
+          std::string semanticType = val_ent.typeName;
 
           if (ty->isIntegerTy(1)) { // bool
             llvm::Value *trueStr = m_Builder.CreateGlobalStringPtr("true");
@@ -1396,40 +1424,19 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
           } else if (ty->isFloatTy()) {
             spec = "%f";
             pVal = m_Builder.CreateFPExt(val, m_Builder.getDoubleTy());
+          } else if (semanticType == "*char" || semanticType == "str" ||
+                     semanticType == "char" || semanticType == "String") {
+            // Explicit check for String type (including String struct if we
+            // support it)
+            spec = "%s";
+            // If it's *char (Pointer to i8), printf %s works.
+            // If it's String struct, we might need to extract data pointer?
+            // But currently String is likely passed as *char from c_str() or
+            // similar. If it is String struct, pVal is struct value. printf
+            // cannot take struct. But val_ent.load() loads the value.
           } else if (ty->isPointerTy()) {
-            // Enhanced pointer detection for println
-            std::string semanticType = "";
-            const Expr *argExpr = call->Args[argIndex].get();
-
-            // Unwrap unary expressions (e.g. *ptr, &ptr) to find source var
-            while (auto *ue = dynamic_cast<const UnaryExpr *>(argExpr)) {
-              argExpr = ue->RHS.get();
-            }
-
-            if (auto *ve = dynamic_cast<const VariableExpr *>(argExpr)) {
-              semanticType = m_ValueTypeNames[ve->Name];
-            } else if (auto *ce = dynamic_cast<const CallExpr *>(argExpr)) {
-              if (m_Functions.count(ce->Callee))
-                semanticType = m_Functions[ce->Callee]->ReturnType;
-              else if (m_Externs.count(ce->Callee))
-                semanticType = m_Externs[ce->Callee]->ReturnType;
-            } else if (auto *me =
-                           dynamic_cast<const MethodCallExpr *>(argExpr)) {
-              // Heuristics for methods
-              if (me->Method == "c_str")
-                semanticType = "*char";
-            } else if (dynamic_cast<const StringExpr *>(argExpr)) {
-              semanticType = "*char";
-            }
-
-            // Only 'char' types (which alias i8) or literals are strings.
-            // *char means explicit pointer to char -> string.
-            if (semanticType == "str" || semanticType == "char" ||
-                semanticType == "*char") {
-              spec = "%s";
-            } else {
-              spec = "%p"; // Default to address
-            }
+            // Fallback for pointers
+            spec = "%p";
           } else if (ty->isStructTy()) {
             // Attempt to unwrap struct (e.g. Enum { tag }, or StrongType { val
             // })
@@ -1506,7 +1513,8 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
       if (auto *f = m_Module->getFunction(mangledName)) {
         std::vector<llvm::Value *> args;
         for (size_t i = 0; i < call->Args.size(); ++i) {
-          llvm::Value *argVal = genExpr(call->Args[i].get());
+          PhysEntity argVal_ent = genExpr(call->Args[i].get()).load(m_Builder);
+          llvm::Value *argVal = argVal_ent.load(m_Builder);
           if (i < f->getFunctionType()->getNumParams()) {
             llvm::Type *paramTy = f->getFunctionType()->getParamType(i);
             if (argVal && paramTy->isPointerTy() &&
@@ -1545,7 +1553,7 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
         if (tag != -1) {
           std::vector<llvm::Value *> args;
           for (auto &argExpr : call->Args) {
-            args.push_back(genExpr(argExpr.get()));
+            args.push_back(genExpr(argExpr.get()).load(m_Builder));
           }
           if (!args.empty() && !args.back())
             return nullptr;
@@ -1645,12 +1653,12 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
 
     if (shouldPassAddr) {
       if (dynamic_cast<const AddressOfExpr *>(call->Args[i].get())) {
-        val = genExpr(call->Args[i].get());
+        val = genExpr(call->Args[i].get()).load(m_Builder);
       } else {
         val = genAddr(call->Args[i].get());
       }
     } else {
-      val = genExpr(call->Args[i].get());
+      val = genExpr(call->Args[i].get()).load(m_Builder);
     }
 
     if (!val) {
@@ -1744,7 +1752,7 @@ llvm::Value *CodeGen::genCallExpr(const CallExpr *call) {
   return m_Builder.CreateCall(callee->getFunctionType(), callee, argsV);
 }
 
-llvm::Value *CodeGen::genPostfixExpr(const PostfixExpr *post) {
+PhysEntity CodeGen::genPostfixExpr(const PostfixExpr *post) {
   if (post->Op == TokenType::TokenWrite) {
     return genExpr(post->LHS.get());
   }
@@ -1774,10 +1782,10 @@ llvm::Value *CodeGen::genPostfixExpr(const PostfixExpr *post) {
   return oldVal;
 }
 
-llvm::Value *CodeGen::genPassExpr(const PassExpr *pe) {
+PhysEntity CodeGen::genPassExpr(const PassExpr *pe) {
   llvm::Value *val = nullptr;
   if (pe->Value) {
-    val = genExpr(pe->Value.get());
+    val = genExpr(pe->Value.get()).load(m_Builder);
   }
 
   if (!m_CFStack.empty()) {
@@ -1799,10 +1807,10 @@ llvm::Value *CodeGen::genPassExpr(const PassExpr *pe) {
   return nullptr;
 }
 
-llvm::Value *CodeGen::genBreakExpr(const BreakExpr *be) {
+PhysEntity CodeGen::genBreakExpr(const BreakExpr *be) {
   llvm::Value *val = nullptr;
   if (be->Value)
-    val = genExpr(be->Value.get());
+    val = genExpr(be->Value.get()).load(m_Builder);
 
   CFInfo *target = nullptr;
   if (be->TargetLabel.empty()) {
@@ -1832,7 +1840,7 @@ llvm::Value *CodeGen::genBreakExpr(const BreakExpr *be) {
   return nullptr;
 }
 
-llvm::Value *CodeGen::genContinueExpr(const ContinueExpr *ce) {
+PhysEntity CodeGen::genContinueExpr(const ContinueExpr *ce) {
   CFInfo *target = nullptr;
   if (ce->TargetLabel.empty()) {
     for (auto it = m_CFStack.rbegin(); it != m_CFStack.rend(); ++it) {
@@ -1857,11 +1865,11 @@ llvm::Value *CodeGen::genContinueExpr(const ContinueExpr *ce) {
   return nullptr;
 }
 
-llvm::Value *CodeGen::genUnsafeExpr(const UnsafeExpr *ue) {
+PhysEntity CodeGen::genUnsafeExpr(const UnsafeExpr *ue) {
   return genExpr(ue->Expression.get());
 }
 
-llvm::Value *CodeGen::genInitStructExpr(const InitStructExpr *init) {
+PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
   llvm::StructType *st = m_StructTypes[init->ShapeName];
   if (!st) {
     error(init, "Unknown struct type " + init->ShapeName);
@@ -1893,7 +1901,8 @@ llvm::Value *CodeGen::genInitStructExpr(const InitStructExpr *init) {
       return nullptr;
     }
 
-    llvm::Value *fieldVal = genExpr(f.second.get());
+    PhysEntity fieldVal_ent = genExpr(f.second.get()).load(m_Builder);
+    llvm::Value *fieldVal = fieldVal_ent.load(m_Builder);
     if (!fieldVal)
       return nullptr;
 
@@ -1905,7 +1914,7 @@ llvm::Value *CodeGen::genInitStructExpr(const InitStructExpr *init) {
   return m_Builder.CreateLoad(st, alloca);
 }
 
-llvm::Value *CodeGen::genNewExpr(const NewExpr *newExpr) {
+PhysEntity CodeGen::genNewExpr(const NewExpr *newExpr) {
   llvm::Type *type = resolveType(newExpr->Type, false);
   if (!type)
     return nullptr;
@@ -1934,7 +1943,9 @@ llvm::Value *CodeGen::genNewExpr(const NewExpr *newExpr) {
   llvm::Value *heapPtr = voidPtr;
 
   if (newExpr->Initializer) {
-    llvm::Value *initVal = genExpr(newExpr->Initializer.get());
+    PhysEntity initVal_ent =
+        genExpr(newExpr->Initializer.get()).load(m_Builder);
+    llvm::Value *initVal = initVal_ent.load(m_Builder);
     if (initVal) {
       if (initVal->getType() != type) {
         // Attempt cast
@@ -1949,13 +1960,14 @@ llvm::Value *CodeGen::genNewExpr(const NewExpr *newExpr) {
   return heapPtr;
 }
 
-llvm::Value *CodeGen::genTupleExpr(const TupleExpr *expr) {
+PhysEntity CodeGen::genTupleExpr(const TupleExpr *expr) {
   std::vector<llvm::Constant *> consts;
   std::vector<llvm::Value *> values;
   bool allConst = true;
 
   for (auto &e : expr->Elements) {
-    llvm::Value *v = genExpr(e.get());
+    PhysEntity v_ent = genExpr(e.get()).load(m_Builder);
+    llvm::Value *v = v_ent.load(m_Builder);
     if (!v)
       return nullptr;
     values.push_back(v);
@@ -1981,7 +1993,7 @@ llvm::Value *CodeGen::genTupleExpr(const TupleExpr *expr) {
   return val;
 }
 
-llvm::Value *CodeGen::genArrayExpr(const ArrayExpr *expr) {
+PhysEntity CodeGen::genArrayExpr(const ArrayExpr *expr) {
   if (expr->Elements.empty())
     return nullptr;
 
@@ -1990,7 +2002,8 @@ llvm::Value *CodeGen::genArrayExpr(const ArrayExpr *expr) {
   bool allConst = true;
 
   for (auto &e : expr->Elements) {
-    llvm::Value *v = genExpr(e.get());
+    PhysEntity v_ent = genExpr(e.get()).load(m_Builder);
+    llvm::Value *v = v_ent.load(m_Builder);
     if (!v)
       return nullptr;
     values.push_back(v);
@@ -2023,7 +2036,7 @@ llvm::Value *CodeGen::genArrayExpr(const ArrayExpr *expr) {
   return val;
 }
 
-llvm::Value *CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
+PhysEntity CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
   std::string uniqueName = expr->AssignedTypeName;
   if (uniqueName.empty()) {
     error(expr, "Anonymous record missing type name");
@@ -2046,7 +2059,8 @@ llvm::Value *CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
   llvm::Value *alloca = m_Builder.CreateAlloca(recType, nullptr, "anon_rec");
 
   for (size_t i = 0; i < expr->Fields.size(); ++i) {
-    llvm::Value *val = genExpr(expr->Fields[i].second.get());
+    PhysEntity val_ent = genExpr(expr->Fields[i].second.get()).load(m_Builder);
+    llvm::Value *val = val_ent.load(m_Builder);
     if (!val)
       return nullptr;
 

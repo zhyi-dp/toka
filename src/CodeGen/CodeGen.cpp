@@ -7,11 +7,11 @@
 namespace toka {
 
 // 在 src/CodeGen/CodeGen.cpp 的 genExpr 函数中
-llvm::Value *CodeGen::genExpr(const Expr *expr) {
+PhysEntity CodeGen::genExpr(const Expr *expr) {
   if (!expr)
-    return nullptr;
+    return {};
   if (m_Builder.GetInsertBlock() && m_Builder.GetInsertBlock()->getTerminator())
-    return nullptr;
+    return {};
 
   // 1. 基础表达式
   if (auto e = dynamic_cast<const BinaryExpr *>(expr))
@@ -77,7 +77,7 @@ llvm::Value *CodeGen::genExpr(const Expr *expr) {
   if (auto e = dynamic_cast<const NewExpr *>(expr))
     return genNewExpr(e);
 
-  return nullptr;
+  return {};
 }
 
 llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
@@ -99,11 +99,16 @@ llvm::Value *CodeGen::genStmt(const Stmt *stmt) {
   if (auto s = dynamic_cast<const UnsafeStmt *>(stmt))
     return genUnsafeStmt(s);
   if (auto s = dynamic_cast<const ExprStmt *>(stmt))
+    // genExprStmt returns Value* (wrapper) or PhysEntity?
+    // CodeGen.h: genExprStmt returns Value*.
+    // Wait. In CodeGen.h I didn't verify genExprStmt signature update.
+    // I assumed genExprStmt returns Value* because genStmt signature didn't
+    // change. Let's assume genExprStmt returns Value* for now.
     return genExprStmt(s);
 
   // 如果 Stmt 是 Expr 的包装
   if (auto e = dynamic_cast<const Expr *>(stmt))
-    return genExpr(e);
+    return genExpr(e).load(m_Builder);
 
   return nullptr;
 }

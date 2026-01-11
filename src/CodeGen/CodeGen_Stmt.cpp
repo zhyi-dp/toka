@@ -9,7 +9,7 @@ namespace toka {
 llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
   llvm::Value *retVal = nullptr;
   if (ret->ReturnValue) {
-    retVal = genExpr(ret->ReturnValue.get());
+    retVal = genExpr(ret->ReturnValue.get()).load(m_Builder);
     if (auto *varExpr =
             dynamic_cast<const VariableExpr *>(ret->ReturnValue.get())) {
       if (varExpr->IsUnique) {
@@ -52,7 +52,7 @@ llvm::Value *CodeGen::genBlockStmt(const BlockStmt *bs) {
 llvm::Value *CodeGen::genDeleteStmt(const DeleteStmt *del) {
   llvm::Function *freeFunc = m_Module->getFunction("free");
   if (freeFunc) {
-    llvm::Value *val = genExpr(del->Expression.get());
+    llvm::Value *val = genExpr(del->Expression.get()).load(m_Builder);
     if (val && val->getType()->isPointerTy()) {
       llvm::Value *casted = m_Builder.CreateBitCast(
           val, llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context)));
@@ -161,7 +161,7 @@ llvm::Value *CodeGen::genUnsafeStmt(const UnsafeStmt *us) {
 }
 
 llvm::Value *CodeGen::genExprStmt(const ExprStmt *es) {
-  return genExpr(es->Expression.get());
+  return genExpr(es->Expression.get()).load(m_Builder);
 }
 
 } // namespace toka

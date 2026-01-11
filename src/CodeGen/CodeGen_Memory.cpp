@@ -6,7 +6,7 @@
 
 namespace toka {
 
-llvm::Value *CodeGen::genAllocExpr(const AllocExpr *ae) {
+PhysEntity CodeGen::genAllocExpr(const AllocExpr *ae) {
   llvm::Function *allocHook = m_Module->getFunction("__toka_alloc");
   if (!allocHook) {
     // Declare it if not present
@@ -25,7 +25,7 @@ llvm::Value *CodeGen::genAllocExpr(const AllocExpr *ae) {
       llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), size);
 
   if (ae->IsArray && ae->ArraySize) {
-    llvm::Value *count = genExpr(ae->ArraySize.get());
+    llvm::Value *count = genExpr(ae->ArraySize.get()).load(m_Builder);
     count = m_Builder.CreateIntCast(count, llvm::Type::getInt64Ty(m_Context),
                                     false);
     sizeVal = m_Builder.CreateMul(sizeVal, count);
@@ -39,7 +39,7 @@ llvm::Value *CodeGen::genAllocExpr(const AllocExpr *ae) {
     // For now ignore initializer logic for malloc or handle struct init
     // We assume InitStructExpr is handled separately but if we have new
     // Struct { ... } We need to store it to malloc'd memory
-    llvm::Value *initVal = genExpr(ae->Initializer.get());
+    llvm::Value *initVal = genExpr(ae->Initializer.get()).load(m_Builder);
     m_Builder.CreateStore(initVal, castedPtr);
   }
   return castedPtr;
@@ -70,7 +70,7 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
   return nullptr;
 }
 
-llvm::Value *CodeGen::genMemberExpr(const MemberExpr *mem) {
+PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   if (mem->IsStatic) {
     // 1. Get Type Name
     std::string typeName = "";
@@ -105,31 +105,154 @@ llvm::Value *CodeGen::genMemberExpr(const MemberExpr *mem) {
         return tagVal;
       }
     }
-    // Fallback or other static members
     return nullptr;
   }
 
-  llvm::Value *addr = genAddr(mem);
-  if (!addr)
+  // --- Dynamic Member Access (Sovereign Logic) ---
+  llvm::Value *objAddr = emitEntityAddr(mem->Object.get());
+  if (!objAddr)
     return nullptr;
 
-  // Resolve element type for Load.
-  llvm::Type *resultTy = nullptr;
-  if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
-    resultTy = gep->getResultElementType();
-  } else if (addr->getType()->isPointerTy()) {
-    // For Soul access (where genAddr returns the pointer value),
-    // the load should yield the pointed-to element (e.g. i8).
-    resultTy = llvm::Type::getInt8Ty(m_Context);
+  llvm::Type *objType = nullptr;
+  if (auto *ptrTy = llvm::dyn_cast<llvm::PointerType>(objAddr->getType())) {
+    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
+      objType = alloca->getAllocatedType();
+    } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
+      objType = gep->getResultElementType();
+    } else if (auto *load = llvm::dyn_cast<llvm::LoadInst>(objAddr)) {
+      objType = load->getType();
+    } else {
+      // Fallback: try element type discovery
+      if (auto *ve = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
+        std::string baseName = ve->Name;
+        while (!baseName.empty() &&
+               (baseName[0] == '*' || baseName[0] == '&' || baseName[0] == '#'))
+          baseName = baseName.substr(1);
+        if (m_ValueElementTypes.count(baseName))
+          objType = m_ValueElementTypes[baseName];
+      }
+    }
   }
 
-  if (!resultTy)
-    return addr;
+  int idx = -1;
+  llvm::StructType *st = nullptr;
+  if (objType && objType->isStructTy()) {
+    st = llvm::cast<llvm::StructType>(objType);
+  }
 
-  return m_Builder.CreateLoad(resultTy, addr, mem->Member);
+  std::string memberName = mem->Member;
+  while (!memberName.empty() && (memberName[0] == '^' || memberName[0] == '*' ||
+                                 memberName[0] == '&' || memberName[0] == '#' ||
+                                 memberName[0] == '~' || memberName[0] == '!'))
+    memberName = memberName.substr(1);
+  while (!memberName.empty() &&
+         (memberName.back() == '#' || memberName.back() == '?' ||
+          memberName.back() == '!'))
+    memberName.pop_back();
+
+  if (!st) {
+    std::string foundStruct;
+    for (const auto &pair : m_StructFieldNames) {
+      for (int i = 0; i < (int)pair.second.size(); ++i) {
+        std::string fn = pair.second[i];
+        while (!fn.empty() && (fn[0] == '^' || fn[0] == '*' || fn[0] == '&' ||
+                               fn[0] == '#' || fn[0] == '~' || fn[0] == '!'))
+          fn = fn.substr(1);
+        while (!fn.empty() &&
+               (fn.back() == '#' || fn.back() == '?' || fn.back() == '!'))
+          fn.pop_back();
+
+        if (fn == memberName) {
+          foundStruct = pair.first;
+          idx = i;
+          break;
+        }
+      }
+      if (!foundStruct.empty()) {
+        st = m_StructTypes[foundStruct];
+        break;
+      }
+    }
+  }
+
+  if (!st)
+    return nullptr;
+
+  // Try to find index in st if still -1
+  if (idx == -1) {
+    std::string stName = m_TypeToName[st];
+    if (stName.empty()) {
+      for (const auto &pair : m_StructTypes) {
+        if (pair.second == st) {
+          stName = pair.first;
+          break;
+        }
+      }
+    }
+    if (!stName.empty()) {
+      auto &fields = m_StructFieldNames[stName];
+      for (int i = 0; i < (int)fields.size(); ++i) {
+        std::string fn = fields[i];
+        // scrub logic...
+        while (!fn.empty() && (fn[0] == '#' || fn[0] == '*' || fn[0] == '&'))
+          fn = fn.substr(1);                            // minimal scrub
+        if (fn.find(memberName) != std::string::npos) { // simplistic
+          idx = i;
+          break;
+        }
+      }
+      // Use stricter match if possible, matching genAddr logic
+      for (int i = 0; i < (int)fields.size(); ++i) {
+        if (fields[i].find(memberName) != std::string::npos) {
+          idx = i;
+          break;
+        }
+      }
+    }
+  }
+
+  if (idx == -1)
+    return nullptr;
+
+  llvm::Value *fieldAddr =
+      m_Builder.CreateStructGEP(st, objAddr, idx, memberName);
+
+  llvm::Value *finalAddr = fieldAddr;
+  bool isPointerField = st->getElementType(idx)->isPointerTy();
+
+  if (!mem->Member.empty() && mem->Member[0] == '*') {
+    finalAddr = fieldAddr;
+  } else if (isPointerField) {
+    // Soul access for pointers
+    finalAddr = m_Builder.CreateLoad(st->getElementType(idx), fieldAddr,
+                                     memberName + "_ptr");
+  }
+
+  // Resolve Metadata
+  std::string memberTypeName = "";
+  llvm::Type *irTy = st->getElementType(idx); // Base type from struct def
+
+  std::string stName = m_TypeToName[st];
+  if (stName.empty()) { // Reverse lookup fallback
+    for (const auto &pair : m_StructTypes) {
+      if (pair.second == st) {
+        stName = pair.first;
+        break;
+      }
+    }
+  }
+  if (!stName.empty() && m_Shapes.count(stName)) {
+    const ShapeDecl *sh = m_Shapes[stName];
+    // Need correct index relative to Shape Members (usually matches)
+    if (idx < (int)sh->Members.size()) {
+      memberTypeName = sh->Members[idx].Type;
+    }
+  }
+
+  return PhysEntity(finalAddr, memberTypeName, irTy, true);
 }
 
-llvm::Value *CodeGen::genIndexExpr(const ArrayIndexExpr *idxExpr) {
+PhysEntity CodeGen::genIndexExpr(const ArrayIndexExpr *idxExpr) {
   // Check for Array Shape Initialization
   if (auto *var = dynamic_cast<const VariableExpr *>(idxExpr->Array.get())) {
     if (m_Shapes.count(var->Name)) {
@@ -140,7 +263,7 @@ llvm::Value *CodeGen::genIndexExpr(const ArrayIndexExpr *idxExpr) {
             m_Builder.CreateAlloca(st, nullptr, var->Name + "_init");
 
         for (size_t i = 0; i < idxExpr->Indices.size(); ++i) {
-          llvm::Value *val = genExpr(idxExpr->Indices[i].get());
+          llvm::Value *val = genExpr(idxExpr->Indices[i].get()).load(m_Builder);
           if (!val)
             return nullptr;
           // GEP: struct 0, array i
@@ -204,7 +327,8 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
             baseName.back() == '!'))
       baseName.pop_back();
 
-    llvm::Value *indexValue = genExpr(idxExpr->Indices[0].get());
+    llvm::Value *indexValue =
+        genExpr(idxExpr->Indices[0].get()).load(m_Builder);
     if (!indexValue)
       return nullptr;
 
@@ -250,134 +374,8 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
   }
 
   if (auto *mem = dynamic_cast<const MemberExpr *>(expr)) {
-    llvm::Value *objAddr = emitEntityAddr(mem->Object.get());
-    if (!objAddr)
-      return nullptr;
-
-    llvm::Type *objType = nullptr;
-    if (auto *ptrTy = llvm::dyn_cast<llvm::PointerType>(objAddr->getType())) {
-      // Use the result element type of GEP if it came from one,
-      // or the allocated type if it's an alloca.
-      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
-        objType = alloca->getAllocatedType();
-      } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
-        objType = gep->getResultElementType();
-      } else if (auto *load = llvm::dyn_cast<llvm::LoadInst>(objAddr)) {
-        objType = load->getType();
-      } else {
-        // Fallback: try element type discovery
-        if (auto *ve = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
-          std::string baseName = ve->Name;
-          while (
-              !baseName.empty() &&
-              (baseName[0] == '*' || baseName[0] == '&' || baseName[0] == '#'))
-            baseName = baseName.substr(1);
-          if (m_ValueElementTypes.count(baseName))
-            objType = m_ValueElementTypes[baseName];
-        }
-      }
-    }
-
-    int idx = -1;
-    llvm::StructType *st = nullptr;
-    if (objType && objType->isStructTy()) {
-      st = llvm::cast<llvm::StructType>(objType);
-    }
-
-    std::string memberName = mem->Member;
-    while (!memberName.empty() &&
-           (memberName[0] == '^' || memberName[0] == '*' ||
-            memberName[0] == '&' || memberName[0] == '#' ||
-            memberName[0] == '~' || memberName[0] == '!')) {
-      memberName = memberName.substr(1);
-    }
-    while (!memberName.empty() &&
-           (memberName.back() == '#' || memberName.back() == '?' ||
-            memberName.back() == '!')) {
-      memberName.pop_back();
-    }
-
-    if (!st) {
-      std::string foundStruct;
-      for (const auto &pair : m_StructFieldNames) {
-        for (int i = 0; i < (int)pair.second.size(); ++i) {
-          std::string fn = pair.second[i];
-          while (!fn.empty() &&
-                 (fn[0] == '^' || fn[0] == '*' || fn[0] == '&' ||
-                  fn[0] == '#' || fn[0] == '~' || fn[0] == '!')) {
-            fn = fn.substr(1);
-          }
-          while (!fn.empty() &&
-                 (fn.back() == '#' || fn.back() == '?' || fn.back() == '!')) {
-            fn.pop_back();
-          }
-          if (fn == memberName) {
-            foundStruct = pair.first;
-            idx = i;
-            break;
-          }
-        }
-        if (!foundStruct.empty())
-          break;
-      }
-      if (!foundStruct.empty()) {
-        st = m_StructTypes[foundStruct];
-      }
-    }
-
-    if (!st) {
-      return nullptr;
-    }
-    if (idx == -1) {
-      std::string stName = m_TypeToName[st];
-      if (stName.empty()) {
-        for (const auto &pair : m_StructTypes) {
-          if (pair.second == st) {
-            stName = pair.first;
-            break;
-          }
-        }
-      }
-      if (!stName.empty()) {
-        auto &fields = m_StructFieldNames[stName];
-        for (int i = 0; i < (int)fields.size(); ++i) {
-          std::string fn = fields[i];
-          while (!fn.empty() &&
-                 (fn[0] == '^' || fn[0] == '*' || fn[0] == '&' ||
-                  fn[0] == '#' || fn[0] == '~' || fn[0] == '!')) {
-            fn = fn.substr(1);
-          }
-          while (!fn.empty() &&
-                 (fn.back() == '#' || fn.back() == '?' || fn.back() == '!')) {
-            fn.pop_back();
-          }
-          if (fn == memberName) {
-            idx = i;
-            break;
-          }
-        }
-      }
-    }
-
-    if (idx == -1)
-      return nullptr;
-
-    llvm::Value *fieldAddr =
-        m_Builder.CreateStructGEP(st, objAddr, idx, memberName);
-
-    // Morphology handling:
-    // Identity (*buf): return the address of the pointer field (GEP).
-    if (!mem->Member.empty() && mem->Member[0] == '*') {
-      return fieldAddr;
-    }
-
-    // Soul (buf): if field is a pointer, return the pointer value (Slot A).
-    if (st->getElementType(idx)->isPointerTy()) {
-      return m_Builder.CreateLoad(st->getElementType(idx), fieldAddr,
-                                  memberName + "_ptr");
-    }
-
-    return fieldAddr;
+    // Delegate to Sovereign genMemberExpr
+    return genMemberExpr(mem).value;
   }
 
   if (auto *post = dynamic_cast<const PostfixExpr *>(expr)) {

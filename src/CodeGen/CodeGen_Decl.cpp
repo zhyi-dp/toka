@@ -154,7 +154,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   llvm::Value *initVal = nullptr;
   if (var->Init) {
     m_CFStack.push_back({varName, nullptr, nullptr, nullptr});
-    initVal = genExpr(var->Init.get());
+    initVal = genExpr(var->Init.get()).load(m_Builder);
     m_CFStack.pop_back();
     if (!initVal)
       return nullptr;
@@ -399,7 +399,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
 }
 
 llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
-  llvm::Value *initVal = genExpr(dest->Init.get());
+  llvm::Value *initVal = genExpr(dest->Init.get()).load(m_Builder);
   if (!initVal)
     return nullptr;
 
@@ -470,7 +470,7 @@ void CodeGen::genGlobal(const Stmt *stmt) {
         initVal = c;
       } else {
         // Fallback to legacy genExpr (might crash if it uses instructions)
-        initVal = genExpr(var->Init.get());
+        initVal = genExpr(var->Init.get()).load(m_Builder);
       }
     }
 
@@ -697,8 +697,8 @@ void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
   m_CurrentSelfType = "";
 }
 
-llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
-  llvm::Value *objVal = genExpr(expr->Object.get());
+PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
+  llvm::Value *objVal = genExpr(expr->Object.get()).load(m_Builder);
   if (!objVal)
     return nullptr;
 
@@ -761,7 +761,7 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
         argTypes.push_back(llvm::PointerType::getUnqual(m_Context));
 
         for (auto &arg : expr->Args) {
-          llvm::Value *av = genExpr(arg.get());
+          llvm::Value *av = genExpr(arg.get()).load(m_Builder);
           args.push_back(av);
           argTypes.push_back(av->getType());
         }
@@ -904,7 +904,7 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
       argVal = genAddr(expr->Args[i].get());
       if (!argVal) {
         // R-Value fallback
-        llvm::Value *rval = genExpr(expr->Args[i].get());
+        llvm::Value *rval = genExpr(expr->Args[i].get()).load(m_Builder);
         if (!rval)
           return nullptr;
 
@@ -917,7 +917,7 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
         argVal = tmp;
       }
     } else {
-      argVal = genExpr(expr->Args[i].get());
+      argVal = genExpr(expr->Args[i].get()).load(m_Builder);
 
       // Implicit By-Ref Fix for Method Arguments
       if (argVal && callee->arg_size() > i + 1) {
@@ -940,7 +940,12 @@ llvm::Value *toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
     args.push_back(argVal);
   }
 
-  return m_Builder.CreateCall(callee, args);
+  llvm::Value *retVal = m_Builder.CreateCall(callee, args);
+  std::string retTypeName = "";
+  if (fd)
+    retTypeName = fd->ReturnType;
+
+  return PhysEntity(retVal, retTypeName, retVal->getType(), false);
 }
 
 void CodeGen::fillSymbolMetadata(TokaSymbol &sym, const std::string &typeStr,

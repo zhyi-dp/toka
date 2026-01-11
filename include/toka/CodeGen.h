@@ -48,6 +48,32 @@ struct TokaSymbol {
   bool isNullable;        // ?/! marker
 };
 
+struct PhysEntity {
+  llvm::Value *value = nullptr;
+  std::string typeName;
+  llvm::Type *irType = nullptr; // For Load instructions
+  bool isAddress = false;
+
+  PhysEntity(llvm::Value *v = nullptr) : value(v) {
+    if (v)
+      irType = v->getType();
+  }
+  PhysEntity(llvm::Value *v, std::string t, llvm::Type *it, bool addr)
+      : value(v), typeName(t), irType(it), isAddress(addr) {
+    if (!irType && value)
+      irType = value->getType();
+  }
+
+  llvm::Value *load(llvm::IRBuilder<> &b) const {
+    if (!value)
+      return nullptr;
+    if (isAddress && irType) {
+      return b.CreateLoad(irType, value);
+    }
+    return value;
+  }
+};
+
 class CodeGen {
 public:
   CodeGen(llvm::LLVMContext &context, const std::string &moduleName)
@@ -115,7 +141,7 @@ private:
                           llvm::Type *allocaElemTy);
 
   void cleanupScopes(size_t targetDepth);
-  llvm::Value *genExpr(const Expr *expr);
+  PhysEntity genExpr(const Expr *expr);
   llvm::Constant *genConstant(const Expr *expr,
                               llvm::Type *targetType = nullptr);
   llvm::Value *genAddr(const Expr *expr);
@@ -136,33 +162,33 @@ private:
   void genExtern(const ExternDecl *ext);
   void genShape(const ShapeDecl *sh);
   void genImpl(const ImplDecl *impl, bool declOnly = false);
-  llvm::Value *genMatchExpr(const MatchExpr *expr);
-  llvm::Value *genBinaryExpr(const BinaryExpr *expr);
-  llvm::Value *genAllocExpr(const AllocExpr *expr);
-  llvm::Value *genMemberExpr(const MemberExpr *expr);
-  llvm::Value *genIndexExpr(const ArrayIndexExpr *expr);
-  llvm::Value *genVariableExpr(const VariableExpr *expr);
-  llvm::Value *genLiteralExpr(const Expr *expr);
-  llvm::Value *genTupleExpr(const TupleExpr *expr);
-  llvm::Value *genArrayExpr(const ArrayExpr *expr);
-  llvm::Value *genCastExpr(const CastExpr *expr);
-  llvm::Value *genUnaryExpr(const UnaryExpr *expr);
-  llvm::Value *genIfExpr(const IfExpr *expr);
-  llvm::Value *genWhileExpr(const WhileExpr *expr);
-  llvm::Value *genLoopExpr(const LoopExpr *expr);
-  llvm::Value *genForExpr(const ForExpr *expr);
+  PhysEntity genMatchExpr(const MatchExpr *expr);
+  PhysEntity genBinaryExpr(const BinaryExpr *expr);
+  PhysEntity genAllocExpr(const AllocExpr *expr);
+  PhysEntity genMemberExpr(const MemberExpr *expr);
+  PhysEntity genIndexExpr(const ArrayIndexExpr *expr);
+  PhysEntity genVariableExpr(const VariableExpr *expr);
+  PhysEntity genLiteralExpr(const Expr *expr);
+  PhysEntity genTupleExpr(const TupleExpr *expr);
+  PhysEntity genArrayExpr(const ArrayExpr *expr);
+  PhysEntity genCastExpr(const CastExpr *expr);
+  PhysEntity genUnaryExpr(const UnaryExpr *expr);
+  PhysEntity genIfExpr(const IfExpr *expr);
+  PhysEntity genWhileExpr(const WhileExpr *expr);
+  PhysEntity genLoopExpr(const LoopExpr *expr);
+  PhysEntity genForExpr(const ForExpr *expr);
   void genPatternBinding(const MatchArm::Pattern *pat, llvm::Value *targetAddr,
                          llvm::Type *targetType);
-  llvm::Value *genInitStructExpr(const InitStructExpr *expr);
-  llvm::Value *genAnonymousRecordExpr(const AnonymousRecordExpr *expr);
-  llvm::Value *genMethodCall(const MethodCallExpr *expr);
-  llvm::Value *genCallExpr(const CallExpr *expr);
-  llvm::Value *genPostfixExpr(const PostfixExpr *expr);
-  llvm::Value *genPassExpr(const PassExpr *expr);
-  llvm::Value *genBreakExpr(const BreakExpr *expr);
-  llvm::Value *genContinueExpr(const ContinueExpr *expr);
-  llvm::Value *genUnsafeExpr(const UnsafeExpr *expr);
-  llvm::Value *genNewExpr(const NewExpr *expr);
+  PhysEntity genInitStructExpr(const InitStructExpr *expr);
+  PhysEntity genAnonymousRecordExpr(const AnonymousRecordExpr *expr);
+  PhysEntity genMethodCall(const MethodCallExpr *expr);
+  PhysEntity genCallExpr(const CallExpr *expr);
+  PhysEntity genPostfixExpr(const PostfixExpr *expr);
+  PhysEntity genPassExpr(const PassExpr *expr);
+  PhysEntity genBreakExpr(const BreakExpr *expr);
+  PhysEntity genContinueExpr(const ContinueExpr *expr);
+  PhysEntity genUnsafeExpr(const UnsafeExpr *expr);
+  PhysEntity genNewExpr(const NewExpr *expr);
   llvm::Value *genReturnStmt(const ReturnStmt *stmt);
   llvm::Value *genBlockStmt(const BlockStmt *stmt);
   llvm::Value *genVariableDecl(const VariableDecl *stmt);
