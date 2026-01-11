@@ -621,9 +621,24 @@ void Sema::checkStmt(Stmt *S) {
         Info.IsValueNullable = Var.IsNullable;
         Info.Morphology = "";
         CurrentScope->define(Var.Name, Info);
+        CurrentScope->define(Var.Name, Info);
       }
     }
   }
+}
+
+static bool isLValue(const Expr *expr) {
+  if (dynamic_cast<const VariableExpr *>(expr))
+    return true;
+  if (auto *me = dynamic_cast<const MemberExpr *>(expr))
+    return isLValue(me->Object.get());
+  if (auto *ae = dynamic_cast<const ArrayIndexExpr *>(expr))
+    return isLValue(ae->Array.get());
+  if (auto *ue = dynamic_cast<const UnaryExpr *>(expr)) {
+    if (ue->Op == TokenType::Star)
+      return true;
+  }
+  return false;
 }
 
 std::string Sema::checkExpr(Expr *E) {
@@ -1423,15 +1438,42 @@ std::string Sema::checkExpr(Expr *E) {
       }
       for (size_t i = 0; i < Call->Args.size(); ++i) {
         std::string ArgType = checkExpr(Call->Args[i].get());
+
         if (i < Fn->Args.size()) {
           if (Fn->Args[i].IsReference) {
             if (ArgType == "&" + Fn->Args[i].Type ||
                 ArgType == "^" + Fn->Args[i].Type) {
               continue;
             }
+            // Enforce L-Value for References
+            if (!isLValue(Call->Args[i].get())) {
+              error(Call->Args[i].get(),
+                    "cannot bind R-Value to reference parameter '" +
+                        Fn->Args[i].Name + "'");
+            }
           }
 
           std::string ExpectedTy = Fn->Args[i].Type;
+
+          // Physical Link Check: If parameter is a Shape (Struct), it requires
+          // address passing. If CodeGen doesn't support materialization, we
+          // MUST force L-Value. Check if ExpectedTy is a known Shape/Struct
+          bool isStruct = false;
+          // We can check if it exists in ShapeMap (need access to Sema
+          // instance? No, this is inside Sema method)
+          if (ShapeMap.count(ExpectedTy))
+            isStruct = true;
+
+          if (isStruct && !isLValue(Call->Args[i].get())) {
+            // But wait, if we pass Inner(1), it's same type.
+            // But it's R-Value.
+            // User says: "MemberExpr OK, VariableExpr OK, Constructor ERROR".
+            error(Call->Args[i].get(),
+                  "cannot pass R-Value struct to parameter '" +
+                      Fn->Args[i].Name +
+                      "' (temporary materialization not supported)");
+          }
+
           if (Fn->Args[i].HasPointer) {
             ExpectedTy = "*" + ExpectedTy;
           }
