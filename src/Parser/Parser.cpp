@@ -310,8 +310,6 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
             if (!check(TokenType::RParen))
               match(TokenType::Comma);
           }
-          std::cerr << "DEBUG: Parsed Variant " << v.Name << " with "
-                    << v.SubMembers.size() << " fields." << std::endl;
           consume(TokenType::RParen, "Expected ')'");
         }
         if (match(TokenType::Equal)) {
