@@ -418,10 +418,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   // Automatic Drop Registration
   if (!m_ScopeStack.empty()) {
     std::string typeName = m_ValueTypeNames[varName];
-    // Strip pointer/ref if present in name to find base type
-    // e.g. ^String -> String
-    // Actually m_ValueTypeNames usually stores the AST type string.
-    // If empty, try to derive?
+    // If empty (auto with no Sema update?), try m_ValueElementTypes or
+    // inferred?
 
     std::string dropFunc = "";
     bool hasDrop = false;

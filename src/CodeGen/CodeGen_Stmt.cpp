@@ -110,6 +110,13 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
             if (freeFunc) {
               llvm::Value *data =
                   m_Builder.CreateExtractValue(sh, 0, "data_ptr");
+
+              if (it->HasDrop) {
+                llvm::Function *dropFn = m_Module->getFunction(it->DropFunc);
+                if (dropFn) {
+                  m_Builder.CreateCall(dropFn, {data});
+                }
+              }
               // Check data for null not strictly needed if refPtr valid?
               // But refPtr controls lifecycle.
               m_Builder.CreateCall(
@@ -140,6 +147,15 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
               llvm::BasicBlock::Create(m_Context, "un_cont", f);
           m_Builder.CreateCondBr(notNull, freeBB, contBB);
           m_Builder.SetInsertPoint(freeBB);
+
+          if (it->HasDrop) {
+            llvm::Function *dropFn = m_Module->getFunction(it->DropFunc);
+            if (dropFn) {
+              // ptr is the T* loaded from alloca
+              m_Builder.CreateCall(dropFn, {ptr});
+            }
+          }
+
           llvm::Function *freeFunc = m_Module->getFunction("free");
           if (freeFunc) {
             m_Builder.CreateCall(

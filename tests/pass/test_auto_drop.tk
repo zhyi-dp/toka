@@ -1,5 +1,6 @@
 
 import std/io
+import std/memory
 import core/traits
 
 shape Resource (id: i32)
@@ -20,6 +21,10 @@ fn main() -> i32 {
 
     auto ^p1 = new Resource(id=11)
     auto ~s1 = new Resource(id=21)
+
+    auto ^p2 = ^p1
+
+    auto ~s2 = ~s1
     
     auto r2 = Resource(id=2)
     println("End of main")
