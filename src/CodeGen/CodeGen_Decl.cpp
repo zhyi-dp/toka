@@ -10,6 +10,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                                      const std::string &overrideName,
                                      bool declOnly) {
   std::string funcName = overrideName.empty() ? func->Name : overrideName;
+  llvm::errs() << "DEBUG: genFunction " << funcName
+               << " (AST Name: " << func->Name << ")\n";
   m_Functions[funcName] = func;
   m_ValueElementTypes.clear();
   m_Symbols.clear();
@@ -125,7 +127,113 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
   genStmt(func->Body.get());
 
+  // Recursive Drop Injection
+  // We assume 'drop' methods have one argument 'self' (implied or explicit)
+  // and we need to drop its members.
+  bool isDrop =
+      func->Name == "drop" || func->Name.find("_drop") != std::string::npos;
+
+  if (!func->Args.empty() && isDrop) {
+    const auto &arg0 = func->Args[0];
+
+    // Check if arg is "self"
+    if (arg0.Name == "self") {
+      std::string typeName = arg0.Type;
+      // Strip morphology
+      while (!typeName.empty() &&
+             (typeName[0] == '^' || typeName[0] == '*' || typeName[0] == '&' ||
+              typeName[0] == '~' || typeName[0] == '#')) {
+        typeName = typeName.substr(1);
+      }
+      if (typeName == "Self" && !m_CurrentSelfType.empty()) {
+        typeName = m_CurrentSelfType;
+      }
+
+      if (m_Shapes.count(typeName)) {
+        const ShapeDecl *S = m_Shapes[typeName];
+        // Iterate reverse
+        for (auto it = S->Members.rbegin(); it != S->Members.rend(); ++it) {
+          // Check if member needs drop
+          // We check if a drop function exists for the member type
+          std::string memberType = it->Type;
+          // Strip morphology
+          while (!memberType.empty() &&
+                 (memberType[0] == '*' || memberType[0] == '#' ||
+                  memberType[0] == '&')) {
+            memberType = memberType.substr(1);
+          }
+
+          std::string baseType = it->Type;
+          bool hasDrop = false;
+          std::string dropFunc = "";
+
+          if (it->IsUnique || it->IsShared) {
+            hasDrop = true;
+          } else if (it->HasPointer || it->IsReference) {
+            hasDrop = false; // Raw pointers don't drop
+          } else {
+            // Value type. Check for drop method
+            // Try encap_Type_drop
+            std::string try1 = "encap_" + it->Type + "_drop";
+            std::string try2 = it->Type + "_drop"; // Legacy
+
+            if (m_Functions.count(try1)) {
+              hasDrop = true;
+              dropFunc = try1;
+            } else if (m_Functions.count(try2)) {
+              hasDrop = true;
+              dropFunc = try2;
+            }
+          }
+
+          if (hasDrop) {
+            // Access member
+            if (m_Symbols.count("self")) {
+              TokaSymbol selfSym = m_Symbols["self"];
+              llvm::Value *selfPtr = selfSym.allocaPtr;
+
+              llvm::Value *structPtr = m_Builder.CreateLoad(
+                  llvm::PointerType::getUnqual(m_Context), selfPtr, "self_ptr");
+
+              // GEP to member
+              int fieldIdx = -1;
+              int i = 0;
+              for (auto &m : S->Members) {
+                if (m.Name == it->Name) {
+                  fieldIdx = i;
+                  break;
+                }
+                i++;
+              }
+
+              if (fieldIdx != -1) {
+                // FIX: Use m_StructTypes instead of m_ValueElementTypes
+                if (m_StructTypes.count(typeName)) {
+                  llvm::Value *fieldEP = m_Builder.CreateStructGEP(
+                      m_StructTypes[typeName], structPtr, fieldIdx,
+                      it->Name + "_ptr");
+
+                  // Register in Scope 0
+                  if (!m_ScopeStack.empty()) {
+                    m_ScopeStack[0].push_back({it->Name, fieldEP, it->IsUnique,
+                                               it->IsShared,
+                                               !dropFunc.empty(), // HasDrop
+                                               dropFunc});
+                  }
+                } else {
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Ensure Implicit Cleanup
   if (!m_Builder.GetInsertBlock()->getTerminator()) {
+    cleanupScopes(0);
+
     if (func->ReturnType == "void" || func->Name == "main") {
       if (func->Name == "main" && !f->getReturnType()->isVoidTy()) {
         m_Builder.CreateRet(

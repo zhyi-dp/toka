@@ -1,9 +1,19 @@
 
-import std/io
+import std/io::println
 import std/memory
 import core/traits
 
-shape Resource (id: i32)
+shape Point(x:i32, y:i32)
+impl Point@encap {
+    fn drop(self#) {
+        println("Dropping Point x:{} y:{}", self.x, self.y)
+    }
+}
+
+shape Resource (
+    id: i32,
+    point: Point
+    )
 
 impl Resource@encap {
     fn drop(self#) {
@@ -14,7 +24,7 @@ impl Resource@encap {
 fn main() -> i32 {
     println("Start")
     {
-        auto r1 = Resource(id=1)
+        auto r1 = Resource(id=1,point=Point(x=1,y=2))
         println("Inside block")
     }
     println("After block")
@@ -23,8 +33,9 @@ fn main() -> i32 {
     auto ~s1 = new Resource(id=21)
 
     //auto ^p2 = ^p1
-
+    println("will rebind ^#p1")
     ^#p1 = new Resource(id=111)
+    println("after rebind ^#p1")
 
     auto ~s2 = ~s1
     

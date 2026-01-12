@@ -1,0 +1,23 @@
+
+import std/io::println
+import core/traits::@encap
+
+shape Resource (
+    id: i32
+)
+
+impl Resource @encap {
+    fn drop(self#) {
+        println("Dropping Resource")
+    }
+}
+
+shape Holder (
+    r: Resource // HasDrop=true because Resource has drop
+)
+
+// Holder does NOT implement drop. This should fail compilation.
+
+fn main() {
+    auto h = Holder(r = Resource(id = 1))
+}

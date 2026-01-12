@@ -12,11 +12,14 @@ bool Sema::checkModule(Module &M) {
   CurrentModule = &M; // Set context
   // 1. Register all globals (Functions, Structs, etc.)
   registerGlobals(M);
+  // 2. Shape Analysis Pass (Safety Enforcement)
+  analyzeShapes(M);
 
-  // 2. Check function bodies
+  // 2b. Check function bodies (reordered)
   for (auto &Fn : M.Functions) {
     checkFunction(Fn.get());
   }
+  // ...
 
   // Transfer ownership of synthetic anonymous record shapes to the Module
   // so CodeGen can see them as regular structs.
@@ -2267,6 +2270,135 @@ bool Sema::isTypeCompatible(const std::string &Target,
     return true;
 
   return false;
+}
+
+void Sema::analyzeShapes(Module &M) {
+  m_ShapeProps.clear();
+
+  // First pass: Compute properties for all shapes
+  for (auto &S : M.Shapes) {
+    if (m_ShapeProps[S->Name].Status != ShapeAnalysisStatus::Analyzed) {
+      computeShapeProperties(S->Name, M);
+    }
+  }
+
+  // Second pass: Enforce Rules
+  for (auto &S : M.Shapes) {
+    auto &props = m_ShapeProps[S->Name];
+
+    // Check if Shape has explicit drop
+    bool hasExplicitDrop = false;
+    // Look in Impl blocks for "drop"
+    for (auto &I : M.Impls) {
+      if (I->TypeName == S->Name) {
+        for (auto &M : I->Methods) {
+          if (M->Name == "drop") {
+            hasExplicitDrop = true;
+            break;
+          }
+        }
+      }
+      if (hasExplicitDrop)
+        break;
+    }
+
+    if (props.HasRawPtr && !hasExplicitDrop) {
+      error(S.get(), "Shape '" + S->Name +
+                         "' contains raw pointers via members but does not "
+                         "implement 'drop'. This is unsafe.");
+    }
+
+    if (props.HasDrop && !hasExplicitDrop) {
+      error(S.get(),
+            "Shape '" + S->Name +
+                "' contains resources via members that require dropping, but "
+                "does not implement 'drop'. Please implement 'drop' (can be "
+                "empty) to confirm ownership.");
+    }
+  }
+}
+
+void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
+  auto &props = m_ShapeProps[shapeName];
+  if (props.Status == ShapeAnalysisStatus::Visiting)
+    return; // Cycle
+  if (props.Status == ShapeAnalysisStatus::Analyzed)
+    return;
+
+  props.Status = ShapeAnalysisStatus::Visiting;
+
+  // Find Shape Decl
+  const ShapeDecl *S = nullptr;
+  if (ShapeMap.count(shapeName))
+    S = ShapeMap[shapeName];
+  // Also check ModuleScope if using full path? Assume simplified for now or
+  // look in M.Shapes
+  if (!S) {
+    for (auto &sh : M.Shapes)
+      if (sh->Name == shapeName) {
+        S = sh.get();
+        break;
+      }
+  }
+
+  if (S) {
+    for (auto &member : S->Members) {
+      // Check member type
+      std::string type = member.Type;
+      // Primitive checks
+      if (member.HasPointer) { // Raw pointer syntax *T in AST usually
+                               // Wait, AST member has flags.
+                               // If member.Type is bare, rely on flags?
+                               // In Parser, *T -> HasPointer=true.
+      }
+
+      // We need to parse strict morphology from Type string or Member flags
+      // Member flags: HasPointer, IsUnique, IsShared
+
+      if (member.HasPointer) { // *T
+        props.HasRawPtr = true;
+      }
+
+      if (member.IsUnique || member.IsShared) { // ^T or ~T
+        props.HasDrop = true;                   // Smart pointers have drop
+      }
+
+      // If it's a value type (member.Type), recurse
+      if (!member.HasPointer && !member.IsUnique && !member.IsShared &&
+          !member.IsReference) {
+        // It's a value type T. Check if T is a Shape.
+        std::string baseType = member.Type;
+        if (ShapeMap.count(baseType)) {
+          computeShapeProperties(baseType, M);
+          auto &subProps = m_ShapeProps[baseType];
+          if (subProps.HasRawPtr)
+            props.HasRawPtr = true;
+          if (subProps.HasDrop)
+            props.HasDrop = true;
+        }
+
+        // Also check if type T has 'drop' method itself (encap) even if not a
+        // Shape recursion? This is covered by "if T has drop method, then
+        // HasDrop=true". We check: does T have a "drop" method? Iterate Impls
+        // again?
+        bool memberTypeHasExplicitDrop = false;
+        for (auto &I : M.Impls) {
+          if (I->TypeName == baseType) {
+            for (auto &M : I->Methods) {
+              if (M->Name == "drop") {
+                memberTypeHasExplicitDrop = true;
+                break;
+              }
+            }
+          }
+        }
+        if (memberTypeHasExplicitDrop)
+          props.HasDrop = true;
+      }
+    }
+  }
+
+  props.Status = ShapeAnalysisStatus::Analyzed;
 }
 
 } // namespace toka

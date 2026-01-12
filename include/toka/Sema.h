@@ -96,6 +96,24 @@ public:
   bool hasErrors() const { return HasError; }
 
 private:
+  // Shape Analysis Caches
+  enum class ShapeAnalysisStatus {
+    Unvisited,
+    Visiting, // Cycle detection
+    Analyzed
+  };
+
+  struct ShapeProperties {
+    bool HasRawPtr = false;
+    bool HasDrop = false;
+    ShapeAnalysisStatus Status = ShapeAnalysisStatus::Unvisited;
+  };
+
+  std::map<std::string, ShapeProperties> m_ShapeProps;
+
+  void analyzeShapes(Module &M);
+  void computeShapeProperties(const std::string &shapeName, Module &M);
+
   bool HasError = false;
   Scope *CurrentScope = nullptr;
   std::vector<FunctionDecl *>
