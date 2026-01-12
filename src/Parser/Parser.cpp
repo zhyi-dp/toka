@@ -535,6 +535,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
   auto decl = std::make_unique<FunctionDecl>(isPub, name.Text, args,
                                              std::move(body), retType);
   decl->IsVariadic = isVariadic;
+  decl->setLocation(name, m_CurrentFile);
   return decl;
 }
 

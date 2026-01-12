@@ -51,8 +51,8 @@ pub fn __toka_time() -> i64 {
     }
 }
 
-pub fn __toka_panic(message: str) {
-    println("Panic: {}, time: {}", message, __toka_time())
+pub fn __toka_panic(message: str, file_name: str, line_number: usize) {
+    println("Panic: {}, {}:{}", message, file_name, line_number)
     unsafe {
         libc_abort()
     }
@@ -61,6 +61,6 @@ pub fn __toka_panic(message: str) {
 // TODO: __FILE__ and __LINE__
 pub fn assert(condition: bool, message: str) {
     if !condition {
-        __toka_panic(message)
+        __toka_panic(message,"",0:usize)
     }
 }

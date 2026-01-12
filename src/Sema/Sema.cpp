@@ -107,6 +107,13 @@ void Sema::registerGlobals(Module &M) {
   for (auto &Trait : M.Traits) {
     ms.Traits[Trait->Name] = Trait.get();
     TraitMap[Trait->Name] = Trait.get();
+
+    // Register Trait methods for 'dyn' dispatch checks
+    std::string traitKey = "@" + Trait->Name;
+    for (auto &Method : Trait->Methods) {
+      MethodMap[traitKey][Method->Name] = Method->ReturnType;
+      MethodDecls[traitKey][Method->Name] = Method.get();
+    }
   }
   for (auto &G : M.Globals) {
     if (auto *v = dynamic_cast<VariableDecl *>(G.get())) {
@@ -1758,8 +1765,19 @@ std::string Sema::checkExpr(Expr *E) {
       if (!traitName.empty() && TraitMap.count(traitName)) {
         TraitDecl *TD = TraitMap[traitName];
         for (auto &M : TD->Methods) {
-          if (M->Name == Met->Method)
+          if (M->Name == Met->Method) {
+            if (!M->IsPub) {
+              bool sameModule = false;
+              if (CurrentModule && CurrentModule->FileName == TD->FileName) {
+                sameModule = true; // Simplified same-file check
+              }
+              if (Met->FileName != TD->FileName && !sameModule) {
+                error(Met, "method '" + Met->Method +
+                               "' is private to trait '" + traitName + "'");
+              }
+            }
             return M->ReturnType;
+          }
         }
       }
     }

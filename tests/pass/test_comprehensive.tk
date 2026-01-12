@@ -28,7 +28,7 @@ trait @Renderable {
 }
 
 trait @Identity {
-    fn get_id(self) -> i32
+    pub fn get_id(self) -> i32
 }
 
 // --- 3. Structs ---
@@ -65,7 +65,7 @@ impl Entity@Renderable {
 }
 
 impl Entity@Identity {
-    fn get_id(self) -> i32 {
+    pub fn get_id(self) -> i32 {
         return self.id
     }
 }

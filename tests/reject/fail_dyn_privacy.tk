@@ -1,0 +1,29 @@
+import std/io::println
+
+pub trait @SecretIdentity {
+    // Defined as private (no pub)
+    fn get_secret(self) -> i32
+}
+
+pub shape Spy(id: i32)
+
+// Strict match: implementation is also private (no pub)
+impl Spy@SecretIdentity {
+    fn get_secret(self) -> i32 {
+        return self.id
+    }
+}
+
+// Function accepting trait object
+// Since get_secret is private in the Trait definition, this should NOT be allowed outside the defining module.
+fn reveal_secret(obj: dyn @SecretIdentity) {
+    // This calls get_secret on the interface.
+    // If the interface method is private, this should fail compilation.
+    println("Secret: {}", obj.get_secret())
+}
+
+fn main() -> i32 {
+    auto s = Spy(id=007)
+    reveal_secret(s)
+    return 0
+}
