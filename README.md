@@ -11,7 +11,7 @@ Toka eliminates hidden memory states by making properties explicit through ortho
 | Token | Meaning (Value/Content) | Meaning (Identity/Address) |
 | :--- | :--- | :--- |
 | `#` | **Writable**: Can modify fields | **Swappable**: Can point elsewhere |
-| `?` | **Option**: Can be `none` | **Nullable**: Can be `null` |
+| `?` | **Option**: Can be `none` | **Nullable**: Can be `nullptr` |
 | `^` | - | **Unique Pointer** (Ownership) |
 | `~` | - | **Shared Pointer** (Ref Counted) |
 
@@ -40,6 +40,8 @@ We are actively building the compiler self-hosting capabilities.
 - [x] **Memory Management**
     - [x] Unique Pointers (`^`) with Move Semantics
     - [x] Shared Pointers (`~`) with Reference Counting
+    - [x] **Recursive Drop (Deep Drop)**
+    - [x] **Soul-Identity Model** (Opaque Pointers)
 - [x] **Object Oriented Features**
     - [x] `impl` blocks (Methods)
     - [x] **Trait System** (Interfaces, Default Implementations)
@@ -58,10 +60,14 @@ We are actively building the compiler self-hosting capabilities.
     - [x] Type Checking Pass
     - [x] Ownership & Borrowing Verification (Move Semantics)
     - [x] **Null Safety** (`is` Operator, Strict Null Checks)
+    - [x] **Resource Safety Analysis** (Enforced `drop` for resources)
 - [ ] **Advanced Features**
     - [ ] Generics / Templates
     - [ ] Concurrency (`Task`, `async`/`await`)
-    - [ ] Standard Library
+    - [ ] **Standard Library**
+        - [x] Basic I/O
+        - [x] Memory Management
+        - [x] `String` Type
 
 ## 🛠 Build & Usage
 
@@ -94,7 +100,7 @@ Currently, `tokac` compiles `.tk` source files into LLVM IR (`.ll`). You can exe
 
 **Traits & ADTs:**
 ```scala
-import core/io::println
+import std/io::println
 
 trait @Shape {
     fn area(self) -> i32
@@ -125,13 +131,13 @@ fn main() {
 }
 
 fn null_safety() {
-    auto ^?p = null // Identity is Nullable
+    auto ^?p = nullptr // Identity is Nullable
     if ^?p is ^p {
         println("Not Null!")
     }
     
-    auto obj! = none // Value is Nullable (Option)
-    if obj! is obj {
+    auto obj? = none // Value is Nullable (Option)
+    if obj? is obj {
         println("Object exists!")
     }
 }

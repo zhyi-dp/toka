@@ -40,14 +40,16 @@ auto y: f64 = 3.14  // 显式指定类型
 auto val = 5
 // val = 6          // 错误：val 是不可变的
 
-auto count# = 0
-count# = 1          // 正确
+auto count# = 0     // 声明可变变量
+count# = 1          // 写入: 使用 '#' 后缀进行修改
+println("{}", count)// 读取: 使用不带后缀的名称 (语法更清晰)
 ```
 
 ### 基础类型
 - **整数**: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`
 - **浮点数**: `f32`, `f64`
-- **其他**: `bool`, `char`, `str`, `void`
+- **其他**: `bool`, `char`, `void`
+- **文本**: `str` (字符串字面量/底层), `std/string::String` (推荐，可增长字符串)
 
 ---
 
@@ -117,9 +119,12 @@ Toka 引入了“形态学”操作符来处理对象标识、所有权和空值
 
 | 操作符 | 含义 | 示例 |
 | :--- | :--- | :--- |
-| `^` | **所有权/移动**: 表示拥有所有权的指针或移动操作。 | `auto ^r2 = ^r1` |
 | `#` | **可变**: 用于类型或变量，允许修改。 | `auto &x# = &y#` |
-| `?` | **可选/可空**: 表示该类型可以为 `null`。 | `auto p: Point? = null` |
+| `?` | **可空**: 值使用 `none`，身份使用 `nullptr`。 | `auto x? = none` <br> `auto ^?p = nullptr` |
+| `!` | **可写且可空**: 既可修改，又可为 `none`/`nullptr`。 | `auto x! = none` |
+| `^` | **所有权/移动**: 表示拥有所有权的指针或移动操作。 | `auto ^r2 = ^r1` |
+| `~` | **共享指针**: 引用计数的共享所有权。 | `auto ~s2 = ~s1` |
+| `&` | **借用/引用**: 对值或 Soul 的临时视图 (非所有权)。 | `auto &y = &x` |
 | `*` | **标识/原始指针**: 访问底层指针或地址。 | `println("Addr: {}", *ptr)` |
 
 ### 借用 (Borrowing)
@@ -136,14 +141,61 @@ auto &z# = &x#         // 可变借用
 z# = 20                // 修改 x 的值
 ```
 
-### 分配与释放
-使用 `new` 在堆上分配内存，使用 `del` 进行释放。
+### 匹配 (Match)
+`match` 表达式用于模式匹配，可以解构枚举、结构体等。
 
 ```toka
-auto *ptr# = new Point(x = 1, y = 2)
-// ... 使用 ptr ...
-del *ptr               // 手动释放该标识对应的内存
+enum Status {
+    Running,
+    Stopped(i32),
+    Paused { reason: str }
+}
+
+fn process_status(s: Status) {
+    match s {
+        auto Stopped(code) => println("Stopped with {}", code), // 结构体变体: 需要 'auto' 进行解构
+        Status::Running => println("Running..."),               // 单元变体或通配符: 通常不需要 'auto'
+        Status::Paused { reason } => println("Paused because: {}", reason)
+    }
+}
 ```
+
+### 内存管理 (Memory Management)
+
+#### 智能指针 (自动管理)
+使用 `new` 创建独占指针 (`^`) 或共享指针 (`~`)。当它们超出作用域时，会自动执行释放 (Drop) 操作。
+
+```toka
+{
+    auto ^ptr = new Point(x = 1, y = 2) 
+    // ^ptr 是唯一的独占所有者
+} // 作用域结束：^ptr 自动执行 drop 并释放内存
+```
+
+#### 原始指针 (手动管理)
+对于手动内存管理（不安全），请使用 `std/memory` 中的 `alloc` 和 `free`。Toka 不会自动清理原始指针 (`*`)。
+
+```toka
+import std/memory
+
+auto *raw = memory::alloc(sizeof(Point))
+// ...
+memory::free(*raw)
+```
+
+### 自动资源管理 (深度释放/Deep Drop)
+Toka 支持 **递归释放 (Recursive Drop)**。当一个容器结构体被释放（例如超出作用域）时，Toka 会自动调用所有需要释放的成员的 `drop` 方法。
+
+```toka
+impl Resource {
+    fn drop(self#) {
+        println("Resource dropped")
+        // 成员变量如 'self.inner_ptr' 会在此函数体执行完毕后自动释放。
+    }
+}
+```
+
+**安全规则:** 如果你的 Shape 包含资源（如原始指针或其他带有 `drop` 的 Shape），编译器会**强制**你为该 Shape 实现 `drop` 以确保权责分明。
 
 ---
 
@@ -233,3 +285,4 @@ Toka 旨在通过以下机制防止常见的内存错误：
 2. **借用检查器 (Borrow Checker)**: 确保引用不会比其指向的数据存活得更久。
 3. **空安全 (Null Safety)**: 除非标记为 `?`，否则类型默认为非空。
 4. **显式标识 (Explicit Identity)**: 通过形态学操作符区分对象值与其指针标识。
+5. **资源安全 (Resource Safety)**: 强制对持有资源的类型执行清理逻辑 (递归释放)。

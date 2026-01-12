@@ -40,14 +40,16 @@ By default, variables are immutable. Use the `#` suffix to declare a mutable var
 auto val = 5
 // val = 6          // Error: val is immutable
 
-auto count# = 0
-count# = 1          // OK
+auto count# = 0     // Declares mutable variable
+count# = 1          // WRITE: Use the '#' suffix to modify
+println("{}", count)// READ:  Use the base name to read (cleaner syntax)
 ```
 
 ### Primitive Types
 - **Integers**: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`
 - **Floating Point**: `f32`, `f64`
-- **Others**: `bool`, `char`, `str`, `void`
+- **Others**: `bool`, `char`, `void`
+- **Text**: `str` (String Literal/Raw), `std/string::String` (Growable, Recommended)
 
 ---
 
@@ -80,9 +82,9 @@ shape State (
 
 fn process(s: State) {
     match s {
-        On => println("Active")
+        On => println("Active")      // Unit variant: No 'auto' needed
         Off => println("Inactive")
-        auto ErrCode(code) => println("Error: {}", code)
+        auto ErrCode(code) => println("Error: {}", code) // Struct variant: Requires 'auto' to destructure
     }
 }
 ```
@@ -136,9 +138,12 @@ Toka introduces "Morphology" operators to handle object identity, ownership, and
 
 | Operator | Meaning | Example |
 | :--- | :--- | :--- |
-| `^` | **Ownership/Move**: Indicates an owning pointer or a move operation. | `auto ^r2 = ^r1` |
 | `#` | **Mutable**: Used in types or variables to allow modification. | `auto &x# = &y#` |
-| `?` | **Optional/Nullable**: Indicates a type can be `null`. | `auto p: Point? = null` |
+| `?` | **Nullable**: Value uses `none`, Identity uses `nullptr`. | `auto x? = none` <br> `auto ^?p = nullptr` |
+| `!` | **Writable & Nullable**: Can be modified AND be `none`/`nullptr`. | `auto x! = none` |
+| `^` | **Ownership/Move**: Indicates an owning pointer or a move operation. | `auto ^r2 = ^r1` |
+| `~` | **Shared Pointer**: Reference counted shared ownership. | `auto ~s2 = ~s1` |
+| `&` | **Borrow/Reference**: A temporary view into a value/soul. | `auto &y = &x` |
 | `*` | **Identity/Raw Pointer**: Accesses the underlying pointer/address. | `println("Addr: {}", *ptr)` |
 
 ### Borrowing
@@ -155,14 +160,42 @@ auto &z# = &x#         // Mutable borrow
 z# = 20                // Modifies x
 ```
 
-### Allocation and Deallocation
-Use `new` to allocate on the heap and `del` to release.
+### Memory Management
+
+#### Smart Pointers (Automatic)
+Use `new` to create Unique (`^`) or Shared (`~`) pointers. They are automatically deallocated (dropped) when they go out of scope.
 
 ```toka
-auto *ptr# = new Point(x = 1, y = 2)
-// ... use ptr ...
-del *ptr               // Manual deallocation of the identity
+{
+    auto ^ptr = new Point(x = 1, y = 2) 
+    // ^ptr is a unique pointer.
+} // ^ptr is automatically dropped and freed here.
 ```
+
+#### Raw Pointers (Manual)
+For manual memory management (unsafe), use `std/memory::alloc` and `free`. Toka does not automatically clean up raw pointers (`*`).
+
+```toka
+import std/memory
+
+auto *raw = memory::alloc(sizeof(Point))
+// ...
+memory::free(*raw)
+```
+
+### Automatic Resource Management (Deep Drop)
+Toka supports **Recursive Drop**. When a container struct is dropped (e.g. goes out of scope), Toka automatically calls `drop` on all its members that require it.
+
+```toka
+impl Resource {
+    fn drop(self#) {
+        println("Resource dropped")
+        // Members like 'self.inner_ptr' are dropped automatically AFTER this body.
+    }
+}
+```
+
+**Safety Rule:** If your shape contains resources (like raw pointers or other shapes with `drop`), the compiler **forces** you to implement `drop` for that shape to ensure accountability.
 
 ---
 
@@ -252,3 +285,4 @@ Toka is designed to prevent common memory errors through:
 2. **Borrow Checker**: Ensures references do not outlive their data.
 3. **Null Safety**: Types are non-nullable by default unless marked with `?`.
 4. **Explicit Identity**: Differentiating between the object value and its pointer identity via Morphology.
+5. **Resource Safety**: Enforces cleanup logic for types holding resources (Recursive Drop).

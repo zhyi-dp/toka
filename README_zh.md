@@ -11,7 +11,7 @@ Toka 通过正交的后缀标记让内存属性显式化，消除了隐藏的内
 | 标记 (Token) | 内容上的含义 (Value/Content) | 身份上的含义 (Identity/Address) |
 | :--- | :--- | :--- |
 | `#` | **可写**: 可修改字段/内容 | **可交换**: 可重定向(Reseat) |
-| `?` | **可选**: 可为 `none` | **可空**: 可为 `null` |
+| `?` | **可选**: 可为 `none` | **可空**: 可为 `nullptr` |
 | `^` | - | **独占指针** (所有权) |
 | `~` | - | **共享指针** (引用计数) |
 
@@ -41,6 +41,8 @@ auto ^#p2? = ...    // 可交换(指向可变)、可空、独占指针
 - [x] **内存管理 (Memory Management)**
     - [x] 独占指针 (`^`) 与移动语义 (Move Semantics)
     - [x] 共享指针 (`~`) 与引用计数 (Reference Counting)
+    - [x] **递归式释放 (Recursive Drop)** (Deep Drop)
+    - [x] **Soul-Identity 内存模型** (不透明指针支持)
 - [x] **面向对象特性**
     - [x] `impl` 块 (方法)
     - [x] **Trait 系统** (接口、默认实现)
@@ -59,10 +61,14 @@ auto ^#p2? = ...    // 可交换(指向可变)、可空、独占指针
     - [x] 类型检查 (Type Checking Pass)
     - [x] 所有权与借用验证 (Ownership & Borrowing Verification)
     - [x] **空安全 (Null Safety)** (`is` 操作符、严格判空)
+    - [x] **资源安全分析 (Resource Safety)** (强制含资源 Shape 实现 `drop`)
 - [ ] **高级特性**
     - [ ] 泛型 / 模板 (Generics)
     - [ ] 并发 (`Task`, `async`/`await`)
-    - [ ] 标准库 (Standard Library)
+    - [ ] **标准库 (Standard Library)**
+        - [x] 基础 I/O
+        - [x] 内存管理
+        - [x] `String` 类型
 
 ## 🛠 构建与使用
 
@@ -124,13 +130,13 @@ fn main() {
 }
 
 fn null_safety() {
-    auto ^?p = null // 身份可空 (Identity is Nullable)
+    auto ^?p = nullptr // 身份可空 (Identity is Nullable)
     if ^?p is ^p {
         println("Not Null!") // 只有在指针不为空时执行
     }
     
-    auto obj! = none // 内容可空 (Value is Nullable)
-    if obj! is obj {
+    auto obj? = none // 内容可空 (Value is Nullable)
+    if obj? is obj {
         println("Object exists!")
     }
 }
