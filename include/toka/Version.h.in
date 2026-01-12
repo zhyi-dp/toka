@@ -1,0 +1,18 @@
+#pragma once
+
+#define TOKA_VERSION_MAJOR @Toka_VERSION_MAJOR@
+#define TOKA_VERSION_MINOR @Toka_VERSION_MINOR@
+#define TOKA_VERSION_PATCH @Toka_VERSION_PATCH@
+#define TOKA_VERSION_STRING "@Toka_VERSION@"
+
+#define TOKA_BUILD_NUMBER @TOKA_BUILD_NUMBER@
+#define TOKA_COMMIT_HASH "@TOKA_COMMIT_HASH@"
+#define TOKA_TARGET_TRIPLE "@TOKA_TARGET_TRIPLE@"
+
+#define TOKA_STRINGIFY(x) #x
+#define TOKA_TOSTRING(x) TOKA_STRINGIFY(x)
+
+#define TOKA_FULL_VERSION_STRING                                               \
+  "Toka Compiler version " TOKA_VERSION_STRING                                 \
+  " (Build " TOKA_TOSTRING(TOKA_BUILD_NUMBER) "+" TOKA_COMMIT_HASH ")\n"       \
+  "Target: " TOKA_TARGET_TRIPLE

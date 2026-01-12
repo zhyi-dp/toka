@@ -2,6 +2,7 @@
 #include "toka/Lexer.h"
 #include "toka/Parser.h"
 #include "toka/Sema.h"
+#include "toka/Version.h"
 #include "llvm/Support/raw_ostream.h"
 #include <fstream>
 #include <iostream>
@@ -86,7 +87,14 @@ void parseSource(const std::string &filename,
 int main(int argc, char **argv) {
   if (argc < 2) {
     llvm::errs() << "Usage: tokac <filename>\n";
+    llvm::errs() << "       tokac --version\n";
     return 1;
+  }
+
+  std::string arg1 = argv[1];
+  if (arg1 == "--version" || arg1 == "-v") {
+    llvm::outs() << TOKA_FULL_VERSION_STRING << "\n";
+    return 0;
   }
 
   std::vector<std::unique_ptr<toka::Module>> astModules;

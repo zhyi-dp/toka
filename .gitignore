@@ -1,4 +1,5 @@
 toka.md
+*.bin
 *.ll
 *.lli
 *.log
@@ -48,3 +49,4 @@ bin/
 
 # debug information files
 *.dwo
+include/toka/Version.h
