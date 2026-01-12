@@ -126,7 +126,7 @@ fn main() -> i32 {
     println("[{}]Prefix --: d is {}", logi#++, --d#)
 
     {
-        println("Testing Raw pointer...\n")
+        println("Testing Raw pointer...")
         auto *ptr = new Point(x=999, y=111, z=0)
         println("[{}]Raw Heap Point: ptr.x={}, address={}", logi#++, ptr.x, *ptr)
         del *ptr
@@ -137,7 +137,7 @@ fn main() -> i32 {
     println("[{}]Heap Point is ({}, {})", logi#++, heapNode.x, heapNode.y)
 
     {
-        println("Testing Move Semantics...\n")
+        println("Testing Move Semantics...")
         auto ^p = new Point(x=999, y=111, z=0)
         auto ^q = ^p
         println("[{}]Moved Heap Point: q.x={}", logi#++, q.x)
@@ -145,7 +145,7 @@ fn main() -> i32 {
     }
 
     {
-        println("Testing Shared Semantics...\n")
+        println("Testing Shared Semantics...")
         auto ~s1# = new Point(x = 1000, y = 2000, z = 0) //(ref++)
         {
             auto ~s2# = ~s1# // Shared Copy (ref++)
@@ -156,12 +156,12 @@ fn main() -> i32 {
         if (s1.x == 3000) {
             println("[{}]Shared s1.x sees change (3000)", logi#++)
         } else {
-            println("FAIL: s1.x not updated\n")
+            println("FAIL: s1.x not updated")
         }
         //ref-- now ref is zero, free the Point memory
     }
 
-    println("main() done\n")
+    println("main() done")
     return 0
 }
 

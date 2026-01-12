@@ -16,8 +16,8 @@ pub const ADDR0 = 0:Addr
 pub const LIMITS = (
     // Integer boundaries: Hard-coded physical limits
     u8 = (
-        min = 0,
-        max = 255,
+        min = 0:u8,
+        max = 255:u8,
         bits = 8,
     ),
     i32 = (
@@ -26,7 +26,7 @@ pub const LIMITS = (
         bits = 32,
     ),
     u64 = (
-        min = 0,
+        min = 0:u64,
         max = 18446744073709551615:u64,
         bits = 64,
     ),

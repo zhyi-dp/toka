@@ -15,7 +15,7 @@ extern fn libc_malloc(size: usize) -> *void
 extern fn libc_realloc(*ptr: void, size: usize) -> *void
 extern fn libc_free(*ptr: void) -> void
 extern fn libc_memcpy(*dest: void, *src: void, n: usize) -> *void
-extern fn libc_strlen(*s: i8) -> usize
+extern fn libc_strlen(*s: char) -> usize
 
 
 // ------------------------------------------------------
@@ -25,7 +25,7 @@ extern fn libc_strlen(*s: i8) -> usize
 pub shape String (
     // Slot A (*#): 允许修改指针指向 (realloc 需要)
     // Slot B (#) : 允许修改指向的数据 (memcpy 需要)
-    *buf#: i8, //不需要写成 *#buf#，因为 被含指针的可绑定性继承自String实例的可变性（也就是fn中的self的可变性），相当于rust的 *mut T 成员
+    *buf#: char, //不需要写成 *#buf#，因为 被含指针的可绑定性继承自String实例的可变性（也就是fn中的self的可变性），相当于rust的 *mut T 成员
     
     len: i32,
     cap: i32
@@ -42,11 +42,11 @@ impl String {
 
     pub fn new() -> String {
         unsafe {
-            // libc_malloc 返回 *void 地址，强转为 *i8 地址
-            auto *p# = libc_malloc(1:usize) as *i8
+            // libc_malloc 返回 *void 地址，强转为 *char 地址
+            auto *p# = libc_malloc(1:usize) as *char
             
             // 初始化数据：p 代表实体
-            p#[0] = 0 as i8
+            p#[0] = 0 as char
             
             return String(
                 *buf = *p, // 赋值给 Slot A (地址) 初始化时无视权限 不需要出示#
@@ -56,19 +56,19 @@ impl String {
         }
     }
 
-    pub fn from(*s: i8) -> String {
+    pub fn from(*s: char) -> String {
         unsafe {
             // 传入地址 *s
             auto l = libc_strlen(*s)
             
             // 声明本地指针 p，持有可写权限 #
-            auto *p# = libc_malloc((l + 1) as usize) as *i8
+            auto *p# = libc_malloc((l + 1) as usize) as *char
             
             // 内存拷贝：传入地址
             libc_memcpy(*p as *void, *s as *void, l)
             
             // Null Terminate
-            p#[l] = 0 as i8
+            p#[l] = 0 as char
             
             return String(
                 *buf = *p, // 赋值给 Slot A (地址) 初始化时无视权限 不需要出示#
@@ -89,12 +89,6 @@ impl String {
         return self.cap
     }
 
-    // 返回裸指针地址
-    pub fn as_ptr(self) -> *i8 {
-        // self.*buf 访问的是 buf 指针变量里存储的地址 (Slot A)
-        return self.*buf
-    }
-
     pub fn c_str(self) -> *char {
         // self.*buf 访问的是 buf 指针变量里存储的地址 (Slot A)
         return self.*buf as *char
@@ -104,7 +98,7 @@ impl String {
 
     // [原地捕获] self# 代表可变实例
     // 允许修改 self.len, self.cap 以及 self.*buf (重定向指针)
-    pub fn push_str(self#, *s: i8) -> i32 {
+    pub fn push_str(self#, *s: char) -> i32 {
         unsafe {
             auto slen = libc_strlen(*s)
             auto needed = self.len + (slen as i32)
@@ -114,9 +108,9 @@ impl String {
                 auto new_cap = (self.cap * 2) + (slen as i32) + 1
                 
                 // realloc 需要传入旧地址：self.*buf
-                auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *i8
+                auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *char
                 
-                if *tmp == (0 as *i8) {
+                if *tmp == (0 as *char) {
                     return 0;
                 }
                 
@@ -128,7 +122,7 @@ impl String {
             
             // 2. 拼接逻辑
             // 计算目标地址：基地址(self.*buf) + 偏移
-            auto *dst# = (self.*buf as usize + self.len as usize) as *i8
+            auto *dst# = (self.*buf as usize + self.len as usize) as *char
             
             // 拷贝数据
             libc_memcpy(*dst as *void, *s as *void, slen)
@@ -137,7 +131,7 @@ impl String {
             self#.len = needed
             
             // Null Terminate
-            dst#[slen] = 0 as i8
+            dst#[slen] = 0 as char
         }
         return 1
     }

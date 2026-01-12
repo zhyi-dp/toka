@@ -6,4 +6,4 @@ extern fn printf(*s: char, ...) -> i32
 extern fn puts(*s: char) -> i32
 
 // Intrinsic: handled by compiler magic
-extern fn println(*fmt: char, ...) -> void
+extern fn println(fmt: str, ...) -> void

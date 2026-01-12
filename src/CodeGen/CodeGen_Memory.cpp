@@ -222,10 +222,6 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
 
   if (!mem->Member.empty() && mem->Member[0] == '*') {
     finalAddr = fieldAddr;
-  } else if (isPointerField) {
-    // Soul access for pointers
-    finalAddr = m_Builder.CreateLoad(st->getElementType(idx), fieldAddr,
-                                     memberName + "_ptr");
   }
 
   // Resolve Metadata

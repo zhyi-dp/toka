@@ -59,7 +59,7 @@ impl Entity@Renderable {
     fn render(self) -> i32 {
         // Accessing underlying pointer of String
         println("Rendering Entity '{}' (#{}) at ({}, {}) Status: {}", 
-            self.name.as_ptr(), self.id, self.pos.x, self.pos.y, self.status)
+            self.name.c_str(), self.id, self.pos.x, self.pos.y, self.status)
         return 1
     }
 }

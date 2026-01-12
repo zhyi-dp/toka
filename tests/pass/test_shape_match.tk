@@ -44,18 +44,18 @@ fn test_binding_refs(val: u32) -> u32 {
 
 fn main() -> i32 {
     auto b = test_match_expr(10)
-    if b != 20 { 
+    if b != 20:u32 { 
         println("Match expr error")
         return 2 
     }
-    assert(b == 20, "b mismatch")
+    assert(b == 20:u32, "b mismatch")
     
     auto c = test_binding_refs(42)
-    if c != 42 { 
+    if c != 42:u32 { 
         println("Binding refs error")
         return 3 
     }
-    assert(c == 42, "c mismatch")
+    assert(c == 42:u32, "c mismatch")
     
     return 0
 }

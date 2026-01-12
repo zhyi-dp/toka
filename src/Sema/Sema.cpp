@@ -1033,6 +1033,24 @@ std::string Sema::checkExpr(Expr *E) {
         error(Bin, "operands of '" + Bin->Op + "' must be same type ('" + LHS +
                        "' vs '" + RHS + "')");
       }
+
+      // Strict Integer Check: Disallow implicit numeric casting in comparisons
+      std::string T = resolveType(LHS);
+      std::string S = resolveType(RHS);
+      if (T != S) {
+        // Check if both are integers (list matches isTypeCompatible's promotion
+        // list)
+        bool T_isInt = (T == "i32" || T == "u32" || T == "i64" || T == "u64" ||
+                        T == "i8" || T == "u8" || T == "i16" || T == "u16");
+        bool S_isInt = (S == "i32" || S == "u32" || S == "i64" || S == "u64" ||
+                        S == "i8" || S == "u8" || S == "i16" || S == "u16");
+
+        if (T_isInt && S_isInt) {
+          error(Bin, "comparison operands must have exact same type ('" + LHS +
+                         "' vs '" + RHS + "')");
+        }
+      }
+
       return "bool";
     }
 

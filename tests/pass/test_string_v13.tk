@@ -8,24 +8,22 @@ fn main() -> i32 {
 
     // 1. Basic Construction
     auto s = String::from("Hello")
-    println("Initial string: {}", s.as_ptr())
+    println("Initial string: {}", s.c_str())
     println("Length: {} (expected 5)", s.len())
-    println("Capacity: {} (expected 6)", s.capacity())
-
     println("Capacity: {} (expected 6)", s.capacity())
 
     assert(s.len() == 5, "Initial length mismatch")
 
     // 2. Growth via push_str
     s.push_str(" Toka")
-    println("Modified string: {}", s.as_ptr())
+    println("Modified string: {}", s.c_str())
     println("New Length: {} (expected 10)", s.len())
     
     assert(s.len() == 10, "Modified length mismatch")
 
     // 3. Repeated growth to trigger realloc
     s.push_str("! This is a long string to trigger realloc.")
-    println("Final string: {}", s.as_ptr())
+    println("Final string: {}", s.c_str())
     println("Final Length: {}", s.len())
     println("Final Capacity: {}", s.capacity())
 

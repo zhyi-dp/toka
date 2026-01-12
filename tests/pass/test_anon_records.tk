@@ -26,7 +26,15 @@ fn main() -> i32 {
     println("r2.xy.x = {}", r2.xy.x)
     assert(r2.x == 300, "r2.x mismatch")
     assert(r2.xy.x == 10, "r2.xy.x mismatch")
-
+    
+    println("LIMITS.u8.max = {}",LIMITS.u8.max)
+    assert(LIMITS.u8.max == 255:u8, "LIMITS.u8.max mismatch")
+    println("LIMITS.f32.min_positive = {}",LIMITS.f32.min_positive as f64)
+    println("LIMITS.f32.epsilon = {}",LIMITS.f32.epsilon as f64)
+    println("LIMITS.f32.bits.infinity = {}",LIMITS.f32.bits.infinity)
+    println("LIMITS.f32.bits.nan = {}",LIMITS.f32.bits.nan)
+    println("LIMITS.f32.bits.neg_zero = {}",LIMITS.f32.bits.neg_zero)
+    
     // 3. Mixed types
     auto r3 = (name = "Toka", ver = 1)
     println("Lang: {}, Ver: {}", r3.name, r3.ver)
@@ -41,12 +49,6 @@ fn main() -> i32 {
     println("p1.y = {}", p1.y)
 
     // 6. Using LIMITS
-    assert(LIMITS.u8.max == 255:u8, "LIMITS.u8.max mismatch")
-    println("LIMITS._u8.max = {}",LIMITS.u8.max)
-    println("LIMITS.f32.min_positive = {}",LIMITS.f32.min_positive as f64)
-    println("LIMITS.f32.epsilon = {}",LIMITS.f32.epsilon as f64)
-    println("LIMITS.f32.bits.infinity = {}",LIMITS.f32.bits.infinity)
-    println("LIMITS.f32.bits.nan = {}",LIMITS.f32.bits.nan)
-    println("LIMITS.f32.bits.neg_zero = {}",LIMITS.f32.bits.neg_zero)
+
     return 0
 }
