@@ -12,13 +12,13 @@ shape Square(s: i32)
 
 // 3. Implementations
 impl Rect@Shape {
-    fn area(self) -> i32 { 
+    pub fn area(self) -> i32 { 
         return self.w * self.h 
     }
 }
 
 impl Square@Shape {
-    fn area(self) -> i32 { 
+    pub fn area(self) -> i32 { 
         return self.s * self.s 
     }
 }

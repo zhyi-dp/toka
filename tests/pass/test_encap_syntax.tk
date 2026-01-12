@@ -3,6 +3,7 @@
 
 import std/io::println
 import std/memory::assert
+import core/traits::{@encap}
 
 // 1. Physical Layout
 pub shape Device (
@@ -28,6 +29,9 @@ impl Device@encap {
     // Note: This would conflict with specific declarations above, 
     // but shown here for syntax verification.
     // pub * ! secret_key, id
+    fn drop(self#) {
+        
+    }
 }
 
 // 3. Behavior (God-eye View: same file as shape definition)

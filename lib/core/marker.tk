@@ -10,10 +10,10 @@ pub trait @Move {}
 
 // Trait for types that can create a copy of themselves.
 pub trait @Clone {
-    fn clone(self)
+    pub fn clone(self)
 }
 
 // Trait for types that have a default value.
 pub trait @Default {
-    fn init(self)
+    pub fn init(self)
 }

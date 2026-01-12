@@ -13,7 +13,7 @@ shape Test (
 )
 
 impl Test@Base {
-    fn bar(self) -> i32 {
+    pub fn bar(self) -> i32 {
        return self.val + 1
     }
     // foo is using default implementation

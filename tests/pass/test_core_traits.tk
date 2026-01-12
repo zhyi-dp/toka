@@ -7,13 +7,13 @@ shape Dummy (
 )
 
 impl Dummy@Clone {
-    fn clone(self) {
+    pub fn clone(self) {
         // Just for parsing test
     }
 }
 
 impl Dummy@Default {
-    fn init(self) {
+    pub fn init(self) {
         // Just for parsing test
     }
 }

@@ -16,13 +16,13 @@ trait @Fly {
 }
 
 impl Rect@Shape {
-    fn area(self) -> i32 {
+    pub fn area(self) -> i32 {
         return self.w * self.h
     }
 }
 
 impl Rect@Fly {
-    fn fly(self) -> i32 {
+    pub fn fly(self) -> i32 {
         return 222
     }
 }

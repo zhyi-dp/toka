@@ -641,8 +641,9 @@ void CodeGen::genShape(const ShapeDecl *sh) {
 }
 
 void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
-  if (decl->TraitName == "encap")
-    return;
+  if (decl->TraitName == "encap") {
+    // Allow generation for hybrid encap trait
+  }
   m_CurrentSelfType = decl->TypeName;
   std::set<std::string> implementedMethods;
 
@@ -847,6 +848,12 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
       if (callee)
         break;
     }
+  }
+
+  // Explicit check for @encap (hybrid trait)
+  if (!callee) {
+    std::string encapFunc = "encap_" + typeName + "_" + expr->Method;
+    callee = m_Module->getFunction(encapFunc);
   }
 
   if (!callee) {

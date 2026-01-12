@@ -1,0 +1,5 @@
+import core/missing_module
+import std/io::{MissingSymbol}
+
+fn main() {
+}

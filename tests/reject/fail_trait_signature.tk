@@ -1,0 +1,16 @@
+pub trait @StrictTrait {
+    pub fn must_be_pub(self)
+    fn must_be_priv(self)
+}
+
+pub shape MyType(x:i32)
+
+impl MyType@StrictTrait {
+    // Mismatch: Trait says pub, Impl is private
+    fn must_be_pub(self) {}
+
+    // Mismatch: Trait says private, Impl is pub
+    pub fn must_be_priv(self) {}
+}
+
+fn main() {}

@@ -4,6 +4,7 @@
 // ==========================================
 
 import core/types::{char,usize,Addr,ADDR0}
+import core/traits::{@encap,@Haha}
 
 // ------------------------------------------------------
 // 1. External C Interface (libc)
@@ -30,6 +31,31 @@ pub shape String (
     len: i32,
     cap: i32
 )
+
+impl String@encap {
+    pub cap
+    fn drop(self#) {
+        unsafe {
+            if self.*buf != nullptr {
+                // 释放内存地址
+                libc_free(self.*buf as *void)
+                
+                // 置空：修改 Slot A
+                self#.*buf = nullptr 
+
+                self#.len = 0
+                self#.cap = 0
+            }
+        }
+    }
+}
+
+
+impl String@Haha {
+    pub fn haha(self) {
+        println("Haha, I'm String")
+    }
+}
 
 
 // ------------------------------------------------------
@@ -136,17 +162,8 @@ impl String {
         return 1
     }
 
-    // === 析构 (Destructor) ===
-
-    pub fn drop(self#) {
-        unsafe {
-            if self.*buf != nullptr {
-                // 释放内存地址
-                libc_free(self.*buf as *void)
-                
-                // 置空：修改 Slot A
-                self#.*buf = nullptr 
-            }
-        }
+    pub fn clear(self#)
+    {
+        self#.drop()
     }
 }

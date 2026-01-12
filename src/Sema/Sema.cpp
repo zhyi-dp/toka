@@ -148,7 +148,7 @@ void Sema::registerGlobals(Module &M) {
     }
 
     if (!target) {
-      // It's possible the file wasn't loaded or path doesn't match
+      error(Imp.get(), "module '" + Imp->PhysicalPath + "' not found");
       continue;
     }
 
@@ -206,17 +206,29 @@ void Sema::registerGlobals(Module &M) {
         } else {
           // Import specific
           std::string name = item.Alias.empty() ? item.Symbol : item.Alias;
+          bool found = false;
+          // Trait name lookup hack: if symbol is @Trait, look for Trait
+          std::string lookupSym = item.Symbol;
+          if (lookupSym.size() > 1 && lookupSym[0] == '@') {
+            lookupSym = lookupSym.substr(1);
+          }
+
           if (target->Functions.count(item.Symbol)) {
             CurrentScope->define(name, {"fn", "", false, false, false, false,
                                         false, 0, false, "", nullptr});
+            found = true;
           } else if (target->Shapes.count(item.Symbol)) {
             ShapeMap[name] = target->Shapes[item.Symbol];
+            found = true;
           } else if (target->TypeAliases.count(item.Symbol)) {
             TypeAliasMap[name] = target->TypeAliases[item.Symbol];
-          } else if (target->Traits.count(item.Symbol)) {
-            TraitMap[name] = target->Traits[item.Symbol];
+            found = true;
+          } else if (target->Traits.count(lookupSym)) {
+            TraitMap[name] = target->Traits[lookupSym];
+            found = true;
           } else if (target->Externs.count(item.Symbol)) {
             ExternMap[name] = target->Externs[item.Symbol];
+            found = true;
           } else if (target->Globals.count(item.Symbol)) {
             auto *v = target->Globals[item.Symbol];
             std::string morph = "";
@@ -233,6 +245,13 @@ void Sema::registerGlobals(Module &M) {
                                         v->IsValueMutable, v->IsPointerNullable,
                                         v->IsValueNullable, false, 0, false, "",
                                         nullptr});
+            found = true;
+          }
+
+          if (!found) {
+            error(Imp.get(), "symbol '" + item.Symbol +
+                                 "' not found in module '" + Imp->PhysicalPath +
+                                 "'");
           }
         }
       }
@@ -242,18 +261,17 @@ void Sema::registerGlobals(Module &M) {
   for (auto &Impl : M.Impls) {
     if (Impl->TraitName == "encap") {
       EncapMap[Impl->TypeName] = Impl->EncapEntries;
-      continue;
+      // removed continue to allow method registration (hybrid trait)
     }
     std::set<std::string> implemented;
     for (auto &Method : Impl->Methods) {
       MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
+      MethodDecls[Impl->TypeName][Method->Name] = Method.get();
       implemented.insert(Method->Name);
     }
     // Populate ImplMap
     if (!Impl->TraitName.empty()) {
       std::string implKey = Impl->TypeName + "@" + Impl->TraitName;
-      // DEBUG
-      llvm::errs() << "DEBUG: Registering Impl Key: '" << implKey << "'\n";
       for (auto &Method : Impl->Methods) {
         ImplMap[implKey][Method->Name] = Method.get();
       }
@@ -263,11 +281,36 @@ void Sema::registerGlobals(Module &M) {
       if (TraitMap.count(Impl->TraitName)) {
         TraitDecl *TD = TraitMap[Impl->TraitName];
         for (auto &Method : TD->Methods) {
-          if (implemented.count(Method->Name))
+          if (implemented.count(Method->Name)) {
+            // Verify Signature Match (Pub/Priv)
+            // We need to find the Impl method
+            FunctionDecl *ImplMethod = nullptr;
+            // Search in Impl->Methods
+            for (auto &m : Impl->Methods) {
+              if (m->Name == Method->Name) {
+                ImplMethod = m.get();
+                break;
+              }
+            }
+            if (ImplMethod) {
+              if (ImplMethod->IsPub != Method->IsPub) {
+                std::string traitVis = Method->IsPub ? "pub" : "private";
+                std::string implVis = ImplMethod->IsPub ? "pub" : "private";
+                error(ImplMethod, "signature mismatch: trait method '" +
+                                      Method->Name + "' is " + traitVis +
+                                      ", but implementation is " + implVis);
+              }
+            }
             continue;
+          }
           if (Method->Body) {
             // Trait provides a default implementation
             MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
+            MethodDecls[Impl->TypeName][Method->Name] = Method.get();
+          } else {
+            error(Impl.get(), "Missing implementation for method '" +
+                                  Method->Name + "' of trait '" +
+                                  Impl->TraitName + "'");
           }
         }
       } else {
@@ -1722,6 +1765,30 @@ std::string Sema::checkExpr(Expr *E) {
     }
 
     if (MethodMap.count(ObjType) && MethodMap[ObjType].count(Met->Method)) {
+      if (MethodDecls.count(ObjType) &&
+          MethodDecls[ObjType].count(Met->Method)) {
+        FunctionDecl *FD = MethodDecls[ObjType][Met->Method];
+        if (!FD->IsPub) {
+          // Check visibility (simplified: allows same-file access, needs
+          // expansion for crate)
+          // FIXME: This logic should match checkCallExpr's relaxed check (Same
+          // Module)
+          bool sameModule = false;
+          if (CurrentModule && CurrentModule->FileName == FD->FileName) {
+            sameModule = true;
+          } else if (CurrentModule) {
+            // Weak check for same module via paths?
+            // For now, strict file check or explicitly public is enough for
+            // "private" If we are in std/string and calling String methods,
+            // likely ok.
+          }
+
+          if (Met->FileName != FD->FileName && !sameModule) {
+            error(Met, "method '" + Met->Method + "' is private to '" +
+                           FD->FileName + "'");
+          }
+        }
+      }
       return MethodMap[ObjType][Met->Method];
     }
     // Check if it's a reference to a struct

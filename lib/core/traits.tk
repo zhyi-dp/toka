@@ -1,0 +1,8 @@
+pub trait @encap {
+    //!pub Self::*
+    fn drop(self#)
+}
+
+pub trait @Haha {
+    pub fn haha(self)
+}

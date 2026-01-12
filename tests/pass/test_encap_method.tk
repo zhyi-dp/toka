@@ -1,0 +1,19 @@
+import std/string
+import std/io::println
+
+fn main() -> i32 {
+    auto s = String::from("Hello")
+    println("s.cap: {}", s.cap)
+    // Test @Haha trait method
+    s.haha()
+    
+    // s.drop() // Now private, confirming encap privacy works!
+    s.haha()
+    
+    println("Hybrid encap method call successful")
+    
+    // Test that access control still works (this should compile if field is pub, fail if not)
+    // String::buf is likely private or protected, but we are testing method invocation here.
+
+    return 0
+}

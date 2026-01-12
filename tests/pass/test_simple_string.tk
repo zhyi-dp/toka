@@ -28,11 +28,11 @@ fn main() -> i32 {
     
     s.push_str("!")
     println("Appended: {}", s.c_str())
-    
-    s.drop()
-    println("Final Length: {}", s.len())
-    s.drop()
-    println("Final Length: {}", s.len())
+
     assert(s.len() == 9, "s.len mismatch")
+
+    s.clear()
+    assert(s.len() == 0, "s.len mismatch")
+    assert(s.capacity() == 0, "s.capacity mismatch")
     return 0
 }

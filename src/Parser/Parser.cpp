@@ -1300,7 +1300,7 @@ std::unique_ptr<Expr> Parser::parsePass() {
 }
 
 std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
-  consume(TokenType::KwImport, "Expected 'import'");
+  Token importTok = consume(TokenType::KwImport, "Expected 'import'");
   std::string physicalPath;
 
   // 1. Parse Physical Path (Segments)
@@ -1340,7 +1340,7 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
       while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
         std::string symName;
         if (match(TokenType::At)) {
-          symName = "@";
+          // Consume @ but don't include in name for lookup
         }
         symName += consume(TokenType::Identifier, "Expected symbol name").Text;
         std::string alias;
@@ -1355,7 +1355,7 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
     } else {
       std::string symName;
       if (match(TokenType::At)) {
-        symName = "@";
+        // Consume @ but don't include in name for lookup
       }
       symName += consume(TokenType::Identifier, "Expected symbol name").Text;
       std::string alias;
@@ -1382,7 +1382,10 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
     expectEndOfStatement();
   }
 
-  return std::make_unique<ImportDecl>(isPub, physicalPath, moduleAlias, items);
+  auto decl =
+      std::make_unique<ImportDecl>(isPub, physicalPath, moduleAlias, items);
+  decl->setLocation(importTok, m_CurrentFile);
+  return decl;
 }
 
 std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
@@ -1452,7 +1455,15 @@ std::unique_ptr<ImplDecl> Parser::parseImpl() {
 
   if (traitName == "encap") {
     while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
-      if (match(TokenType::KwPub)) {
+      if ((check(TokenType::KwFn)) ||
+          (check(TokenType::KwPub) && checkAt(1, TokenType::KwFn))) {
+        // Parse as function
+        bool isPub = false;
+        if (match(TokenType::KwPub)) {
+          isPub = true;
+        }
+        methods.push_back(parseFunctionDecl(isPub));
+      } else if (match(TokenType::KwPub)) {
         EncapEntry entry;
         entry.Level = EncapEntry::Global;
 
@@ -1493,8 +1504,11 @@ std::unique_ptr<ImplDecl> Parser::parseImpl() {
           }
         }
         encapEntries.push_back(std::move(entry));
+      } else if (check(TokenType::KwFn)) {
+        // Non-pub function (private to trait impl?)
+        methods.push_back(parseFunctionDecl(false));
       } else {
-        error(peek(), "Expected 'pub' inside @encap block");
+        error(peek(), "Expected 'pub' or 'fn' inside @encap block");
         advance();
       }
     }

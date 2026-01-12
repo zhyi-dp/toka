@@ -29,9 +29,5 @@ fn main() -> i32 {
 
     assert(s.len() > 10, "Final length check failed")
 
-    // 4. Memory Cleanup
-    s.drop()
-    println("String dropped successfully.")
-
     return 0
 }

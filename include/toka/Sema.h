@@ -109,6 +109,8 @@ private:
   std::map<std::string, AliasInfo> TypeAliasMap;
   // TypeName -> {MethodName -> ReturnType}
   std::map<std::string, std::map<std::string, std::string>> MethodMap;
+  // TypeName -> {MethodName -> FunctionDecl*}
+  std::map<std::string, std::map<std::string, FunctionDecl *>> MethodDecls;
   std::map<std::string, TraitDecl *> TraitMap;
   // Key: "StructName@TraitName" -> {MethodName -> FunctionDecl*}
   std::map<std::string, std::map<std::string, FunctionDecl *>> ImplMap;

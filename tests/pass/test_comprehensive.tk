@@ -24,7 +24,7 @@ shape Color (
 // --- 2. Traits ---
 
 trait @Renderable {
-    fn render(self) -> i32
+    pub fn render(self) -> i32
 }
 
 trait @Identity {
@@ -49,14 +49,14 @@ shape Entity (
 
 impl Point {
     // Method with mutable self (in-place capture)
-    fn add(self#, other: Point) {
+    pub fn add(self#, other: Point) {
         self#.x = self.x + other.x
         self#.y = self.y + other.y
     }
 }
 
 impl Entity@Renderable {
-    fn render(self) -> i32 {
+    pub fn render(self) -> i32 {
         // Accessing underlying pointer of String
         println("Rendering Entity '{}' (#{}) at ({}, {}) Status: {}", 
             self.name.c_str(), self.id, self.pos.x, self.pos.y, self.status)
@@ -189,11 +189,6 @@ fn main() -> i32 {
         assert(ptr2.x == 999.0:f32, "Moved pointer value mismatch")
         // Automatic cleanup of ptr2 at end of scope
     }
-    
-    // 6.6 Manual cleanup of String inside Entity 
-    // Manual drop because we don't have automatic struct destructors yet
-    println("\nCleaning up...")
-    e1.name.drop() 
     
     println("All comprehensive tests passed.")
     return 0
