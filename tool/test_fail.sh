@@ -17,11 +17,11 @@ fi
 echo "Starting Toka 'REJECT' Test Suite..."
 echo "---------------------------------"
 
-# Targeted test collection: ONLY tests/reject/
-files=(tests/reject/*.tk)
+# Targeted test collection: ONLY tests/fail/
+files=(tests/fail/*.tk)
 
 if [ ${#files[@]} -eq 0 ]; then
-    echo "No .tk files found in tests/reject/"
+    echo "No .tk files found in tests/fail/"
     exit 0
 fi
 
