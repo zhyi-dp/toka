@@ -63,7 +63,6 @@ private:
   std::unique_ptr<ReturnStmt> parseReturn();
 
   std::unique_ptr<Expr> parseExpr(int minPrec = 0);
-  int getPrecedence(TokenType type);
   std::unique_ptr<Expr> parsePrimary();
 
   // ... Add more precedence helpers here

@@ -698,36 +698,7 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
   return node;
 }
 
-int Parser::getPrecedence(TokenType type) {
-  switch (type) {
-  case TokenType::Plus:
-  case TokenType::Minus:
-    return 10;
-  case TokenType::Star:
-  case TokenType::Slash:
-    return 20;
-  case TokenType::Equal:
-  case TokenType::PlusEqual:
-  case TokenType::MinusEqual:
-  case TokenType::StarEqual:
-  case TokenType::SlashEqual:
-    return 1; // Assignment
-  case TokenType::DoubleEqual:
-  case TokenType::Neq:
-  case TokenType::Less:
-  case TokenType::Greater:
-  case TokenType::LessEqual:
-  case TokenType::GreaterEqual:
-  case TokenType::KwIs:
-    return 5;
-  case TokenType::And:
-    return 4;
-  case TokenType::Or:
-    return 3;
-  default:
-    return -1;
-  }
-}
+// getPrecedence moved to Token.h
 
 std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
   auto lhs = parsePrimary();

@@ -150,4 +150,63 @@ struct Token {
   }
 };
 
+inline bool isAssignment(TokenType T) {
+  switch (T) {
+  case TokenType::Equal:
+  case TokenType::PlusEqual:
+  case TokenType::MinusEqual:
+  case TokenType::StarEqual:
+  case TokenType::SlashEqual:
+    return true;
+  default:
+    return false;
+  }
+}
+
+inline bool isComparison(TokenType T) {
+  switch (T) {
+  case TokenType::DoubleEqual:
+  case TokenType::Neq:
+  case TokenType::Less:
+  case TokenType::Greater:
+  case TokenType::LessEqual:
+  case TokenType::GreaterEqual:
+  case TokenType::KwIs:
+    return true;
+  default:
+    return false;
+  }
+}
+
+inline int getPrecedence(TokenType T) {
+  switch (T) {
+  case TokenType::Plus:
+  case TokenType::Minus:
+    return 10;
+  case TokenType::Star:
+  case TokenType::Slash:
+    return 20;
+  case TokenType::Equal:
+  case TokenType::PlusEqual:
+  case TokenType::MinusEqual:
+  case TokenType::StarEqual:
+  case TokenType::SlashEqual:
+    return 1; // Assignment
+  case TokenType::DoubleEqual:
+  case TokenType::Neq:
+  case TokenType::Less:
+  case TokenType::Greater:
+  case TokenType::LessEqual:
+  case TokenType::GreaterEqual:
+  case TokenType::KwIs:
+    return 5;
+  case TokenType::And:
+    return 4;
+  case TokenType::Or:
+    return 3;
+  default:
+    return -1;
+  }
+}
+
 } // namespace toka

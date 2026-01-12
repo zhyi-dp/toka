@@ -14,6 +14,7 @@ bool Sema::checkModule(Module &M) {
   registerGlobals(M);
   // 2. Shape Analysis Pass (Safety Enforcement)
   analyzeShapes(M);
+  checkShapeSovereignty();
 
   // 2b. Check function bodies (reordered)
   for (auto &Fn : M.Functions) {
@@ -427,6 +428,48 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
   }
 }
 
+namespace {
+bool allPathsReturn(Stmt *S) {
+  if (!S)
+    return false;
+  if (dynamic_cast<ReturnStmt *>(S))
+    return true;
+  if (auto *B = dynamic_cast<BlockStmt *>(S)) {
+    for (const auto &Sub : B->Statements) {
+      if (allPathsReturn(Sub.get()))
+        return true;
+    }
+    return false;
+  }
+  if (auto *Unsafe = dynamic_cast<UnsafeStmt *>(S)) {
+    return allPathsReturn(Unsafe->Statement.get());
+  }
+  // Expressions wrapped in Stmt
+  if (auto *ES = dynamic_cast<ExprStmt *>(S)) {
+    Expr *E = ES->Expression.get();
+    if (auto *If = dynamic_cast<IfExpr *>(E)) {
+      if (If->Else && allPathsReturn(If->Then.get()) &&
+          allPathsReturn(If->Else.get()))
+        return true;
+      return false;
+    }
+    if (auto *Match = dynamic_cast<MatchExpr *>(E)) {
+      for (const auto &Arm : Match->Arms) {
+        if (!allPathsReturn(Arm->Body.get()))
+          return false;
+      }
+      return true;
+    }
+    if (auto *Loop = dynamic_cast<LoopExpr *>(E)) {
+      if (allPathsReturn(Loop->Body.get()))
+        return true;
+      return false;
+    }
+  }
+  return false;
+}
+} // namespace
+
 void Sema::checkFunction(FunctionDecl *Fn) {
   CurrentFunctionReturnType = Fn->ReturnType;
   enterScope(); // Function scope
@@ -454,12 +497,60 @@ void Sema::checkFunction(FunctionDecl *Fn) {
 
   if (Fn->Body) {
     checkStmt(Fn->Body.get());
-  }
 
-  // TODO: Check if all paths return if return type is not void
+    // Check if all paths return if return type is not void
+    if (Fn->ReturnType != "void") {
+      if (!allPathsReturn(Fn->Body.get())) {
+        error(Fn,
+              "control reaches end of non-void function '" + Fn->Name + "'");
+      }
+    }
+  }
 
   exitScope();
   CurrentFunctionReturnType = "";
+}
+
+void Sema::checkShapeSovereignty() {
+  for (auto const &[name, decl] : ShapeMap) {
+    if (decl->Kind == ShapeKind::Struct) {
+      bool needsDrop = false;
+
+      // Check if Shape manages resources
+      for (auto &memb : decl->Members) {
+        // 1. Raw Pointers (*T)
+        if (memb.HasPointer) {
+          needsDrop = true;
+          break;
+        }
+        // 2. Unique Pointers (^T)
+        if (memb.IsUnique) {
+          needsDrop = true;
+          break;
+        }
+        // 3. Members that need drop (Recursive check)
+        if (m_ShapeProps.count(memb.Type) && m_ShapeProps[memb.Type].HasDrop) {
+          needsDrop = true;
+          break;
+        }
+      }
+
+      if (needsDrop) {
+        // Must have 'drop' method in MethodMap
+        // Check MethodMap[name]["drop"]
+        bool hasDropImpl = false;
+        if (MethodMap.count(name) && MethodMap[name].count("drop")) {
+          hasDropImpl = true;
+        }
+
+        if (!hasDropImpl) {
+          error(decl, "Shape '" + name +
+                          "' manages resources/sovereignty but does not "
+                          "implement 'drop'");
+        }
+      }
+    }
+  }
 }
 
 void Sema::checkStmt(Stmt *S) {
@@ -1359,8 +1450,7 @@ std::string Sema::checkExpr(Expr *E) {
     // Intrinsic: println (Compiler Magic)
     // Avoids strict function lookup and arg checking for this special
     // intrinsic
-    if (CallName == "println" ||
-        CallName.find("::println") != std::string::npos) {
+    if (CallName == "println" || CallName == "std::io::println") {
       if (Call->Args.empty()) {
         error(Call, "println requires at least a format string");
       }

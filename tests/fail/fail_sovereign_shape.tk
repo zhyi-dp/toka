@@ -1,0 +1,9 @@
+shape Resource {
+    ptr: *i32
+}
+
+fn main() -> i32 {
+    let r = Resource { ptr = alloc(4) }
+    // Should fail: Resource has *i32 but no drop impl
+    return 0
+}

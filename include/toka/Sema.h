@@ -112,6 +112,7 @@ private:
   std::map<std::string, ShapeProperties> m_ShapeProps;
 
   void analyzeShapes(Module &M);
+  void checkShapeSovereignty();
   void computeShapeProperties(const std::string &shapeName, Module &M);
 
   bool HasError = false;
