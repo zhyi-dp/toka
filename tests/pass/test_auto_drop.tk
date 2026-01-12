@@ -1,0 +1,27 @@
+
+import std/io
+import core/traits
+
+shape Resource (id: i32)
+
+impl Resource@encap {
+    fn drop(self#) {
+        println("Dropping Resource {}", self.id)
+    }
+}
+
+fn main() -> i32 {
+    println("Start")
+    {
+        auto r1 = Resource(id=1)
+        println("Inside block")
+    }
+    println("After block")
+
+    auto ^p1 = new Resource(id=11)
+    auto ~s1 = new Resource(id=21)
+    
+    auto r2 = Resource(id=2)
+    println("End of main")
+    return 0
+}

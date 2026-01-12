@@ -151,6 +151,11 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
           m_Builder.SetInsertPoint(contBB);
           currBB = contBB;
         }
+      } else if (it->HasDrop && it->Alloca) {
+        llvm::Function *dropFn = m_Module->getFunction(it->DropFunc);
+        if (dropFn) {
+          m_Builder.CreateCall(dropFn, {it->Alloca});
+        }
       }
     }
   }

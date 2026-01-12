@@ -414,6 +414,51 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     }
     m_Builder.CreateStore(initVal, alloca);
   }
+
+  // Automatic Drop Registration
+  if (!m_ScopeStack.empty()) {
+    std::string typeName = m_ValueTypeNames[varName];
+    // Strip pointer/ref if present in name to find base type
+    // e.g. ^String -> String
+    // Actually m_ValueTypeNames usually stores the AST type string.
+    // If empty, try to derive?
+
+    std::string dropFunc = "";
+    bool hasDrop = false;
+
+    if (!typeName.empty()) {
+      // Simple mangling check: Type_encap_drop
+      // Need to strip morphology
+      std::string base = typeName;
+      while (!base.empty() && (base[0] == '^' || base[0] == '*' ||
+                               base[0] == '&' || base[0] == '~'))
+        base = base.substr(1);
+
+      std::string tryName = base + "_encap_drop";
+      if (m_Module->getFunction(tryName)) {
+        hasDrop = true;
+        dropFunc = tryName;
+      } else {
+        std::string altName = "encap_" + base + "_drop";
+        if (m_Module->getFunction(altName)) {
+          hasDrop = true;
+          dropFunc = altName;
+        }
+      }
+    }
+
+    if (!var->IsReference) { // Do not auto-drop references!
+      VariableScopeInfo info;
+      info.Name = varName;
+      info.Alloca = alloca;
+      info.IsUniquePointer = var->IsUnique;
+      info.IsShared = var->IsShared;
+      info.HasDrop = hasDrop;
+      info.DropFunc = dropFunc;
+      m_ScopeStack.back().push_back(info);
+    }
+  }
+
   return nullptr;
 }
 

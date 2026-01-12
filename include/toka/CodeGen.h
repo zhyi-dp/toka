@@ -131,6 +131,8 @@ private:
     llvm::Value *Alloca;
     bool IsUniquePointer; // ^Type
     bool IsShared;        // ~Type
+    bool HasDrop;
+    std::string DropFunc;
   };
   std::vector<std::vector<VariableScopeInfo>> m_ScopeStack;
 

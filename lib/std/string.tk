@@ -4,7 +4,7 @@
 // ==========================================
 
 import core/types::{char,usize,Addr,ADDR0}
-import core/traits::{@encap,@Haha}
+import core/traits::{@encap}
 
 // ------------------------------------------------------
 // 1. External C Interface (libc)
@@ -49,14 +49,6 @@ impl String@encap {
         }
     }
 }
-
-
-impl String@Haha {
-    pub fn haha(self) {
-        println("Haha, I'm String")
-    }
-}
-
 
 // ------------------------------------------------------
 // 3. Implementation
