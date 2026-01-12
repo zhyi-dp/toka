@@ -19,10 +19,12 @@ fn main() -> i32 {
     }
     println("After block")
 
-    auto ^p1 = new Resource(id=11)
+    auto ^#p1 = new Resource(id=11)
     auto ~s1 = new Resource(id=21)
 
-    auto ^p2 = ^p1
+    //auto ^p2 = ^p1
+
+    ^#p1 = new Resource(id=111)
 
     auto ~s2 = ~s1
     

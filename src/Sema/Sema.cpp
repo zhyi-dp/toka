@@ -1002,8 +1002,23 @@ std::string Sema::checkExpr(Expr *E) {
                      Bin->Op == "*=" || Bin->Op == "/=");
 
     if (isAssign) {
-      if (!isRefAssign && !isTypeCompatible(LHS, RHS) && LHS != "unknown" &&
-          RHS != "unknown") {
+      // Allow smart pointer assignment from NewExpr (which returns base type T,
+      // but we treat as adaptable)
+      bool isSmartNew = false;
+      if (dynamic_cast<NewExpr *>(Bin->RHS.get())) {
+        if (LHS.size() > 1 && (LHS[0] == '^' || LHS[0] == '~')) {
+          std::string inner = LHS.substr(1);
+          // Strip attributes
+          while (!inner.empty() && (inner.back() == '!' || inner.back() == '?'))
+            inner.pop_back();
+          if (isTypeCompatible(inner, RHS)) {
+            isSmartNew = true;
+          }
+        }
+      }
+
+      if (!isRefAssign && !isSmartNew && !isTypeCompatible(LHS, RHS) &&
+          LHS != "unknown" && RHS != "unknown") {
         error(Bin, "assignment type mismatch: cannot assign '" + RHS +
                        "' to '" + LHS + "'");
       }
@@ -1058,6 +1073,7 @@ std::string Sema::checkExpr(Expr *E) {
           }
         }
       }
+      return LHS;
     }
 
     // Logic

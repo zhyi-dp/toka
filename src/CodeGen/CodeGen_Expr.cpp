@@ -48,6 +48,128 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
         if (auto *v = dynamic_cast<const VariableExpr *>(unaryLHS->RHS.get())) {
           ptr = getIdentityAddr(v->Name);
           destType = m_Builder.getPtrTy();
+
+          // Auto-Drop Logic on Reassignment
+          // We must find the variable in scope to know if it's Unique/Shared
+          // and has Drop
+          bool found = false;
+          bool isUnique = false;
+          bool isShared = false;
+          bool hasDrop = false;
+          std::string dropFuncName = "";
+
+          for (auto itLayer = m_ScopeStack.rbegin();
+               itLayer != m_ScopeStack.rend(); ++itLayer) {
+            for (auto &sv : *itLayer) {
+              if (sv.Name == v->Name) {
+                isUnique = sv.IsUniquePointer;
+                isShared = sv.IsShared;
+                hasDrop = sv.HasDrop;
+                if (hasDrop && !sv.DropFunc.empty()) {
+                  dropFuncName = sv.DropFunc;
+                }
+                found = true;
+                break;
+              }
+            }
+            if (found)
+              break;
+          }
+
+          if (found && ptr) {
+            if (isUnique) {
+              // Load old pointer
+              llvm::Value *oldPtr = m_Builder.CreateLoad(m_Builder.getPtrTy(),
+                                                         ptr, "old_unique_ptr");
+              llvm::Value *notNull =
+                  m_Builder.CreateIsNotNull(oldPtr, "rebind_unn");
+
+              llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+              llvm::BasicBlock *freeBB =
+                  llvm::BasicBlock::Create(m_Context, "rebind_free", f);
+              llvm::BasicBlock *contBB =
+                  llvm::BasicBlock::Create(m_Context, "rebind_cont", f);
+
+              m_Builder.CreateCondBr(notNull, freeBB, contBB);
+              m_Builder.SetInsertPoint(freeBB);
+
+              if (hasDrop && !dropFuncName.empty()) {
+                llvm::Function *dropFn = m_Module->getFunction(dropFuncName);
+                if (dropFn)
+                  m_Builder.CreateCall(dropFn, {oldPtr});
+              }
+
+              llvm::Function *freeFunc = m_Module->getFunction("free");
+              if (freeFunc) {
+                m_Builder.CreateCall(
+                    freeFunc,
+                    m_Builder.CreateBitCast(
+                        oldPtr, llvm::PointerType::getUnqual(
+                                    llvm::Type::getInt8Ty(m_Context))));
+              }
+              m_Builder.CreateBr(contBB);
+              m_Builder.SetInsertPoint(contBB);
+            } else if (isShared) {
+              // Load old shared struct {data, ref}
+              // ptr is pointer to the struct alloca
+              // We need to know the struct type. It's available from the alloca
+              // usually.
+              if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
+                llvm::Type *shTy = ai->getAllocatedType();
+                llvm::Value *sh =
+                    m_Builder.CreateLoad(shTy, ptr, "old_shared_val");
+                llvm::Value *refPtr =
+                    m_Builder.CreateExtractValue(sh, 1, "old_ref_ptr");
+                llvm::Value *refIsNotNull =
+                    m_Builder.CreateIsNotNull(refPtr, "rebind_sh_nn");
+
+                llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+                llvm::BasicBlock *decBB =
+                    llvm::BasicBlock::Create(m_Context, "rebind_dec", f);
+                llvm::BasicBlock *contBB =
+                    llvm::BasicBlock::Create(m_Context, "rebind_next", f);
+
+                m_Builder.CreateCondBr(refIsNotNull, decBB, contBB);
+                m_Builder.SetInsertPoint(decBB);
+
+                llvm::Value *count = m_Builder.CreateLoad(
+                    llvm::Type::getInt32Ty(m_Context), refPtr);
+                llvm::Value *dec = m_Builder.CreateSub(
+                    count, llvm::ConstantInt::get(
+                               llvm::Type::getInt32Ty(m_Context), 1));
+                m_Builder.CreateStore(dec, refPtr);
+
+                llvm::Value *isZero = m_Builder.CreateICmpEQ(
+                    dec, llvm::ConstantInt::get(
+                             llvm::Type::getInt32Ty(m_Context), 0));
+                llvm::BasicBlock *freeBB =
+                    llvm::BasicBlock::Create(m_Context, "rebind_sh_free", f);
+
+                m_Builder.CreateCondBr(isZero, freeBB, contBB);
+                m_Builder.SetInsertPoint(freeBB);
+
+                llvm::Value *data =
+                    m_Builder.CreateExtractValue(sh, 0, "old_data_ptr");
+                if (hasDrop && !dropFuncName.empty()) {
+                  llvm::Function *dropFn = m_Module->getFunction(dropFuncName);
+                  if (dropFn)
+                    m_Builder.CreateCall(dropFn, {data});
+                }
+
+                llvm::Function *freeFunc = m_Module->getFunction("free");
+                if (freeFunc) {
+                  m_Builder.CreateCall(
+                      freeFunc,
+                      m_Builder.CreateBitCast(data, m_Builder.getPtrTy()));
+                  m_Builder.CreateCall(
+                      freeFunc,
+                      m_Builder.CreateBitCast(refPtr, m_Builder.getPtrTy()));
+                }
+                m_Builder.CreateBr(contBB);
+                m_Builder.SetInsertPoint(contBB);
+              }
+            }
+          }
         }
       }
     }
