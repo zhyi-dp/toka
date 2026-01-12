@@ -11,9 +11,12 @@ Toka eliminates hidden memory states by making properties explicit through ortho
 | Token | Meaning (Value/Content) | Meaning (Identity/Address) |
 | :--- | :--- | :--- |
 | `#` | **Writable**: Can modify fields | **Swappable**: Can point elsewhere |
-| `?` | **Option**: Can be `none` | **Nullable**: Can be `nullptr` |
+| `?` | **Nullable**: Value is `none` | **Nullable**: Identity is `nullptr` |
+| `!` | **Writable & Nullable** | **Swappable & Nullable** |
 | `^` | - | **Unique Pointer** (Ownership) |
 | `~` | - | **Shared Pointer** (Ref Counted) |
+| `&` | **Borrow**: View into Value | **Reference**: View into Soul |
+| `*` | - | **Raw Pointer** (No Ownership) |
 
 **Example:**
 ```scala
