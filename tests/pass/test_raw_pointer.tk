@@ -17,7 +17,7 @@ fn main() -> i32 {
         // 根据 4: 访问必须通过下标，p[0] 代表实体内容
         println("Scalar Value: {} (expected 42)", p[0])
         assert(p[0] == 42, "p[0] mismatch")
-        println("Address: 0x{}", *p as u64)
+        println("Address: {}", *p)
         
         // 根据 7: 手动释放
         free *p

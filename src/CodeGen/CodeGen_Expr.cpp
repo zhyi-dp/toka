@@ -619,7 +619,59 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
   }
 
   if (unary->Op == TokenType::Star) {
-    return emitEntityAddr(unary->RHS.get());
+    llvm::Value *val = emitEntityAddr(unary->RHS.get());
+    std::string typeName = "";
+    if (auto *idxExpr =
+            dynamic_cast<const ArrayIndexExpr *>(unary->RHS.get())) {
+      if (auto *v = dynamic_cast<const VariableExpr *>(idxExpr->Array.get())) {
+        std::string baseName = v->Name;
+        while (!baseName.empty() && (baseName[0] == '*' || baseName[0] == '#' ||
+                                     baseName[0] == '&' || baseName[0] == '^' ||
+                                     baseName[0] == '~' || baseName[0] == '!'))
+          baseName = baseName.substr(1);
+        while (!baseName.empty() &&
+               (baseName.back() == '#' || baseName.back() == '?' ||
+                baseName.back() == '!'))
+          baseName.pop_back();
+
+        if (m_ValueTypeNames.count(baseName)) {
+          std::string T = m_ValueTypeNames[baseName];
+          while (!T.empty() && (T[0] == '*' || T[0] == '^' || T[0] == '&' ||
+                                T[0] == '~' || T[0] == '[')) {
+            if (T[0] == '[') {
+              size_t end = T.find(']');
+              if (end != std::string::npos)
+                T = T.substr(end + 1);
+              else
+                T = T.substr(1);
+            } else {
+              T = T.substr(1);
+            }
+          }
+          typeName = "*" + T;
+        }
+      }
+    }
+
+    if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+      std::string baseName = v->Name;
+      while (!baseName.empty() &&
+             (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
+              baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+        baseName = baseName.substr(1);
+      while (!baseName.empty() &&
+             (baseName.back() == '#' || baseName.back() == '?' ||
+              baseName.back() == '!'))
+        baseName.pop_back();
+      if (m_ValueTypeNames.count(baseName)) {
+        // If variable is 'char', *var is effectively 'char' (or *char depending
+        // on semantics) println allows 'char' or '*char' to print as string
+        typeName = m_ValueTypeNames[baseName];
+      }
+    }
+    // *ptr typically returns the pointer address as R-value, but semantically
+    // it's accessing the value
+    return PhysEntity(val, typeName, val ? val->getType() : nullptr, false);
   }
 
   // Morphology symbols: ^p, ~p
@@ -717,9 +769,12 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
     m_Builder.CreateStore(val, tmp);
     llvm::Value *castPtr =
         m_Builder.CreateBitCast(tmp, llvm::PointerType::getUnqual(targetType));
-    return m_Builder.CreateLoad(targetType, castPtr);
+    // Propagate TargetType as the semantic type name
+    return PhysEntity(m_Builder.CreateLoad(targetType, castPtr),
+                      cast->TargetType, targetType, false);
   }
-  return val;
+  // Propagate TargetType as the semantic type name
+  return PhysEntity(val, cast->TargetType, targetType, false);
 }
 
 PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {

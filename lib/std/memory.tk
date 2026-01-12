@@ -26,9 +26,9 @@ pub fn __toka_alloc(size: usize) -> *void {
 
 pub fn __toka_free(*#ptr: void) {
     unsafe {
-        if *ptr != null {
+        if *ptr != nullptr {
             libc_free(*ptr)
-            *#ptr = null
+            *#ptr = nullptr
         }
     }
 }
@@ -51,8 +51,8 @@ pub fn __toka_time() -> i64 {
     }
 }
 
-pub fn __toka_panic(*message: char) {
-    println("Panic: {}, time: {}", *message, __toka_time())
+pub fn __toka_panic(message: str) {
+    println("Panic: {}, time: {}", message, __toka_time())
     unsafe {
         libc_abort()
     }
@@ -61,6 +61,6 @@ pub fn __toka_panic(*message: char) {
 // TODO: __FILE__ and __LINE__
 pub fn assert(condition: bool, message: str) {
     if !condition {
-        __toka_panic(message as *char)
+        __toka_panic(message)
     }
 }

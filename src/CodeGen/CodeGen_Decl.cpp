@@ -152,9 +152,12 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     varName.pop_back();
 
   llvm::Value *initVal = nullptr;
+  std::string inferredTypeName = "";
   if (var->Init) {
     m_CFStack.push_back({varName, nullptr, nullptr, nullptr});
-    initVal = genExpr(var->Init.get()).load(m_Builder);
+    PhysEntity initEnt = genExpr(var->Init.get());
+    initVal = initEnt.load(m_Builder);
+    inferredTypeName = initEnt.typeName;
     m_CFStack.pop_back();
     if (!initVal)
       return nullptr;
@@ -179,42 +182,58 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     }
     elemTy = resolveType(soulTypeName, false);
   } else if (initVal) {
-    if (auto *ve = dynamic_cast<const VariableExpr *>(var->Init.get())) {
-      elemTy = m_ValueElementTypes[ve->Name];
-    } else if (auto *ae =
-                   dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
-      if (auto *vae = dynamic_cast<const VariableExpr *>(ae->Expression.get()))
-        elemTy = m_ValueElementTypes[vae->Name];
-    } else if (auto *allocExpr =
-                   dynamic_cast<const AllocExpr *>(var->Init.get())) {
-      // auto *p = alloc Point(...) -> elemTy should be Point
-      elemTy = resolveType(allocExpr->TypeName, false);
-    } else if (auto *newExpr = dynamic_cast<const NewExpr *>(var->Init.get())) {
-      elemTy = resolveType(newExpr->Type, false);
-    } else if (auto *cast = dynamic_cast<const CastExpr *>(var->Init.get())) {
-      std::string tn = cast->TargetType;
+    // 1. Prefer Inferred Type from PhysEntity (The "Soul" Type)
+    if (!inferredTypeName.empty()) {
+      std::string tn = inferredTypeName;
+      // Strip morphology to find base element type
       while (!tn.empty() &&
              (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
         tn = tn.substr(1);
       elemTy = resolveType(tn, false);
-    } else if (auto *call = dynamic_cast<const CallExpr *>(var->Init.get())) {
-      std::string retTypeName;
-      if (m_Functions.count(call->Callee)) {
-        retTypeName = m_Functions[call->Callee]->ReturnType;
-      } else if (m_Externs.count(call->Callee)) {
-        retTypeName = m_Externs[call->Callee]->ReturnType;
-      }
+    }
 
-      if (!retTypeName.empty()) {
-        std::string tn = retTypeName;
+    // 2. Fallbacks using AST inspection (Legacy/Redundant if 1 works, but kept
+    // for safety)
+    if (!elemTy) {
+      if (auto *ve = dynamic_cast<const VariableExpr *>(var->Init.get())) {
+        elemTy = m_ValueElementTypes[ve->Name];
+      } else if (auto *ae =
+                     dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
+        if (auto *vae =
+                dynamic_cast<const VariableExpr *>(ae->Expression.get()))
+          elemTy = m_ValueElementTypes[vae->Name];
+      } else if (auto *allocExpr =
+                     dynamic_cast<const AllocExpr *>(var->Init.get())) {
+        // auto *p = alloc Point(...) -> elemTy should be Point
+        elemTy = resolveType(allocExpr->TypeName, false);
+      } else if (auto *newExpr =
+                     dynamic_cast<const NewExpr *>(var->Init.get())) {
+        elemTy = resolveType(newExpr->Type, false);
+      } else if (auto *cast = dynamic_cast<const CastExpr *>(var->Init.get())) {
+        std::string tn = cast->TargetType;
         while (!tn.empty() &&
                (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
           tn = tn.substr(1);
         elemTy = resolveType(tn, false);
+      } else if (auto *call = dynamic_cast<const CallExpr *>(var->Init.get())) {
+        std::string retTypeName;
+        if (m_Functions.count(call->Callee)) {
+          retTypeName = m_Functions[call->Callee]->ReturnType;
+        } else if (m_Externs.count(call->Callee)) {
+          retTypeName = m_Externs[call->Callee]->ReturnType;
+        }
+
+        if (!retTypeName.empty()) {
+          std::string tn = retTypeName;
+          while (!tn.empty() &&
+                 (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
+            tn = tn.substr(1);
+          elemTy = resolveType(tn, false);
+        }
+      } else if (initVal->getType()->isPointerTy()) {
+        // Fallback: use the value type itself as elem
+        elemTy = initVal->getType();
       }
-    } else if (initVal->getType()->isPointerTy()) {
-      // Fallback: use the value type itself as elem
-      elemTy = initVal->getType();
     }
   }
 

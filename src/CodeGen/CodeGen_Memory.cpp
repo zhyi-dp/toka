@@ -54,9 +54,9 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
               << "\n";
   llvm::Value *ptrAddr = nullptr;
   if (auto *unary = dynamic_cast<const UnaryExpr *>(fs->Expression.get())) {
-    if (unary->Op == TokenType::Star) {
-      ptrAddr = emitHandleAddr(unary->RHS.get());
-    }
+    // TokenType::Star is explicitly the Soul (Pointer Value), so we let it fall
+    // through to genAddr which correctly resolves to the Soul address (Heap
+    // Address).
   }
 
   if (!ptrAddr)
