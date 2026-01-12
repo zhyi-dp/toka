@@ -4,6 +4,8 @@ toka.md
 *.log
 *.err
 build/
+build-linux/
+bin/
 # Prerequisites
 *.d
 *_bin
