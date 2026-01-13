@@ -37,8 +37,12 @@ if [ $COMPILE_STATUS -ne 0 ]; then
 fi
 
 echo "  - Running ($LLI)..."
+# Shift to get extra args
+shift
+
+echo "  - Running ($LLI) with args: $@"
 # Run with lli
-"$LLI" "$LL_FILE"
+"$LLI" "$LL_FILE" "$@"
 RUN_STATUS=$?
 
 echo "  - Finished with Exit Code: $RUN_STATUS"

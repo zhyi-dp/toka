@@ -1,0 +1,17 @@
+
+import std/env::{args, get_arg}
+import std/io
+
+fn main() -> i32 {
+    auto c = args()
+    println("Arg count: {}", c)
+    
+    auto i# = 0
+    while i < c {
+        auto s = get_arg(i)
+        println("Arg {}: {}", i, s.c_str())
+        i# = i + 1
+    }
+    
+    return 0
+}

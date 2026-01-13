@@ -1222,9 +1222,12 @@ std::string Sema::checkExpr(Expr *E) {
     }
     // Arithmetic
     if (Bin->Op == "+" || Bin->Op == "-" || Bin->Op == "*" || Bin->Op == "/") {
+      // Explicitly allow 'Addr' and pointer-sized integers to be treated as
+      // flat numbers
       if (LHS != "i32" && LHS != "i64" && LHS != "f32" && LHS != "f64" &&
           LHS != "u32" && LHS != "u64" && LHS != "i8" && LHS != "u8" &&
-          LHS != "i16" && LHS != "u16") {
+          LHS != "i16" && LHS != "u16" && LHS != "Addr" && LHS != "usize" &&
+          LHS != "isize") {
         error(Bin, "operands of '" + Bin->Op + "' must be numeric, got '" +
                        LHS + "'");
       }

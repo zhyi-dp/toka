@@ -1,9 +1,118 @@
 // lib/std/io.tk
-// Standard Input/Output using libc.
-import core/types::char
+import core/types::{char, usize, ADDR0}
+import std/string::{String}
 
-extern fn printf(*s: char, ...) -> i32
-extern fn puts(*s: char) -> i32
+extern fn libc_fopen(*filename: char, *mode: char) -> *void
+extern fn libc_fclose(*stream: void) -> i32
+extern fn libc_fread(*ptr: void, size: usize, nmemb: usize, *stream: void) -> usize
+extern fn libc_fwrite(*ptr: void, size: usize, nmemb: usize, *stream: void) -> usize
+extern fn libc_fseek(*stream: void, offset: i64, whence: i32) -> i32
+extern fn libc_ftell(*stream: void) -> i64
+extern fn libc_rewind(*stream: void) -> void
+extern fn libc_fgetc(*stream: void) -> i32
+extern fn libc_feof(*stream: void) -> i32
+extern fn libc_malloc(size: usize) -> *void
+extern fn libc_free(*ptr: void) -> void
 
-// Intrinsic: handled by compiler magic
+// Intrinsic
 extern fn println(fmt: str, ...) -> void
+
+pub shape File (
+    *handle: void, // FILE*
+    opened: bool
+)
+
+impl File {
+    pub fn open(path: String, mode: String) -> File {
+        unsafe {
+            auto *p = libc_fopen(path.c_str(), mode.c_str())
+            auto valid# = true
+            if *p == (ADDR0 as *void) {
+                valid# = false
+            }
+            return File(
+                *handle = *p,
+                opened = valid
+            )
+        }
+    }
+    
+    pub fn close(self#) {
+        unsafe {
+            if self.opened {
+                libc_fclose(self.*handle)
+                self#.opened = false
+                self#.*handle = ADDR0 as *void
+            }
+        }
+    }
+    
+    pub fn read_to_string(self) -> String {
+        unsafe {
+            if !self.opened { return String::from("") }
+            
+            // Get size
+            libc_fseek(self.*handle, 0, 2) // SEEK_END
+            auto size = libc_ftell(self.*handle)
+            libc_rewind(self.*handle)
+            
+            if size <= 0 { return String::from("") }
+            
+            // Alloc temp buffer using libc_malloc
+            auto *buf# = libc_malloc((size + 1) as usize) as *char
+            
+            // Read
+            auto count = libc_fread(*buf as *void, 1, size as usize, self.*handle)
+            buf#[count] = 0 as char
+            
+            // Make String (copies data)
+            auto s = String::from_with_len(*buf, count as i32)
+            
+            // Free temp
+            libc_free(*buf as *void)
+            
+            return s
+        }
+    }
+    
+    pub fn write(self, s: String) -> usize {
+        unsafe {
+            if !self.opened { return 0 as usize }
+            return libc_fwrite(s.c_str() as *void, 1, s.len() as usize, self.*handle)
+        }
+    }
+    pub fn is_eof(self) -> bool {
+        unsafe {
+            if !self.opened { return true }
+            return libc_feof(self.*handle) != 0
+        }
+    }
+
+    pub fn read_line(self) -> String {
+        unsafe {
+            if !self.opened { return String::from("") }
+            
+            auto s = String::from("")
+            // Loop char by char
+            // TODO: optimize with buffering later if needed
+            
+            // We use an infinite loop and break
+            auto done# = false
+            while !done {
+                auto c = libc_fgetc(self.*handle)
+                
+                if c == -1 { // EOF
+                    done# = true
+                } else {
+                    auto ch = c as char
+                    s.push_char(ch)
+                    if ch == 10 as char { // \n
+                        done# = true
+                    }
+                }
+            }
+            
+            return s
+        }
+    }
+}
