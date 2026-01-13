@@ -1,0 +1,15 @@
+shape Point (x: i32, y: i32)
+
+fn main() {
+    // 1. Unknown field
+    auto p1 = Point(z = 10, y = 20)
+
+    // 2. Type mismatch
+    auto p2 = Point(x = "hello", y = 20)
+
+    // 3. Missing field
+    auto p3 = Point(x = 10)
+
+    // 4. Duplicate field
+    auto p4 = Point(x = 10, y = 20, x = 30)
+}

@@ -29,17 +29,17 @@ fn main() -> i32 {
     }
     println("After block")
 
-    auto ^#p1 = new Resource(id=11)
-    auto ~s1 = new Resource(id=21)
+    auto ^#p1 = new Resource(id=11, point=Point(x=1,y=2))
+    auto ~s1 = new Resource(id=21, point=Point(x=1,y=2))
 
     //auto ^p2 = ^p1
     println("will rebind ^#p1")
-    ^#p1 = new Resource(id=111)
+    ^#p1 = new Resource(id=111, point=Point(x=1,y=2))
     println("after rebind ^#p1")
 
     auto ~s2 = ~s1
     
-    auto r2 = Resource(id=2)
+    auto r2 = Resource(id=22, point=Point(x=1,y=2))
     println("End of main")
     return 0
 }

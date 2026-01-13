@@ -1760,6 +1760,7 @@ std::string Sema::checkExpr(Expr *E) {
       ShapeDecl *sh = Sh;
       if (sh->Kind == ShapeKind::Struct || sh->Kind == ShapeKind::Tuple) {
         // Validate arguments
+        std::set<std::string> providedFields;
         // We allow named args matching fields, or positional args if Tuple.
         // Or mixed? Toka seems to use named for internal fields.
 
@@ -1819,30 +1820,19 @@ std::string Sema::checkExpr(Expr *E) {
             // Only valid for Tuples or if we decide to support positional
             // struct init
             if (sh->Kind == ShapeKind::Struct) {
-              // Actually, let's strictly require named args for Structs for
-              // now to match user expectation, OR check if user intends
-              // positional. test_shape_match.tk: Point(u8, u8...) uses
-              // positional? shape Point(u8, u8, u8, u8) is Tuple-like struct?
-              // If members are named "0", "1", etc. it is Tuple.
-              // If named, it is Struct.
-              // Parser sets Kind=Struct if it sees 'name :'.
-              // Parser sets Kind=Tuple if it sees comma separated types?
-              // Let's assume purely positional for Struct is risky unless
-              // defined order. But wait, test_shape_match.tk uses
-              // `RawBytes[1, 2, 3, 4]`. That's ArrayIndexExpr, not CallExpr.
-              // But `shape Point(u8, ....)` -> `auto p = Point(1, 2, 3, 4)` ?
-              // User changed `struct Point {x,y,z}` to `shape
-              // Point(x:i32...)`. They used `Point(x=1...)`. This is named.
-
-              // If Positional passed to Struct with named fields:
+              // Positional for struct
               if (argIdx < sh->Members.size()) {
-                // Allow positional for struct too?
-                // For now, assume yes if no name provided.
+                std::string fname = sh->Members[argIdx].Name;
+                if (providedFields.count(fname)) {
+                  error(arg.get(),
+                        "Duplicate initialization of field '" + fname + "'");
+                }
+                providedFields.insert(fname);
+
                 std::string valType = checkExpr(valueExpr);
                 if (!isTypeCompatible(sh->Members[argIdx].Type, valType)) {
-                  error(valueExpr, "Field '" + sh->Members[argIdx].Name +
-                                       "' (arg " + std::to_string(argIdx) +
-                                       ") expects '" +
+                  error(valueExpr, "Field '" + fname + "' (arg " +
+                                       std::to_string(argIdx) + ") expects '" +
                                        sh->Members[argIdx].Type + "', got '" +
                                        valType + "'");
                 }
@@ -1860,9 +1850,29 @@ std::string Sema::checkExpr(Expr *E) {
                 }
               }
             }
+          } // End positional
+
+          if (isNamed) {
+            if (providedFields.count(fieldName)) {
+              error(arg.get(),
+                    "Duplicate initialization of field '" + fieldName + "'");
+            }
+            providedFields.insert(fieldName);
           }
+
           argIdx++;
         }
+
+        // Missing fields check for Structs
+        if (sh->Kind == ShapeKind::Struct) {
+          for (const auto &mem : sh->Members) {
+            if (!providedFields.count(mem.Name)) {
+              error(Call, "Missing field '" + mem.Name +
+                              "' in initialization of '" + Call->Callee + "'");
+            }
+          }
+        }
+
         return Call->Callee;
       }
     }
@@ -2014,8 +2024,45 @@ std::string Sema::checkExpr(Expr *E) {
       }
 
       // Check fields exist and types match
-      // Simplified check: just return the name
-      // TODO: Check fields
+      std::set<std::string> providedFields;
+      for (const auto &pair : Init->Members) {
+        if (providedFields.count(pair.first)) {
+          error(Init, "Duplicate field '" + pair.first +
+                          "' in struct initialization");
+        }
+        providedFields.insert(pair.first);
+
+        bool fieldFound = false;
+        std::string expectedType;
+        for (const auto &defField : SD->Members) {
+          if (defField.Name == pair.first) {
+            fieldFound = true;
+            expectedType = defField.Type;
+            break;
+          }
+        }
+
+        if (!fieldFound) {
+          error(Init, "Shape '" + Init->ShapeName + "' has no field named '" +
+                          pair.first + "'");
+          continue; // Continue to find more errors
+        }
+
+        std::string exprType = checkExpr(pair.second.get());
+        if (!isTypeCompatible(expectedType, exprType)) {
+          error(Init, "Field '" + pair.first + "' expects type '" +
+                          expectedType + "', got '" + exprType + "'");
+        }
+      }
+
+      // Check for missing fields
+      for (const auto &defField : SD->Members) {
+        // If field is NOT in providedFields
+        if (!providedFields.count(defField.Name)) {
+          error(Init, "Missing field '" + defField.Name +
+                          "' in initialization of '" + Init->ShapeName + "'");
+        }
+      }
     } else {
       error(Init, "unknown struct '" + Init->ShapeName + "'");
     }
