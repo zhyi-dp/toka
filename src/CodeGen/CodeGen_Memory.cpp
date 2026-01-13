@@ -445,7 +445,8 @@ llvm::Value *CodeGen::getEntityAddr(const std::string &name) {
   std::string baseName = name;
   while (!baseName.empty() &&
          (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
-          baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+          baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!' ||
+          baseName[0] == '?'))
     baseName = baseName.substr(1);
   while (!baseName.empty() &&
          (baseName.back() == '#' || baseName.back() == '?' ||
@@ -494,7 +495,8 @@ llvm::Value *CodeGen::getIdentityAddr(const std::string &name) {
   std::string baseName = name;
   while (!baseName.empty() &&
          (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
-          baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+          baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!' ||
+          baseName[0] == '?'))
     baseName = baseName.substr(1);
   while (!baseName.empty() &&
          (baseName.back() == '#' || baseName.back() == '?' ||

@@ -17,7 +17,7 @@ fn main() -> i32 {
         assert(false, "p is nullptr (Logic should not reach here)")
     }
 
-    auto ^?q# = nullptr
+    auto ^?q:Data = nullptr
     if ^?q is nullptr {
         println("Success: q confirmed nullptr\n")
         assert(true, "q confirmed nullptr logic executed")

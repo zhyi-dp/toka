@@ -10,6 +10,7 @@ namespace toka {
 PhysEntity CodeGen::genExpr(const Expr *expr) {
   if (!expr)
     return {};
+
   if (m_Builder.GetInsertBlock() && m_Builder.GetInsertBlock()->getTerminator())
     return {};
 

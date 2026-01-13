@@ -799,31 +799,41 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
   // Morphology symbols: ^p, ~p
   if (unary->Op == TokenType::Caret) {
     if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-      llvm::Value *alloca = getIdentityAddr(v->Name);
-      if (alloca) {
-        // Get the base name (no morphology) for symbol lookup
-        std::string baseName = v->Name;
-        while (!baseName.empty() &&
-               (baseName[0] == '*' || baseName[0] == '#' ||
-                baseName[0] == '&' || baseName[0] == '^' || baseName[0] == '~'))
-          baseName = baseName.substr(1);
-        while (!baseName.empty() &&
-               (baseName.back() == '#' || baseName.back() == '?' ||
-                baseName.back() == '!'))
-          baseName.pop_back();
+      std::string vName = v->Name;
+      // Strip morphology just in case
+      while (!vName.empty() && (vName.back() == '?' || vName.back() == '!'))
+        vName.pop_back();
 
-        if (m_Symbols.count(baseName)) {
-          TokaSymbol &sym = m_Symbols[baseName];
-          llvm::Value *val = m_Builder.CreateLoad(m_Builder.getPtrTy(), alloca,
-                                                  v->Name + ".move");
-          // Move Semantics: Null out the source (Destructive Move)
-          m_Builder.CreateStore(
-              llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), alloca);
-          return val;
-        }
+      // std::cerr << "DEBUG: genUnaryExpr Caret Var=" << vName << "\n";
+      llvm::Value *alloca = getIdentityAddr(vName);
+
+      if (alloca) {
+        // Identity Found! Load the pointer value (The Soul)
+        llvm::Value *val =
+            m_Builder.CreateLoad(m_Builder.getPtrTy(), alloca, vName + ".move");
+
+        // Move Semantics: Null out the source (Destructive Move)
+        // Only if it is NOT a reference and IS a unique pointer (checked via
+        // Symbol Table ideally)
+        bool isUnique = false;
+        if (m_Symbols.count(vName))
+          isUnique = m_Symbols[vName].morphology == Morphology::Unique;
+
+        // Optimize: If it is indeed a unique pointer, we must null it out.
+        // For raw pointers using ^, we also allow it as "Move Pointer".
+        m_Builder.CreateStore(
+            llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), alloca);
+
+        return val;
+      } else {
+        // Fallback: If identity not found (e.g. global?), try standard genExpr
+        // This handles cases where 'v' might not be a simple local variable
+        PhysEntity ent = genExpr(unary->RHS.get());
+        return ent.load(m_Builder);
       }
     }
-    return genExpr(unary->RHS.get());
+    // Non-variable case (e.g. ^(expression))
+    return genExpr(unary->RHS.get()).load(m_Builder);
   }
   if (unary->Op == TokenType::Tilde) {
     if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
@@ -1830,13 +1840,20 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
     bool isCaptured = false;
 
     if (funcDecl && i < funcDecl->Args.size()) {
-      llvm::Type *logicalTy = resolveType(funcDecl->Args[i].Type, false);
-      if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
-        isCaptured = true;
+      const auto &arg = funcDecl->Args[i];
+      // Only capture if it's a Value Type (Struct/Array) AND NOT a Pointer
+      if (!arg.HasPointer && !arg.IsUnique && !arg.IsShared) {
+        llvm::Type *logicalTy = resolveType(arg.Type, false);
+        if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
+          isCaptured = true;
+      }
     } else if (extDecl && i < extDecl->Args.size()) {
-      llvm::Type *logicalTy = resolveType(extDecl->Args[i].Type, false);
-      if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
-        isCaptured = true;
+      const auto &arg = extDecl->Args[i];
+      if (!arg.HasPointer) {
+        llvm::Type *logicalTy = resolveType(arg.Type, false);
+        if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
+          isCaptured = true;
+      }
     }
 
     if (isCaptured || isRef) {

@@ -610,6 +610,13 @@ void Sema::checkStmt(Stmt *S) {
         // If the variable declaration HAS morphology, and the initializer
         // ALSO has it, we must strip it from the inferred type to avoid
         // redundancy (e.g. *i32 -> i32)
+        if (Inferred == "nullptr" && Var->TypeName.empty()) {
+          error(Var, "Cannot infer type from 'nullptr'. Explicit type "
+                     "annotation required (e.g., 'auto *p: Data = nullptr').");
+          Var->TypeName = "unknown";
+          return;
+        }
+
         if (Var->HasPointer || Var->IsUnique || Var->IsShared ||
             Var->IsReference) {
           if (!Inferred.empty() && (Inferred[0] == '*' || Inferred[0] == '^' ||
@@ -787,6 +794,32 @@ static bool isLValue(const Expr *expr) {
       return true;
   }
   return false;
+}
+
+// [Sema.cpp]
+// 语义合成器：从 "变量形态(Flags)" 和 "灵魂类型(Type)" 合成完整的物理签名
+// 用于在函数调用检查时，生成期望的参数类型字符串
+static std::string synthesizePhysicalType(const FunctionDecl::Arg &Arg) {
+  std::string Signature = "";
+
+  // 1. 读取变量名上的形态符号 (Morphology on Variable Name)
+  if (Arg.IsUnique) {
+    Signature += "^"; // 对应代码中的 ^ptr
+  } else if (Arg.IsShared) {
+    Signature += "~"; // 对应代码中的 ~ptr
+  } else if (Arg.HasPointer) {
+    Signature += "*"; // 对应代码中的 *ptr
+  }
+
+  // 2. 读取变量名上的可空/绑定符号
+  if (Arg.IsPointerNullable) {
+    Signature += "?"; // 对应代码中的 ?ptr
+  }
+
+  // 3. 拼接灵魂类型 (Soul Type)
+  Signature += Arg.Type; // 对应代码中的 : Data
+
+  return Signature;
 }
 
 std::string Sema::checkExpr(Expr *E) {
@@ -1654,11 +1687,17 @@ std::string Sema::checkExpr(Expr *E) {
             }
           }
 
-          std::string ExpectedTy = Fn->Args[i].Type;
+          // The Fix: Directly reconstruct the full physical type from the
+          // function signature
+          // The Fix: Directly synthesize the full physical type from the
+          // function signature We combine the Variable's Morphology (Flags)
+          // with the Type's Soul to create a complete physical signature.
+          std::string ExpectedTy = synthesizePhysicalType(Fn->Args[i]);
 
-          // Physical Link Check: If parameter is a Shape (Struct), it requires
-          // address passing. If CodeGen doesn't support materialization, we
-          // MUST force L-Value. Check if ExpectedTy is a known Shape/Struct
+          // Legacy R-Value Struct Check (Only if strictly by value)
+          // We can check if the RECONSTRUCTED type matches a shape name
+          // precisely. If it has pointers ^, *, ~, it won't match ShapeMap, so
+          // this check will correctly skip for pointers.
           bool isStruct = false;
           // We can check if it exists in ShapeMap (need access to Sema
           // instance? No, this is inside Sema method)
@@ -1673,10 +1712,6 @@ std::string Sema::checkExpr(Expr *E) {
                   "cannot pass R-Value struct to parameter '" +
                       Fn->Args[i].Name +
                       "' (temporary materialization not supported)");
-          }
-
-          if (Fn->Args[i].HasPointer) {
-            ExpectedTy = "*" + ExpectedTy;
           }
 
           if (!isTypeCompatible(ExpectedTy, ArgType)) {
@@ -2364,6 +2399,12 @@ bool Sema::isTypeCompatible(const std::string &Target,
 
     if (SIsNullable && !TIsNullable)
       return false;
+
+    // Special Case: If SBase is "nullptr", it means we have a pointer to
+    // null/void (e.g. *?nullptr), which should be compatible with any other
+    // pointer type TBase (e.g. *?Data), provided nullability checks passed.
+    if (SBase == "nullptr")
+      return true;
 
     return isTypeCompatible(TBase, SBase);
   }

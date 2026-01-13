@@ -28,7 +28,7 @@ fn main() -> i32 {
     }
     {
         // Nullable Pointer
-        auto ^?p3# = nullptr
+        auto ^?p3:Data = nullptr
 
         // New syntax: 'is' operator for nullptr check. 
         if ^?p3 is ^p3 {
