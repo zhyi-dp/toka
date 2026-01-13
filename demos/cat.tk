@@ -1,0 +1,45 @@
+import std/env::{args, get_arg}
+import std/io::{File, println}
+import std/string::{String}
+
+pub fn main() -> i32 {
+    auto count = args()
+    
+    if count < 2 {
+        println("Usage: cat <file1> <file2> ...")
+        return 0
+    }
+
+    auto i# = 1
+    while i < count {
+        auto filename = get_arg(i)
+        
+        // Handle lli artifact: Skip if filename ends with ".ll"
+        // Since we don't have ends_with, and we know lli puts it at index 1 usually
+        // We will just try to read. But to avoid crash we deeply copy both args.
+        
+        // Also simple heuristic skip logic could be added here if needed, 
+        // but for now let's just make it crash-proof memory-wise.
+        
+        // Pass a copy of the filename string to open, because open takes ownership
+        auto file_path = String::from(filename.c_str())
+        
+        // Pass a proper String object for mode "r"
+        auto val_r = String::from("r")
+        
+        auto file = File::open(file_path, val_r)
+        
+        if file.opened {
+            auto content = file.read_to_string()
+            println("{}", content)
+            file.close()
+        } else {
+            // println("Error: Could not open file '{}'", filename)
+        }
+        
+        // filename is dropped here.
+        i# = i + 1
+    }
+
+    return 0
+}

@@ -9,7 +9,7 @@ SCRIPT_DIR="$(dirname "$0")"
 # Try to resolve project root based on script location (assuming tool/ is one level deep)
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TOKAC="$PROJECT_ROOT/build/src/tokac"
-CLANG="clang"
+CLANG="xcrun clang"
 
 # Default to "tokac" in PATH if build version not found
 if [ ! -f "$TOKAC" ]; then
@@ -60,10 +60,25 @@ if [ $COMPILE_STATUS -ne 0 ]; then
     exit 1
 fi
 
+# Determine macOS SDK Path for correct linking
+SDK_PATH=$(xcrun --show-sdk-path 2>/dev/null)
+if [ -z "$SDK_PATH" ]; then
+    echo "Warning: xcrun failed to find SDK path."
+    # Fallback if xcrun fails
+    SDK_PATH="/"
+else
+    echo "[tokac.sh] Using SDK Path: $SDK_PATH"
+fi
+
 # Step 2: Link to Binary
 echo "[tokac.sh] Linking to binary $OUTPUT_BIN..."
-# -Wno-override-module suppresses warnings about ModuleID mismatch if any
-"$CLANG" "$LL_FILE" -o "$OUTPUT_BIN" -Wno-override-module -lm
+# Step 2: Link to Binary
+echo "[tokac.sh] Linking to binary $OUTPUT_BIN..."
+# xcrun clang handles sysroot automatically usually, but we keep SDK_PATH just in case if explicit is needed.
+# However, usually just xcrun clang is enough. Let's try to remove manual sysroot first if we use xcrun.
+CMD="$CLANG $LL_FILE -o $OUTPUT_BIN -Wno-override-module"
+echo "[tokac.sh] Running: $CMD"
+$CMD
 
 LINK_STATUS=$?
 if [ $LINK_STATUS -eq 0 ]; then
