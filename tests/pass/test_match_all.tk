@@ -1,0 +1,23 @@
+import std/io::println
+
+fn main() -> i32 {
+    for auto x in [10,20,30] {
+        println("x={}", x)
+        match x {
+            10 => {println("Matched 10")}
+            20 => {println("Matched 20")}
+            _ => {println("Wildcard")}
+        }
+    }
+
+    for auto x in [40,50,80,100] {
+        match x {
+            50 => {println("No match")}
+            auto v if v > 80 => {println("Matched variable x={} > 80", v)}
+            auto v => {println("Matched variable v={}", v)}
+        }
+    }
+
+    println("End")
+    return 0
+}

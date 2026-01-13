@@ -17,8 +17,19 @@ fn main() -> i32 {
     }
 
     // Range loop
+    i# = 0
     for auto x in [0,1,2] {
+        if i == 0 {
+            assert(x == 0, "x mismatch")
+        }
+        if i == 1 {
+            assert(x == 1, "x mismatch")
+        }
+        if i == 2 {
+            assert(x == 2, "x mismatch")
+        }
         println("for range: {}", x)
+        i# += 1
     }
 
     // Loop as expression with yield

@@ -1116,9 +1116,66 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
         !m_Builder.GetInsertBlock()->getTerminator())
       m_Builder.CreateBr(mergeBB);
   } else {
-    // General pattern matching (Sequence of Ifs) - simplified
+    // General pattern matching (Sequence of Ifs)
     for (const auto &arm : expr->Arms) {
-      // TODO: Implement general pattern matching logic
+      llvm::BasicBlock *armBB =
+          llvm::BasicBlock::Create(m_Context, "match_arm", func);
+      llvm::BasicBlock *nextArmBB =
+          llvm::BasicBlock::Create(m_Context, "match_next", func);
+
+      // 1. Check Pattern
+      llvm::Value *cond = nullptr;
+      if (arm->Pat->PatternKind == MatchArm::Pattern::Literal) {
+        cond = m_Builder.CreateICmpEQ(targetVal,
+                                      m_Builder.getInt32(arm->Pat->LiteralVal));
+      } else if (arm->Pat->PatternKind == MatchArm::Pattern::Wildcard ||
+                 arm->Pat->PatternKind == MatchArm::Pattern::Variable) {
+        cond = m_Builder.getInt1(true);
+      } else {
+        cond = m_Builder.getInt1(false);
+      }
+
+      // 2. Branch to guard-check, arm or next
+      if (arm->Guard) {
+        llvm::BasicBlock *guardBB =
+            llvm::BasicBlock::Create(m_Context, "match_guard", func);
+        m_Builder.CreateCondBr(cond, guardBB, nextArmBB);
+        m_Builder.SetInsertPoint(guardBB);
+
+        // For guard check, we might need variable bindings if it's a variable
+        // pattern
+        m_ScopeStack.push_back({});
+        if (arm->Pat->PatternKind == MatchArm::Pattern::Variable) {
+          genPatternBinding(arm->Pat.get(), targetAddr, targetType);
+        }
+
+        PhysEntity guardVal_ent = genExpr(arm->Guard.get()).load(m_Builder);
+        llvm::Value *guardVal = guardVal_ent.load(m_Builder);
+
+        m_Builder.CreateCondBr(guardVal, armBB, nextArmBB);
+        m_ScopeStack.pop_back(); // Clean up guard scope
+      } else {
+        m_Builder.CreateCondBr(cond, armBB, nextArmBB);
+      }
+
+      // 3. ARM Body
+      m_Builder.SetInsertPoint(armBB);
+      m_ScopeStack.push_back({});
+      if (arm->Pat->PatternKind == MatchArm::Pattern::Variable) {
+        genPatternBinding(arm->Pat.get(), targetAddr, targetType);
+      }
+
+      m_CFStack.push_back(
+          {"", mergeBB, nullptr, resultAddr, m_ScopeStack.size()});
+      genStmt(arm->Body.get());
+      m_CFStack.pop_back();
+
+      m_ScopeStack.pop_back();
+      if (m_Builder.GetInsertBlock() &&
+          !m_Builder.GetInsertBlock()->getTerminator())
+        m_Builder.CreateBr(mergeBB);
+
+      m_Builder.SetInsertPoint(nextArmBB);
     }
     m_Builder.CreateBr(mergeBB);
   }
@@ -1308,35 +1365,99 @@ PhysEntity CodeGen::genForExpr(const ForExpr *fe) {
   llvm::Value *currIdx = m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context),
                                               idxAlloca, "curr_idx");
   llvm::Value *limit = nullptr;
-  if (collVal->getType()->isArrayTy()) {
-    limit = llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context),
-                                   collVal->getType()->getArrayNumElements());
-  } else {
-    // TODO: handle dynamic slices/vectors
-    limit = llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 10);
+
+  // 1. Array Size Detection via Semantic Type
+  std::string typeStr = collVal_ent.typeName;
+  bool foundSize = false;
+  if (typeStr.size() > 1 && typeStr[0] == '[') {
+    size_t lastSemi = typeStr.find_last_of(';');
+    if (lastSemi != std::string::npos) {
+      std::string countStr =
+          typeStr.substr(lastSemi + 1, typeStr.size() - lastSemi - 2);
+      try {
+        uint64_t n = std::stoull(countStr);
+        limit = llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), n);
+        foundSize = true;
+      } catch (...) {
+      }
+    }
   }
+
+  if (!foundSize) {
+    if (collVal->getType()->isArrayTy()) {
+      limit = llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context),
+                                     collVal->getType()->getArrayNumElements());
+    } else {
+      // Fallback to hardcoded 10 for pointers if unknown
+      limit = llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 10);
+    }
+  }
+
   llvm::Value *cond = m_Builder.CreateICmpULT(currIdx, limit, "forcond");
   m_Builder.CreateCondBr(cond, loopBB, elseBB);
 
   loopBB->insertInto(f);
   m_Builder.SetInsertPoint(loopBB);
 
-  // Define loop variable
+  // Define loop variable scope
   m_ScopeStack.push_back({});
-  llvm::Type *elemTy = collVal->getType()->isArrayTy()
-                           ? collVal->getType()->getArrayElementType()
-                           : llvm::Type::getInt32Ty(m_Context);
+
+  // 2. Determine Element Type
+  llvm::Type *elemTy = nullptr;
+  if (collVal->getType()->isArrayTy()) {
+    elemTy = collVal->getType()->getArrayElementType();
+  } else if (collVal->getType()->isPointerTy()) {
+    // Use semantic type to resolve element type because of opaque pointers
+    std::string collTypeName = collVal_ent.typeName;
+    if (collTypeName.size() > 1) {
+      if (collTypeName[0] == '[') {
+        size_t lastSemi = collTypeName.find_last_of(';');
+        if (lastSemi != std::string::npos) {
+          std::string inner = collTypeName.substr(1, lastSemi - 1);
+          elemTy = resolveType(inner, false);
+        }
+      } else if (collTypeName[0] == '*' || collTypeName[0] == '^' ||
+                 collTypeName[0] == '&' || collTypeName[0] == '~') {
+        size_t offset = 1;
+        if (collTypeName.length() > 1 &&
+            (collTypeName[1] == '?' || collTypeName[1] == '#' ||
+             collTypeName[1] == '!'))
+          offset++;
+        elemTy = resolveType(collTypeName.substr(offset), false);
+      }
+    }
+    if (!elemTy)
+      elemTy = llvm::Type::getInt32Ty(m_Context);
+  } else {
+    elemTy = llvm::Type::getInt32Ty(m_Context);
+  }
+
+  // 3. Obtain Element Pointer
   llvm::Value *elemPtr = nullptr;
   if (collVal->getType()->isPointerTy()) {
-    elemPtr = m_Builder.CreateGEP(elemTy, collVal, {currIdx});
+    std::string collTypeName = collVal_ent.typeName;
+    if (collTypeName.size() > 0 && collTypeName[0] == '[') {
+      // Pointer to array literal or alloca'd array
+      llvm::Type *arrTy = resolveType(collTypeName, false);
+      elemPtr = m_Builder.CreateGEP(
+          arrTy, collVal,
+          {llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0),
+           currIdx});
+    } else {
+      // Raw pointer iteration
+      elemPtr = m_Builder.CreateGEP(elemTy, collVal, {currIdx});
+    }
   } else {
-    llvm::Value *allocaColl = m_Builder.CreateAlloca(collVal->getType());
+    // Array R-Value (LLVM Array)
+    llvm::Value *allocaColl =
+        m_Builder.CreateAlloca(collVal->getType(), nullptr, "for_arr_tmp");
     m_Builder.CreateStore(collVal, allocaColl);
     elemPtr = m_Builder.CreateGEP(
         collVal->getType(), allocaColl,
         {llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0),
          currIdx});
   }
+
   std::string vName = fe->VarName;
   while (!vName.empty() &&
          (vName[0] == '*' || vName[0] == '#' || vName[0] == '&' ||
@@ -1346,13 +1467,23 @@ PhysEntity CodeGen::genForExpr(const ForExpr *fe) {
          (vName.back() == '#' || vName.back() == '?' || vName.back() == '!'))
     vName.pop_back();
 
+  // 4. Load and Store into Loop Variable
   llvm::Value *elem = m_Builder.CreateLoad(elemTy, elemPtr, vName);
   llvm::AllocaInst *vAlloca =
       m_Builder.CreateAlloca(elem->getType(), nullptr, vName);
   m_Builder.CreateStore(elem, vAlloca);
+
+  // Register in legacy and new symbol tables
   m_NamedValues[vName] = vAlloca;
   m_ValueTypes[vName] = elem->getType();
-  m_ValueElementTypes[vName] = elemTy; // Store elem type for reference
+  m_ValueElementTypes[vName] = elemTy;
+
+  TokaSymbol sym;
+  sym.allocaPtr = vAlloca;
+  fillSymbolMetadata(sym, "", false, false, false, false, false, false,
+                     elem->getType());
+  sym.soulType = elem->getType();
+  m_Symbols[vName] = sym;
 
   std::string myLabel = "";
   if (!m_CFStack.empty() && m_CFStack.back().BreakTarget == nullptr)
@@ -2226,8 +2357,18 @@ PhysEntity CodeGen::genArrayExpr(const ArrayExpr *expr) {
   llvm::Type *elemTy = values[0]->getType();
   llvm::ArrayType *arrTy = llvm::ArrayType::get(elemTy, values.size());
 
+  std::string elemTypeName = "i32"; // default
+  if (!values.empty()) {
+    if (m_TypeToName.count(elemTy)) {
+      elemTypeName = m_TypeToName[elemTy];
+    }
+  }
+  std::string arrayTypeName =
+      "[" + elemTypeName + "; " + std::to_string(values.size()) + "]";
+
   if (allConst) {
-    return llvm::ConstantArray::get(arrTy, consts);
+    return PhysEntity(llvm::ConstantArray::get(arrTy, consts), arrayTypeName,
+                      arrTy, false);
   }
 
   llvm::Value *val = llvm::UndefValue::get(arrTy);
@@ -2242,7 +2383,7 @@ PhysEntity CodeGen::genArrayExpr(const ArrayExpr *expr) {
     }
     val = m_Builder.CreateInsertValue(val, elt, i);
   }
-  return val;
+  return PhysEntity(val, arrayTypeName, arrTy, false);
 }
 
 PhysEntity CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
