@@ -290,10 +290,19 @@ public:
   }
 };
 
+class FunctionDecl;
+class ExternDecl;
+class ShapeDecl;
+
 class CallExpr : public Expr {
 public:
   std::string Callee;
   std::vector<std::unique_ptr<Expr>> Args;
+
+  // Semantic Resolution Cache
+  FunctionDecl *ResolvedFn = nullptr;
+  ExternDecl *ResolvedExtern = nullptr;
+  ShapeDecl *ResolvedShape = nullptr;
 
   CallExpr(const std::string &callee, std::vector<std::unique_ptr<Expr>> args)
       : Callee(callee), Args(std::move(args)) {}

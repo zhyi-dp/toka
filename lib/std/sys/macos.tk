@@ -1,0 +1,42 @@
+import core/types::{char, usize, Addr}
+import std/string::{String}
+
+// macOS specific argument retrieval externs.
+// _NSGetArgc returns a pointer (*i32) to the integer count of arguments.
+extern fn _NSGetArgc() -> *i32
+
+// _NSGetArgv returns a pointer to the global 'argv' variable.
+// Because Toka does not support triple pointers (***char), we treat the
+// 'argv' variable as a memory slot containing an Addr (the array base).
+extern fn _NSGetArgv() -> *Addr 
+
+/**
+ * Returns the number of command-line arguments.
+ * macOS implementation using _NSGetArgc.
+ */
+pub fn args_impl() -> i32 {
+    unsafe {
+        auto *argc = _NSGetArgc()
+        return argc 
+    }
+}
+
+/**
+ * Retrieves a specific command-line argument by index.
+ * macOS implementation using _NSGetArgv and manual pointer arithmetic.
+ */
+pub fn get_arg_impl(i: i32) -> String {
+    unsafe {
+        auto *handle_ptr = _NSGetArgv()
+        auto handle_addr = *handle_ptr as Addr
+        auto *p_argv_base = handle_addr as *Addr
+        auto argv_array_base = p_argv_base as Addr
+        
+        auto slot_addr = argv_array_base + i * 8
+        auto *p_str = slot_addr as *Addr
+        auto str_addr = p_str as Addr
+        auto *final_ptr = str_addr as *char
+        
+        return String::from(*final_ptr)
+    }
+}

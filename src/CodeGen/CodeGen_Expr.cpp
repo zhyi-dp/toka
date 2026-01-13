@@ -1472,12 +1472,18 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
   }
 
   // Check if it is a Shape/Struct Constructor
-  if (m_Shapes.count(call->Callee)) {
-    const ShapeDecl *sh = m_Shapes[call->Callee];
+  const ShapeDecl *sh = nullptr;
+  if (call->ResolvedShape) {
+    sh = call->ResolvedShape;
+  } else if (m_Shapes.count(call->Callee)) {
+    sh = m_Shapes[call->Callee];
+  }
+
+  if (sh) {
     if (sh->Kind == ShapeKind::Struct || sh->Kind == ShapeKind::Tuple) {
-      llvm::StructType *st = m_StructTypes[call->Callee];
+      llvm::StructType *st = m_StructTypes[sh->Name];
       llvm::Value *alloca =
-          m_Builder.CreateAlloca(st, nullptr, call->Callee + "_ctor");
+          m_Builder.CreateAlloca(st, nullptr, sh->Name + "_ctor");
 
       size_t argIdx = 0;
       for (const auto &arg : call->Args) {
@@ -1676,6 +1682,12 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
   }
 
   std::string calleeName = call->Callee;
+  if (call->ResolvedFn) {
+    calleeName = call->ResolvedFn->Name;
+  } else if (call->ResolvedExtern) {
+    calleeName = call->ResolvedExtern->Name;
+  }
+
   if (calleeName.size() > 5 && calleeName.substr(0, 5) == "libc_") {
     calleeName = calleeName.substr(5);
   }

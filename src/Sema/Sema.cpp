@@ -1586,6 +1586,7 @@ std::string Sema::checkExpr(Expr *E) {
     }
 
     if (Fn) {
+      Call->ResolvedFn = Fn;
 
       if (!Fn->IsPub && Fn->FileName != Call->FileName) {
         // Relaxed privacy check: allow calls within the same module,
@@ -1670,6 +1671,7 @@ std::string Sema::checkExpr(Expr *E) {
 
     // Check Extern
     if (Ext) {
+      Call->ResolvedExtern = Ext;
       ExternDecl *Fn = Ext;
       if (Fn->Args.size() != Call->Args.size() && !Fn->IsVariadic) {
         // If variadic, we need at least fixed args
@@ -1699,6 +1701,7 @@ std::string Sema::checkExpr(Expr *E) {
     }
     // Check for Shape Constructor (Struct Initialization via Call)
     else if (Sh) {
+      Call->ResolvedShape = Sh;
       ShapeDecl *sh = Sh;
       if (sh->Kind == ShapeKind::Struct || sh->Kind == ShapeKind::Tuple) {
         // Validate arguments

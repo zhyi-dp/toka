@@ -1280,6 +1280,9 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
     if (peek().HasNewlineBefore)
       break;
 
+    if (check(TokenType::KwAs))
+      break;
+
     bool consumed = false;
     if (check(TokenType::Identifier) || (peek().Kind >= TokenType::KwLet &&
                                          peek().Kind <= TokenType::KwCrate)) {
