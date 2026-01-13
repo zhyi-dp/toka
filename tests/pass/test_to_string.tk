@@ -1,5 +1,6 @@
 
 import std/string
+import std/io::println
 
 fn main() -> i32 {
     auto s1 = String::from_int(12345)

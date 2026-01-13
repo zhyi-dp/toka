@@ -195,6 +195,8 @@ void Sema::registerGlobals(Module &M) {
           // Import all externs
           for (auto const &[name, ext] : target->Externs) {
             ExternMap[name] = ext;
+            CurrentScope->define(name, {"extern", "", false, false, false,
+                                        false, false, 0, false, "", nullptr});
           }
           // Import all globals (constants)
           for (auto const &[name, v] : target->Globals) {
@@ -239,6 +241,8 @@ void Sema::registerGlobals(Module &M) {
             found = true;
           } else if (target->Externs.count(item.Symbol)) {
             ExternMap[name] = target->Externs[item.Symbol];
+            CurrentScope->define(name, {"extern", "", false, false, false,
+                                        false, false, 0, false, "", nullptr});
             found = true;
           } else if (target->Globals.count(item.Symbol)) {
             auto *v = target->Globals[item.Symbol];
@@ -1451,9 +1455,25 @@ std::string Sema::checkExpr(Expr *E) {
     }
 
     // Intrinsic: println (Compiler Magic)
-    // Avoids strict function lookup and arg checking for this special
-    // intrinsic
+    // Avoids strict function lookup and arg checking for this special intrinsic
     if (CallName == "println" || CallName == "std::io::println") {
+      bool visible = (CallName == "std::io::println");
+      if (!visible) {
+        SymbolInfo val;
+        // Must be in current scope (imported or defined)
+        // We explicitly do NOT fallback to ExternMap global lookup for this
+        // intrinsic namespace
+        if (CurrentScope->lookup("println", val)) {
+          visible = true;
+        }
+      }
+
+      if (!visible) {
+        error(Call, "println must be explicitly imported from std/io (e.g. "
+                    "import std/io::{println})");
+        return "void";
+      }
+
       if (Call->Args.empty()) {
         error(Call, "println requires at least a format string");
       }

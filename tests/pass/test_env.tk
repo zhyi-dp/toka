@@ -1,6 +1,6 @@
 
 import std/env::{args, get_arg}
-import std/io
+import std/io::{println}
 
 fn main() -> i32 {
     auto c = args()

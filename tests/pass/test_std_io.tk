@@ -1,6 +1,6 @@
 
 import std/string
-import std/io
+import std/io::println
 
 fn main() -> i32 {
     auto path = String::from("test_io.txt")

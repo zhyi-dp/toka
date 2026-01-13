@@ -1,4 +1,4 @@
-import std/io
+import std/io::println
 
 type Addr = u64
 alias MyInt = i32
