@@ -1,0 +1,16 @@
+
+import std/string
+
+fn main() -> i32 {
+    auto s1 = String::from_int(12345)
+    println("int: {}", s1.c_str())
+    if s1.len() != 5 { return 1 }
+    
+    auto s2 = String::from_i64(9223372036854775807)
+    println("i64: {}", s2.c_str())
+    
+    auto s3 = String::from_f64(3.141592)
+    println("f64: {}", s3.c_str())
+    
+    return 0
+}

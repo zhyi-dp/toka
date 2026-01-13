@@ -1,0 +1,75 @@
+import std/io::println
+import std/memory::assert
+import std/string::String
+
+fn main() -> i32 {
+    println("Testing String Extended Features...")
+
+    // 1. Test push_char
+    auto s = String::from("")
+    s.push_char(72 as char) // 'H'
+    s.push_char(101 as char) // 'e'
+    s.push_char(108 as char) // 'l'
+    s.push_char(108 as char) // 'l'
+    s.push_char(111 as char) // 'o'
+    
+    println("Built string: {}, len: {}", s.c_str(), s.len())
+    assert(s.len() == 5, "Len mismatch after push_char")
+    
+    // 2. Test eq (Equality)
+    auto s2 = String::from("Hello")
+    println("s2: {}, len: {}", s2.c_str(), s2.len())
+    if s.eq(s2) {
+        println("s == s2 (Correct)")
+    } else {
+        println("s != s2 (Error)")
+        assert(false, "Equality check failed")
+    }
+
+    auto s3 = String::from("World")
+    if s.eq(s3) {
+        println("s == s3 (Error)")
+        assert(false, "Inequality check failed")
+    } else {
+        println("s != s3 (Correct)")
+    }
+
+    // 3. Test trim
+    auto s4 = String::from("  Hello Toka  \n")
+    auto trimmed = s4.trim()
+    println("Trimmed: '{}', len: {}", trimmed.c_str(), trimmed.len())
+    
+    auto expected = String::from("Hello Toka")
+    if trimmed.eq(expected) {
+         println("Trim worked correctly")
+    } else {
+         println("Trim FAILED")
+         assert(false, "Trim failed")
+    }
+    
+
+    
+    // 4. Test split
+    auto s5 = String::from("a,b,c")
+    auto iter# = s5.split(44) // ','
+    
+    auto p1 = iter#.next()
+    println("Split 1: {}", p1.c_str())
+    assert(p1.len() == 1, "Split 1 len mismatch")
+    
+    auto p2 = iter#.next()
+    println("Split 2: {}", p2.c_str())
+    
+    auto p3 = iter#.next()
+    println("Split 3: {}", p3.c_str())
+    
+    if iter.is_done() {
+        println("Iterator done (Correct)")
+    } else {
+        println("Iterator NOT done (Error)")
+        assert(false, "Iterator should be done")
+    }
+    
+    println("String Extended Tests Passed")
+    return 0
+}

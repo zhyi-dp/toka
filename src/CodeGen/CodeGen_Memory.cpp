@@ -330,12 +330,69 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
 
     auto it = m_Symbols.find(baseName);
     if (it == m_Symbols.end()) {
-      // Fallback for non-variable bases (e.g., function returns)
-      llvm::Value *arrVal = emitEntityAddr(idxExpr->Array.get());
-      if (!arrVal)
+      // Fallback for non-variable bases using PhysEntity to recover type info
+      PhysEntity arrEnt = genExpr(idxExpr->Array.get());
+
+      // Soul-Identity Protocol for Array Indexing:
+      // We need the IDENTITY (the data address) to index off.
+      // - If arrEnt is Reference (Soul Address):
+      //   - If underlying type is Pointer (e.g. *char): The Soul stores the
+      //   Identity. We MUST LOAD the Soul to get Identity.
+      //   - If underlying type is Array (e.g. [10]char): The Soul IS the
+      //   Identity. We use Soul address directly.
+
+      llvm::Value *basePtr = nullptr;
+      llvm::Type *elemTy = nullptr;
+
+      if (arrEnt.isAddress) {
+        llvm::Type *memTy = arrEnt.irType;
+        if (!memTy)
+          memTy = arrEnt.value->getType();
+
+        if (memTy->isPointerTy()) {
+          // It's a pointer variable/member (like *char source).
+          // The entity value is the address OF the pointer (Soul).
+          // We must LOAD to get the actual pointer (Identity).
+          basePtr = m_Builder.CreateLoad(memTy, arrEnt.value, "arr_load_ptr");
+
+          // For opaque pointers, we need to know the stride.
+          // Logic: Pointers are usually byte-addressed buffers (char*, u8*) or
+          // specific types. HACK: Default to i8 for *T indexing if we can't
+          // deduce T. In Toka std, *char is the most common case for this
+          // fallback.
+          elemTy = llvm::Type::getInt8Ty(m_Context);
+        } else if (memTy->isArrayTy()) {
+          // It's an array variable/member (like char buf[10]).
+          // The entity value is the address of the array start.
+          basePtr = arrEnt.value;
+          elemTy = memTy->getArrayElementType();
+
+          // Array GEP needs [0, index] because base is pointer to array
+          return m_Builder.CreateInBoundsGEP(
+              memTy, basePtr, {m_Builder.getInt32(0), indexValue},
+              "arr_idx_gep");
+        }
+      } else {
+        // R-Value (e.g. function return). It's already the Identity (pointer
+        // value).
+        basePtr = arrEnt.value;
+      }
+
+      if (!basePtr) {
+        if (arrEnt.isAddress)
+          basePtr = arrEnt.load(m_Builder);
+        else
+          basePtr = arrEnt.value;
+      }
+      if (!basePtr)
         return nullptr;
-      return m_Builder.CreateInBoundsGEP(m_Builder.getInt32Ty(), arrVal,
-                                         indexValue);
+
+      if (!elemTy) {
+        // Default stride for unknown pointer types in fallback
+        elemTy = llvm::Type::getInt8Ty(m_Context);
+      }
+
+      return m_Builder.CreateInBoundsGEP(elemTy, basePtr, indexValue);
     }
 
     TokaSymbol &sym = it->second;

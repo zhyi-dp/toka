@@ -9,14 +9,13 @@ import core/traits::{@encap}
 // ------------------------------------------------------
 // 1. External C Interface (libc)
 // ------------------------------------------------------
-// 外部定义严格遵循 Toka 形态：*ptr: type
-// 含义：ptr 是 type 类型的实体，但我们通过指针操作它。
 
 extern fn libc_malloc(size: usize) -> *void
 extern fn libc_realloc(*ptr: void, size: usize) -> *void
 extern fn libc_free(*ptr: void) -> void
 extern fn libc_memcpy(*dest: void, *src: void, n: usize) -> *void
 extern fn libc_strlen(*s: char) -> usize
+extern fn libc_sprintf(*dest: char, *format: char, ...) -> usize
 
 
 // ------------------------------------------------------
@@ -24,10 +23,7 @@ extern fn libc_strlen(*s: char) -> usize
 // ------------------------------------------------------
 
 pub shape String (
-    // Slot A (*#): 允许修改指针指向 (realloc 需要)
-    // Slot B (#) : 允许修改指向的数据 (memcpy 需要)
-    *buf#: char, //不需要写成 *#buf#，因为 被含指针的可绑定性继承自String实例的可变性（也就是fn中的self的可变性），相当于rust的 *mut T 成员
-    
+    *buf#: char,
     len: i32,
     cap: i32
 )
@@ -37,12 +33,8 @@ impl String@encap {
     fn drop(self#) {
         unsafe {
             if self.*buf != nullptr {
-                // 释放内存地址
                 libc_free(self.*buf as *void)
-                
-                // 置空：修改 Slot A
                 self#.*buf = nullptr 
-
                 self#.len = 0
                 self#.cap = 0
             }
@@ -51,54 +43,134 @@ impl String@encap {
 }
 
 // ------------------------------------------------------
-// 3. Implementation
+// 3. Iterators
+// ------------------------------------------------------
+
+pub shape SplitIterator (
+    *source: char,
+    source_len: i32,
+    current_pos: i32,
+    delimiter: char
+)
+
+impl SplitIterator {
+    pub fn next(self#) -> String {
+        unsafe {
+             if self.current_pos >= self.source_len {
+                 return String::from("") 
+             }
+             
+             auto start = self.current_pos
+             auto found# = false
+             auto i# = start
+             
+             while i < self.source_len {
+                 // dereference
+                 if self.source[i] == self.delimiter {
+                     found# = true
+                     break
+                 }
+                 i# = i + 1
+             }
+             
+             auto end = i
+             auto len = end - start
+             
+             // Update iterator state
+             if found {
+                 self#.current_pos = end + 1
+             } else {
+                 self#.current_pos = self.source_len + 1 // Done
+             }
+             
+             // Extract substring
+             auto *start_ptr = self.*source + start
+             return String::from_with_len(*start_ptr, len)
+        }
+    }
+    
+    pub fn is_done(self) -> bool {
+        return self.current_pos > self.source_len
+    }
+}
+
+
+// ------------------------------------------------------
+// 4. String Implementation
 // ------------------------------------------------------
 
 impl String {
 
-    // === 构造函数 ===
-
-    pub fn new() -> String {
-        unsafe {
-            // libc_malloc 返回 *void 地址，强转为 *char 地址
-            auto *p# = libc_malloc(1:usize) as *char
-            
-            // 初始化数据：p 代表实体
-            p#[0] = 0 as char
-            
-            return String(
-                *buf = *p, // 赋值给 Slot A (地址) 初始化时无视权限 不需要出示#
-                len = 0, 
-                cap = 1
-            )
-        }
-    }
+    // === Constructors ===
 
     pub fn from(*s: char) -> String {
         unsafe {
-            // 传入地址 *s
             auto l = libc_strlen(*s)
-            
-            // 声明本地指针 p，持有可写权限 #
             auto *p# = libc_malloc((l + 1) as usize) as *char
-            
-            // 内存拷贝：传入地址
             libc_memcpy(*p as *void, *s as *void, l)
-            
-            // Null Terminate
             p#[l] = 0 as char
             
             return String(
-                *buf = *p, // 赋值给 Slot A (地址) 初始化时无视权限 不需要出示#
+                *buf = *p,
                 len = l as i32,
                 cap = (l + 1) as i32
             )
         }
     }
-
-    // === 访问器 (View) ===
     
-    // [原地捕获] self 代表实例本身，默认只读
+    // Internal helper for substrings
+    pub fn from_with_len(*s: char, len: i32) -> String {
+        unsafe {
+            auto l = len
+            auto *p# = libc_malloc((l + 1) as usize) as *char
+            libc_memcpy(*p as *void, *s as *void, l as usize)
+            p#[l] = 0 as char
+            
+            return String(
+                *buf = *p,
+                len = l,
+                cap = l + 1
+            )
+        }
+    }
+
+    // === Converters ===
+
+    pub fn from_int(val: i32) -> String {
+        unsafe {
+            // Max i32 chars is 11 (-2147483648) + null
+            auto *buf# = libc_malloc(16) as *char
+            libc_sprintf(*buf, "%d", val)
+            auto len = libc_strlen(*buf)
+            
+            return String(
+                *buf = *buf,
+                len = len as i32,
+                cap = 16
+            )
+        }
+    }
+
+    pub fn from_i64(val: i64) -> String {
+        unsafe {
+            auto *buf# = libc_malloc(32) as *char
+            libc_sprintf(*buf, "%lld", val)
+            auto len = libc_strlen(*buf)
+            return String(*buf = *buf, len = len as i32, cap = 32)
+        }
+    }
+    
+    pub fn from_f64(val: f64) -> String {
+         unsafe {
+            auto *buf# = libc_malloc(32) as *char
+            libc_sprintf(*buf, "%.6f", val)
+            auto len = libc_strlen(*buf)
+            return String(*buf = *buf, len = len as i32, cap = 32)
+        }
+    }
+
+    // === View ===
+    
     pub fn len(self) -> i32 {
         return self.len
     }
@@ -108,54 +180,124 @@ impl String {
     }
 
     pub fn c_str(self) -> *char {
-        // self.*buf 访问的是 buf 指针变量里存储的地址 (Slot A)
         return self.*buf as *char
     }
     
-    // === 修改器 (Mutation) ===
+    // === Mutation ===
 
-    // [原地捕获] self# 代表可变实例
-    // 允许修改 self.len, self.cap 以及 self.*buf (重定向指针)
     pub fn push_str(self#, *s: char) -> i32 {
         unsafe {
             auto slen = libc_strlen(*s)
             auto needed = self.len + (slen as i32)
             
-            // 1. 扩容逻辑
             if needed >= self.cap {
                 auto new_cap = (self.cap * 2) + (slen as i32) + 1
-                
-                // realloc 需要传入旧地址：self.*buf
                 auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *char
-                
-                if *tmp == (0 as *char) {
-                    return 0;
-                }
-                
-                // 修改实例成员：将新地址赋值给 buf (Slot A)
-                // 因为 self# 是可变的，且 buf 定义为 *#buf，所以合法
+                if *tmp == (0 as *char) { return 0 }
                 self#.*buf = *tmp
                 self#.cap = new_cap
             }
             
-            // 2. 拼接逻辑
-            // 计算目标地址：基地址(self.*buf) + 偏移
             auto *dst# = (self.*buf as usize + self.len as usize) as *char
-            
-            // 拷贝数据
             libc_memcpy(*dst as *void, *s as *void, slen)
-            
-            // 更新长度
             self#.len = needed
-            
-            // Null Terminate
             dst#[slen] = 0 as char
         }
         return 1
     }
 
-    pub fn clear(self#)
-    {
+    pub fn push_char(self#, c: char) -> i32 {
+        unsafe {
+            auto needed = self.len + 1
+            
+            if needed >= self.cap {
+                auto new_cap = (self.cap * 2) + 2
+                auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *char
+                if *tmp == (0 as *char) { return 0 }
+                self#.*buf = *tmp
+                self#.cap = new_cap
+            }
+            
+            auto *dst# = (self.*buf as usize + self.len as usize) as *char
+            dst#[0] = c
+            dst#[1] = 0 as char
+            self#.len = needed
+        }
+        return 1
+    }
+
+    pub fn eq(self, other: String) -> bool {
+        unsafe {
+            if self.len != other.len() { return false }
+            auto i# = 0
+            auto *b1 = self.c_str()
+            auto *b2 = other.c_str()
+            while i < self.len {
+                auto *p1 = (b1 as usize + i as usize) as *char
+                auto *p2 = (b2 as usize + i as usize) as *char
+                if *p1 != *p2 { return false }
+                i# = i + 1
+            }
+            return true
+        }
+    }
+
+    pub fn clear(self#) {
         self#.drop()
+    }
+    
+    // === Utilities ===
+    
+    fn is_whitespace(c: char) -> bool {
+        if c == 32 as char { return true } // space
+        if c == 9 as char { return true }  // tab
+        if c == 10 as char { return true } // newline
+        if c == 13 as char { return true } // cr
+        return false
+    }
+
+    pub fn trim(self) -> String {
+        unsafe {
+            auto start# = 0
+            auto end# = self.len - 1
+            auto *raw = self.c_str()
+            
+            // Find start
+            while start < self.len {
+                // Manual pointer access
+                auto p = raw[start]
+                if !String::is_whitespace(p) {
+                    break
+                }
+                start# = start + 1
+            }
+            
+            // Find end
+            while end >= start {
+                auto p = raw[end]
+                if !String::is_whitespace(p) {
+                    break
+                }
+                end# = end - 1
+            }
+            
+            auto new_len = end - start + 1
+            if new_len <= 0 {
+                return String::from("")
+            }
+            
+            auto *sub_start = *raw[start]
+            return String::from_with_len(*sub_start, new_len)
+        }
+    }
+    
+    // delim as i32 to avoid ABI char passing issues
+    pub fn split(self, delim: i32) -> SplitIterator {
+        return SplitIterator(
+            *source = self.c_str(),
+            source_len = self.len,
+            current_pos = 0,
+            delimiter = delim as char
+        )
     }
 }

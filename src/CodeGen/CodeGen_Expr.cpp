@@ -1601,8 +1601,11 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
           } else if (ty->isFloatTy()) {
             spec = "%f";
             pVal = m_Builder.CreateFPExt(val, m_Builder.getDoubleTy());
+          } else if (ty->isIntegerTy(8) || semanticType == "char" ||
+                     semanticType == "u8" || semanticType == "i8") {
+            spec = "%c";
           } else if (semanticType == "*char" || semanticType == "str" ||
-                     semanticType == "char" || semanticType == "String") {
+                     semanticType == "String") {
             // Explicit check for String type (including String struct if we
             // support it)
             spec = "%s";
