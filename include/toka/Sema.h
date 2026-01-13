@@ -158,6 +158,8 @@ private:
     std::string Label;
     std::string ExpectedType;
     bool IsLoop;
+    bool IsReceiver =
+        false; // Whether this context expects a 'pass' or 'break' value
   };
   std::vector<ControlFlowInfo> m_ControlFlowStack;
 

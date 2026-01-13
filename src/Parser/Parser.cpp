@@ -671,8 +671,9 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
 }
 
 std::unique_ptr<BlockStmt> Parser::parseBlock() {
-  consume(TokenType::LBrace, "Expected '{'");
+  Token tok = consume(TokenType::LBrace, "Expected '{'");
   auto block = std::make_unique<BlockStmt>();
+  block->setLocation(tok, m_CurrentFile);
 
   while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
     auto stmt = parseStmt();

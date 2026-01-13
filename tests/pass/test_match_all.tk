@@ -1,4 +1,5 @@
 import std/io::println
+import std/memory::assert
 
 fn main() -> i32 {
     for auto x in [10,20,30] {
@@ -15,8 +16,21 @@ fn main() -> i32 {
             50 => {println("No match")}
             auto v if v > 80 => {println("Matched variable x={} > 80", v)}
             auto v => {println("Matched variable v={}", v)}
+            _ => {println("Wildcard")}
         }
     }
+
+    auto y = for auto x in [1,2] {
+        pass match x {
+            1 => {pass 1}
+            2 => {pass 2}
+        }
+    }
+    or {
+        pass -1
+    }
+    println("y={}", y)
+    assert(y == 1, "y mismatch")
 
     println("End")
     return 0

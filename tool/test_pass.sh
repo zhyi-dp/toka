@@ -33,7 +33,7 @@ for test_file in "${files[@]}"; do
     [ -e "$test_file" ] || continue
 
     test_name=$(basename "$test_file")
-    printf "Testing %-35s ... " "$test_name"
+    #printf "Testing %-35s ... " "$test_name"
 
     # Temporary files
     ll_file="${test_name}.ll"
@@ -44,10 +44,12 @@ for test_file in "${files[@]}"; do
         
         # 2. Run with lli
         if $LLI "$ll_file" >> "$log_file" 2>&1; then
-             echo -e "${GREEN}PASS${NC}"
+             #printf "Testing %-35s ... " "$test_name"
+             #echo -e "${GREEN}PASS${NC}"
              ((pass_count++))
              rm -f "$ll_file" "$log_file"
         else
+             printf "Testing %-35s ... " "$test_name"
              echo -e "${RED}FAIL (Runtime)${NC}"
              ((fail_count++))
              echo -e "${RED}    Runtime error details in ${log_file}${NC}"

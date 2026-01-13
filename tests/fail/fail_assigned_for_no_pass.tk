@@ -1,0 +1,11 @@
+import std/io::println
+
+fn main() -> i32 {
+    auto y = for auto x in [1] {
+        1 + 1 // Error: y expects a value but none passed
+    } or {
+        pass -1
+    }
+    println("y={}", y)
+    return 0
+}

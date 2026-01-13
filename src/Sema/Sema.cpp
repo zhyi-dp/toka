@@ -472,6 +472,48 @@ bool allPathsReturn(Stmt *S) {
   }
   return false;
 }
+
+bool allPathsJump(Stmt *S) {
+  if (!S)
+    return false;
+  if (dynamic_cast<ReturnStmt *>(S))
+    return true;
+  if (auto *B = dynamic_cast<BlockStmt *>(S)) {
+    for (const auto &Sub : B->Statements) {
+      if (allPathsJump(Sub.get()))
+        return true;
+    }
+    return false;
+  }
+  if (auto *Unsafe = dynamic_cast<UnsafeStmt *>(S)) {
+    return allPathsJump(Unsafe->Statement.get());
+  }
+  if (auto *ES = dynamic_cast<ExprStmt *>(S)) {
+    Expr *E = ES->Expression.get();
+    if (dynamic_cast<BreakExpr *>(E) || dynamic_cast<ContinueExpr *>(E))
+      return true;
+    if (auto *If = dynamic_cast<IfExpr *>(E)) {
+      if (If->Else && allPathsJump(If->Then.get()) &&
+          allPathsJump(If->Else.get()))
+        return true;
+      return false;
+    }
+    if (auto *Match = dynamic_cast<MatchExpr *>(E)) {
+      for (const auto &Arm : Match->Arms) {
+        if (!allPathsJump(Arm->Body.get()))
+          return false;
+      }
+      return true;
+    }
+    if (auto *Loop = dynamic_cast<LoopExpr *>(E)) {
+      // Loop body jumping out counts as jump
+      if (allPathsJump(Loop->Body.get()))
+        return true;
+      return false;
+    }
+  }
+  return false;
+}
 } // namespace
 
 void Sema::checkFunction(FunctionDecl *Fn) {
@@ -570,7 +612,10 @@ void Sema::checkStmt(Stmt *S) {
   } else if (auto *Ret = dynamic_cast<ReturnStmt *>(S)) {
     std::string ExprType = "void";
     if (Ret->ReturnValue) {
+      m_ControlFlowStack.push_back(
+          {"", CurrentFunctionReturnType, false, true});
       ExprType = checkExpr(Ret->ReturnValue.get());
+      m_ControlFlowStack.pop_back();
     }
     clearStmtBorrows();
 
@@ -590,12 +635,15 @@ void Sema::checkStmt(Stmt *S) {
       }
     }
   } else if (auto *ExprS = dynamic_cast<ExprStmt *>(S)) {
+    // Standalone expressions are NOT receivers
+    m_ControlFlowStack.push_back({"", "void", false, false});
     checkExpr(ExprS->Expression.get());
+    m_ControlFlowStack.pop_back();
     clearStmtBorrows();
   } else if (auto *Var = dynamic_cast<VariableDecl *>(S)) {
     std::string InitType = "";
     if (Var->Init) {
-      m_ControlFlowStack.push_back({Var->Name, "void", false});
+      m_ControlFlowStack.push_back({Var->Name, "void", false, true});
       InitType = checkExpr(Var->Init.get());
       m_ControlFlowStack.pop_back();
     }
@@ -1079,7 +1127,14 @@ std::string Sema::checkExpr(Expr *E) {
       return "bool";
     }
     std::string LHS = checkExpr(Bin->LHS.get());
-    std::string RHS = checkExpr(Bin->RHS.get());
+    std::string RHS;
+    if (Bin->Op == "=") {
+      m_ControlFlowStack.push_back({"", "void", false, true});
+      RHS = checkExpr(Bin->RHS.get());
+      m_ControlFlowStack.pop_back();
+    } else {
+      RHS = checkExpr(Bin->RHS.get());
+    }
 
     bool isRefAssign = false;
     // Assignment
@@ -1307,7 +1362,12 @@ std::string Sema::checkExpr(Expr *E) {
       }
     }
 
-    m_ControlFlowStack.push_back({"", "void", false});
+    bool isReceiver = false;
+    if (!m_ControlFlowStack.empty()) {
+      isReceiver = m_ControlFlowStack.back().IsReceiver;
+    }
+
+    m_ControlFlowStack.push_back({"", "void", false, isReceiver});
     checkStmt(ie->Then.get());
 
     // Restore if narrowed
@@ -1323,10 +1383,19 @@ std::string Sema::checkExpr(Expr *E) {
 
     std::string elseType = "void";
     if (ie->Else) {
-      m_ControlFlowStack.push_back({"", "void", false});
+      m_ControlFlowStack.push_back({"", "void", false, isReceiver});
       checkStmt(ie->Else.get());
       elseType = m_ControlFlowStack.back().ExpectedType;
       m_ControlFlowStack.pop_back();
+    }
+
+    if (isReceiver) {
+      if (thenType == "void" && !allPathsJump(ie->Then.get()))
+        error(ie->Then.get(), "Yielding if branch must pass a value");
+      if (!ie->Else)
+        error(ie, "Yielding if expression must have an 'else' block");
+      else if (elseType == "void" && !allPathsJump(ie->Else.get()))
+        error(ie->Else.get(), "Yielding else branch must pass a value");
     }
 
     if (thenType != "void" && elseType != "void" &&
@@ -1337,13 +1406,19 @@ std::string Sema::checkExpr(Expr *E) {
     return (thenType != "void") ? thenType : elseType;
   } else if (auto *we = dynamic_cast<WhileExpr *>(E)) {
     checkExpr(we->Condition.get());
+    bool isReceiver = false;
+    if (!m_ControlFlowStack.empty()) {
+      isReceiver = m_ControlFlowStack.back().IsReceiver;
+    }
+
     bool tookOver = false;
     if (!m_ControlFlowStack.empty() && !m_ControlFlowStack.back().IsLoop &&
         !m_ControlFlowStack.back().Label.empty()) {
       m_ControlFlowStack.back().IsLoop = true;
+      m_ControlFlowStack.back().IsReceiver = isReceiver;
       tookOver = true;
     } else {
-      m_ControlFlowStack.push_back({"", "void", true});
+      m_ControlFlowStack.push_back({"", "void", true, isReceiver});
     }
     checkStmt(we->Body.get());
     std::string bodyType = m_ControlFlowStack.back().ExpectedType;
@@ -1352,10 +1427,20 @@ std::string Sema::checkExpr(Expr *E) {
 
     std::string elseType = "void";
     if (we->ElseBody) {
-      m_ControlFlowStack.push_back({"", "void", false});
+      m_ControlFlowStack.push_back({"", "void", false, isReceiver});
       checkStmt(we->ElseBody.get());
       elseType = m_ControlFlowStack.back().ExpectedType;
       m_ControlFlowStack.pop_back();
+    }
+
+    if (isReceiver) {
+      if (bodyType == "void" && !allPathsJump(we->Body.get()))
+        error(we->Body.get(), "Yielding while loop body must pass a value");
+      if (!we->ElseBody)
+        error(we, "Yielding while loop must have an 'or' block");
+      else if (elseType == "void" && !allPathsJump(we->ElseBody.get()))
+        error(we->ElseBody.get(),
+              "Yielding while loop 'or' block must pass a value");
     }
 
     if (bodyType != "void" && !we->ElseBody) {
@@ -1367,18 +1452,28 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return (bodyType != "void") ? bodyType : elseType;
   } else if (auto *le = dynamic_cast<LoopExpr *>(E)) {
+    bool isReceiver = false;
+    if (!m_ControlFlowStack.empty()) {
+      isReceiver = m_ControlFlowStack.back().IsReceiver;
+    }
+
     bool tookOver = false;
     if (!m_ControlFlowStack.empty() && !m_ControlFlowStack.back().IsLoop &&
         !m_ControlFlowStack.back().Label.empty()) {
       m_ControlFlowStack.back().IsLoop = true;
+      m_ControlFlowStack.back().IsReceiver = isReceiver;
       tookOver = true;
     } else {
-      m_ControlFlowStack.push_back({"", "void", true});
+      m_ControlFlowStack.push_back({"", "void", true, isReceiver});
     }
     checkStmt(le->Body.get());
     std::string res = m_ControlFlowStack.back().ExpectedType;
     if (!tookOver)
       m_ControlFlowStack.pop_back();
+
+    if (isReceiver && res == "void" && !allPathsJump(le->Body.get())) {
+      error(le, "Yielding loop body must pass a value");
+    }
     return res;
   } else if (auto *fe = dynamic_cast<ForExpr *>(E)) {
     std::string collType = checkExpr(fe->Collection.get());
@@ -1393,13 +1488,19 @@ std::string Sema::checkExpr(Expr *E) {
     Info.Morphology = fe->IsReference ? "&" : "";
     CurrentScope->define(fe->VarName, Info);
 
+    bool isReceiver = false;
+    if (!m_ControlFlowStack.empty()) {
+      isReceiver = m_ControlFlowStack.back().IsReceiver;
+    }
+
     bool tookOver = false;
     if (!m_ControlFlowStack.empty() && !m_ControlFlowStack.back().IsLoop &&
         !m_ControlFlowStack.back().Label.empty()) {
       m_ControlFlowStack.back().IsLoop = true;
+      m_ControlFlowStack.back().IsReceiver = isReceiver; // Sync receiver status
       tookOver = true;
     } else {
-      m_ControlFlowStack.push_back({"", "void", true});
+      m_ControlFlowStack.push_back({"", "void", true, isReceiver});
     }
     checkStmt(fe->Body.get());
     std::string bodyType = m_ControlFlowStack.back().ExpectedType;
@@ -1408,12 +1509,22 @@ std::string Sema::checkExpr(Expr *E) {
 
     std::string elseType = "void";
     if (fe->ElseBody) {
-      m_ControlFlowStack.push_back({"", "void", false});
+      m_ControlFlowStack.push_back({"", "void", false, isReceiver});
       checkStmt(fe->ElseBody.get());
       elseType = m_ControlFlowStack.back().ExpectedType;
       m_ControlFlowStack.pop_back();
     }
     exitScope();
+
+    if (isReceiver) {
+      if (bodyType == "void" && !allPathsJump(fe->Body.get()))
+        error(fe->Body.get(), "Yielding for loop body must pass a value");
+      if (!fe->ElseBody)
+        error(fe, "Yielding for loop must have an 'or' block");
+      else if (elseType == "void" && !allPathsJump(fe->ElseBody.get()))
+        error(fe->ElseBody.get(),
+              "Yielding for loop 'or' block must pass a value");
+    }
 
     if (bodyType != "void" && !fe->ElseBody) {
       error(fe, "Yielding for loop must have an 'or' block");
@@ -1424,16 +1535,54 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return (bodyType != "void") ? bodyType : elseType;
   } else if (auto *pe = dynamic_cast<PassExpr *>(E)) {
-    std::string valType = checkExpr(pe->Value.get());
+    // 1. Detect if this is a prefix 'pass' (wrapping a complex expression)
+    bool isPrefixMatch = dynamic_cast<MatchExpr *>(pe->Value.get());
+    bool isPrefixIf = dynamic_cast<IfExpr *>(pe->Value.get());
+    bool isPrefixFor = dynamic_cast<ForExpr *>(pe->Value.get());
+    bool isPrefixWhile = dynamic_cast<WhileExpr *>(pe->Value.get());
+    bool isPrefixLoop = dynamic_cast<LoopExpr *>(pe->Value.get());
+
+    std::string valType = "void";
+    if (isPrefixMatch || isPrefixIf || isPrefixFor || isPrefixWhile ||
+        isPrefixLoop) {
+      m_ControlFlowStack.push_back({"", "void", false, true});
+      valType = checkExpr(pe->Value.get());
+      m_ControlFlowStack.pop_back();
+
+      if (valType == "void") {
+        error(pe, "Prefix 'pass' expects a value-yielding expression");
+      }
+    } else {
+      // 2. Leaf 'pass' - must have a receiver
+      valType = checkExpr(pe->Value.get());
+    }
+
+    bool foundReceiver = false;
     if (!m_ControlFlowStack.empty()) {
-      if (m_ControlFlowStack.back().ExpectedType == "void") {
-        m_ControlFlowStack.back().ExpectedType = valType;
-      } else if (!isTypeCompatible(m_ControlFlowStack.back().ExpectedType,
-                                   valType)) {
-        error(pe, "Yield type mismatch");
+      for (auto it = m_ControlFlowStack.rbegin();
+           it != m_ControlFlowStack.rend(); ++it) {
+        if (it->IsReceiver) {
+          foundReceiver = true;
+          if (it->ExpectedType == "void") {
+            it->ExpectedType = valType;
+          } else if (!isTypeCompatible(it->ExpectedType, valType)) {
+            error(pe, "Yield type mismatch ('" + it->ExpectedType + "' vs '" +
+                          valType + "')");
+          }
+          break;
+        }
       }
     }
-    return "void";
+
+    if (!foundReceiver) {
+      error(pe, "'pass' used without a receiver. Prefix the expression with "
+                "'pass' or assign it to a variable.");
+    }
+
+    return (isPrefixMatch || isPrefixIf || isPrefixFor || isPrefixWhile ||
+            isPrefixLoop)
+               ? valType
+               : "void";
   } else if (auto *be = dynamic_cast<BreakExpr *>(E)) {
     std::string valType = "void";
     if (be->Value)
@@ -2270,6 +2419,11 @@ std::string Sema::checkExpr(Expr *E) {
     std::string targetType = checkExpr(me->Target.get());
     std::string resultType = "void";
 
+    bool isReceiver = false;
+    if (!m_ControlFlowStack.empty()) {
+      isReceiver = m_ControlFlowStack.back().IsReceiver;
+    }
+
     for (auto &arm : me->Arms) {
       enterScope();
       checkPattern(arm->Pat.get(), targetType, false);
@@ -2277,10 +2431,14 @@ std::string Sema::checkExpr(Expr *E) {
         if (checkExpr(arm->Guard.get()) != "bool")
           error(arm->Guard.get(), "guard must be bool");
       }
-      m_ControlFlowStack.push_back({"", "void", false});
+      m_ControlFlowStack.push_back({"", "void", false, isReceiver});
       checkStmt(arm->Body.get());
       std::string armType = m_ControlFlowStack.back().ExpectedType;
       m_ControlFlowStack.pop_back();
+
+      if (isReceiver && armType == "void" && !allPathsJump(arm->Body.get())) {
+        error(arm->Body.get(), "Yielding match arm must pass a value");
+      }
 
       if (resultType == "void")
         resultType = armType;
@@ -2290,6 +2448,10 @@ std::string Sema::checkExpr(Expr *E) {
                         "' vs '" + armType + "')");
       }
       exitScope();
+    }
+
+    if (isReceiver && resultType == "void") {
+      error(me, "Yielding match expression must pass a value in all arms");
     }
 
     // Check for private variants if @encap is active

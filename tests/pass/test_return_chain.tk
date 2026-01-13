@@ -1,0 +1,26 @@
+import std/io::println
+import std/memory::assert
+
+fn test_relay(x: i32) -> i32 {
+    return for auto i in [1] {
+        pass match x {
+            10 => { pass 100 }
+            _  => { pass 200 }
+        }
+    } or {
+        pass -1
+    }
+}
+
+fn main() -> i32 {
+    auto r1 = test_relay(10)
+    println("r1={}", r1)
+    assert(r1 == 100, "r1 mismatch")
+
+    auto r2 = test_relay(20)
+    println("r2={}", r2)
+    assert(r2 == 200, "r2 mismatch")
+
+    println("Return relay test passed")
+    return 0
+}

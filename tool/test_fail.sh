@@ -28,18 +28,20 @@ fi
 for test_file in "${files[@]}"; do
     [ -e "$test_file" ] || continue
     test_name=$(basename "$test_file")
-    printf "Testing %-35s ... " "$test_name"
+    #printf "Testing %-35s ... " "$test_name"
 
     log_file="${test_name}.log"
 
     # We EXPECT compilation to FAIL
     if $TOKAC "$test_file" > /dev/null 2> "$log_file"; then
+        printf "Testing %-35s ... " "$test_name"
         echo -e "${RED}FAIL (Unexpectedly Passed)${NC}"
         ((fail_count++))
     else
         # It failed, which is what we want.
         # Ideally we'd check the error message too, but for now just exit code != 0 is success for rejection tests
-        echo -e "${GREEN}PASS (Rejected)${NC}"
+        #printf "Testing %-35s ... " "$test_name"
+        #echo -e "${GREEN}PASS (Rejected)${NC}"
         ((pass_count++))
         rm -f "$log_file"
     fi
