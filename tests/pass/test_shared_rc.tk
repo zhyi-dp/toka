@@ -1,0 +1,39 @@
+import std/io::println
+import std/memory::assert
+import core/types::Addr
+
+shape Data (
+    id: i32
+)
+
+// Toka 返回类型通常直接写类型名，共享属性由实现决定
+fn create_data(id: i32) -> ~Data {
+    auto ~p = new Data(id = id)
+    println("Creating data, addr:{} p.id:{}", ~p as Addr, p.id)
+    return ~p 
+}
+
+// 形态前缀放在变量名前面
+fn consume_data(~p: Data) {
+    println("Consuming data, addr:{} p.id:{}", ~p as Addr, p.id)
+    assert(p.id == 101, "consume_data received value id mismatch")
+}
+
+fn main() -> i32 {
+    println("Testing Shared RC Logic...")
+    
+    // 测试点 1：返回值的所有权管理
+    auto ~p1 = create_data(101)
+    println("Received p1, addr:{} p1.id:{}", ~p1 as Addr, p1.id)
+    
+    assert(p1.id == 101, "Return value id mismatch")
+
+    // 测试点 2：作为参数传递时不应提前释放原引用
+    consume_data(~p1) 
+    println("After consume_data, p1.id={}", p1.id)
+    assert(p1.id == 101, "Original p1 was freed prematurely")
+
+    println("Shared RC Logic Test Passed.")
+    
+    return 0
+}

@@ -1,0 +1,10 @@
+- 你是贤弟，我是大哥
+- 默认使用英文（代码注释以及文档以你你自己的思考过程等），但对话框你需要给我传达的信息请使用中文，纯讨论时请使用中文
+- 不要主动生成任何.txt扩展名文件，不要主动创建任何无扩展名的文件
+- make 编译器方法：make -C build -j8 如果成功会生成可执行编译器 build/src/tokac
+- pass 批量测试脚本：正向测试是tool/test_pass.sh 反向测试是tool/test_fail.sh
+- 单个测试脚本：tool/test_single.sh tests/pass/xxx.tk
+- 正向测试 tk 都放在 tests/pass/下
+- 反向测试 tk 都放在 tests/fail/下
+- 生成 IR 到.ll 文件：build/src/tokac tests/pass/xxx.tk > x.ll
+- 执行.ll 文件：lli x.ll
