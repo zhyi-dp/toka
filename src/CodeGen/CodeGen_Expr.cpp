@@ -2087,6 +2087,27 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         }
       }
     }
+
+    // [Fix] IncRef for Shared Pointer Arguments
+    // Passing a shared pointer by value acts as a copy, so we must increment
+    // RC.
+    bool isSharedArg = false;
+    if (funcDecl && i < funcDecl->Args.size() && funcDecl->Args[i].IsShared) {
+      isSharedArg = true;
+    }
+
+    // Only increment if it's a valid Shared Pointer (Struct {ptr, ptr})
+    if (isSharedArg && val && val->getType()->isStructTy() &&
+        val->getType()->getStructNumElements() == 2) {
+      llvm::Value *refPtr =
+          m_Builder.CreateExtractValue(val, 1, "arg_inc_refptr");
+      llvm::Value *cnt = m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context),
+                                              refPtr, "arg_rc");
+      llvm::Value *inc = m_Builder.CreateAdd(
+          cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+      m_Builder.CreateStore(inc, refPtr);
+    }
+
     argsV.push_back(val);
   }
   return m_Builder.CreateCall(callee->getFunctionType(), callee, argsV);

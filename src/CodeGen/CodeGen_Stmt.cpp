@@ -10,6 +10,73 @@ llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
   llvm::Value *retVal = nullptr;
   if (ret->ReturnValue) {
     retVal = genExpr(ret->ReturnValue.get()).load(m_Builder);
+
+    // [Fix] Premature Drop in Return
+    // If we are returning a local Shared Pointer variable, we are creating a
+    // copy (the return value). We must increment the RefCount because the local
+    // variable itself is about to be dropped (DecRef) by cleanupScopes. Logic:
+    // Return(Copy) -> RC++ -> ScopeExit(Drop) -> RC--. Net change 0 (Object
+    // survives).
+
+    // 1. Identify if it's a shared variable
+    const Expr *inner = ret->ReturnValue.get();
+    while (true) {
+      if (auto *pe = dynamic_cast<const PostfixExpr *>(inner))
+        inner = pe->LHS.get();
+      else if (auto *ue = dynamic_cast<const UnaryExpr *>(inner))
+        inner = ue->RHS.get();
+      else
+        break;
+    }
+
+    if (auto *ve = dynamic_cast<const VariableExpr *>(inner)) {
+      std::string baseName = ve->Name;
+      // Scrub decorators
+      while (!baseName.empty() &&
+             (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
+              baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+        baseName = baseName.substr(1);
+      while (!baseName.empty() &&
+             (baseName.back() == '#' || baseName.back() == '?' ||
+              baseName.back() == '!'))
+        baseName.pop_back();
+
+      if (m_Symbols.count(baseName)) {
+        TokaSymbol &sym = m_Symbols[baseName];
+        if (sym.morphology == Morphology::Shared &&
+            retVal->getType()->isStructTy()) {
+          // Confirm it is { T*, RC* }
+          llvm::Type *stTy = retVal->getType();
+          if (stTy->getStructNumElements() == 2) {
+            // Manual IncRef
+            llvm::Value *refPtr =
+                m_Builder.CreateExtractValue(retVal, 1, "ret_inc_refptr");
+            llvm::Value *refNN =
+                m_Builder.CreateIsNotNull(refPtr, "ret_inc_nn");
+
+            llvm::Function *F = m_Builder.GetInsertBlock()->getParent();
+            llvm::BasicBlock *doIncBB =
+                llvm::BasicBlock::Create(m_Context, "ret_inc", F);
+            llvm::BasicBlock *contBB =
+                llvm::BasicBlock::Create(m_Context, "ret_cont", F);
+
+            m_Builder.CreateCondBr(refNN, doIncBB, contBB);
+            m_Builder.SetInsertPoint(doIncBB);
+
+            llvm::Value *cnt =
+                m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
+            llvm::Value *inc = m_Builder.CreateAdd(
+                cnt,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+            m_Builder.CreateStore(inc, refPtr);
+
+            m_Builder.CreateBr(contBB);
+            m_Builder.SetInsertPoint(contBB);
+          }
+        }
+      }
+    }
+
     if (auto *varExpr =
             dynamic_cast<const VariableExpr *>(ret->ReturnValue.get())) {
       if (varExpr->IsUnique) {

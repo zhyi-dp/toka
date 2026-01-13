@@ -26,6 +26,21 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                                  arg.IsMutable || arg.IsRebindable)) &&
                         !arg.IsReference;
       llvm::Type *t = resolveType(arg.Type, arg.HasPointer || arg.IsReference);
+
+      // [Fix] Shared Pointer Arguments
+      // If argument is shared, the physical type must be the wrapper { T*, RC*
+      // }
+      if (arg.IsShared) {
+        llvm::Type *ptrTy = llvm::PointerType::getUnqual(pTy);
+        llvm::Type *refTy =
+            llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+        t = llvm::StructType::get(m_Context, {ptrTy, refTy});
+        // Shared pointers are passed by value (the wrapper struct) which fits
+        // in registers or byval We don't mark isCaptured because the wrapper
+        // itself is the value we want.
+        isCaptured = false;
+      }
+
       if (isCaptured)
         t = llvm::PointerType::getUnqual(pTy);
       if (t)
@@ -84,6 +99,18 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
     // Identity slot: always a pointer to the value or pointer to the pointer
     llvm::Type *allocaType = llvm::PointerType::getUnqual(pTy);
+
+    // [Fix] Shared Pointer Argument Handling
+    if (argDecl.IsShared) {
+      llvm::Type *ptrTy = llvm::PointerType::getUnqual(pTy);
+      llvm::Type *refTy =
+          llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+      llvm::StructType *st = llvm::StructType::get(m_Context, {ptrTy, refTy});
+      allocaType = st; // The alloca should store the wrapper struct
+
+      // Disable capture logic for Shared, we handle it explicitly
+      isCaptured = false;
+    }
 
     llvm::AllocaInst *alloca =
         m_Builder.CreateAlloca(allocaType, nullptr, argName + ".addr");
