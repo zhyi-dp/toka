@@ -113,6 +113,60 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   if (!objAddr)
     return nullptr;
 
+  // [Fix] Shared Pointer Auto-Dereference for Member Access
+  // If the object is a Shared Pointer (~T), it is physically { T*, RefCount* }.
+  // We must unwrap it to get T* before accessing members of T.
+
+  // Helper to peel decorators to find the VariableExpr
+  const Expr *inner = mem->Object.get();
+  while (true) {
+    if (auto *pe = dynamic_cast<const PostfixExpr *>(inner)) {
+      inner = pe->LHS.get();
+    } else if (auto *ue = dynamic_cast<const UnaryExpr *>(inner)) {
+      inner = ue->RHS.get();
+    } else {
+      break;
+    }
+  }
+
+  if (auto *ve = dynamic_cast<const VariableExpr *>(inner)) {
+    std::string baseName = ve->Name;
+    while (!baseName.empty() &&
+           (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
+            baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+      baseName = baseName.substr(1);
+    while (!baseName.empty() &&
+           (baseName.back() == '#' || baseName.back() == '?' ||
+            baseName.back() == '!'))
+      baseName.pop_back();
+
+    if (m_Symbols.count(baseName)) {
+      TokaSymbol &sym = m_Symbols[baseName];
+      if (sym.morphology == Morphology::Shared) {
+        // Shared Pointer ~T is { T*, RC* }
+        // We need T* (Data Pointer) to access members.
+
+        // Check if objAddr is already unwrapped.
+        // If emitEntityAddr returned a LoadInst from the symbol's alloca,
+        // it effectively loaded the first element (Data*) of the wrapper.
+        bool alreadyUnwrapped = false;
+        if (auto *li = llvm::dyn_cast<llvm::LoadInst>(objAddr)) {
+          if (li->getPointerOperand() == sym.allocaPtr) {
+            alreadyUnwrapped = true;
+          }
+        }
+
+        if (!alreadyUnwrapped) {
+          // Unwrap: Load T* from { T*, RC* }
+          // objAddr is the address of the wrapper.
+          // Since Data* is at offset 0, we can just load from objAddr.
+          objAddr = m_Builder.CreateLoad(m_Builder.getPtrTy(), objAddr,
+                                         "sh_unwrap_load");
+        }
+      }
+    }
+  }
+
   llvm::Type *objType = nullptr;
   if (auto *ptrTy = llvm::dyn_cast<llvm::PointerType>(objAddr->getType())) {
     if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
