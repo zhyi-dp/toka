@@ -24,10 +24,13 @@ PhysEntity CodeGen::genAllocExpr(const AllocExpr *ae) {
   llvm::Value *sizeVal =
       llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), size);
 
+  llvm::Value *arrayCount = nullptr;
+
   if (ae->IsArray && ae->ArraySize) {
     llvm::Value *count = genExpr(ae->ArraySize.get()).load(m_Builder);
     count = m_Builder.CreateIntCast(count, llvm::Type::getInt64Ty(m_Context),
                                     false);
+    arrayCount = count;
     sizeVal = m_Builder.CreateMul(sizeVal, count);
   }
 
@@ -36,11 +39,42 @@ PhysEntity CodeGen::genAllocExpr(const AllocExpr *ae) {
   llvm::Value *castedPtr = m_Builder.CreateBitCast(rawPtr, ptrTy);
 
   if (ae->Initializer) {
-    // For now ignore initializer logic for malloc or handle struct init
-    // We assume InitStructExpr is handled separately but if we have new
-    // Struct { ... } We need to store it to malloc'd memory
+    // Evaluate initializer once
     llvm::Value *initVal = genExpr(ae->Initializer.get()).load(m_Builder);
-    m_Builder.CreateStore(initVal, castedPtr);
+
+    if (arrayCount) {
+      // Loop to initialize all elements
+      llvm::BasicBlock *preHeaderBB = m_Builder.GetInsertBlock();
+      llvm::Function *F = preHeaderBB->getParent();
+      llvm::BasicBlock *loopBB =
+          llvm::BasicBlock::Create(m_Context, "alloc_init_loop", F);
+      llvm::BasicBlock *afterBB =
+          llvm::BasicBlock::Create(m_Context, "alloc_init_after", F);
+
+      m_Builder.CreateBr(loopBB);
+      m_Builder.SetInsertPoint(loopBB);
+
+      llvm::PHINode *iVar =
+          m_Builder.CreatePHI(llvm::Type::getInt64Ty(m_Context), 2, "i");
+      iVar->addIncoming(
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 0),
+          preHeaderBB);
+
+      // GEP to element
+      llvm::Value *elemPtr =
+          m_Builder.CreateInBoundsGEP(elemTy, castedPtr, iVar);
+      m_Builder.CreateStore(initVal, elemPtr);
+
+      llvm::Value *nextI = m_Builder.CreateAdd(
+          iVar, llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 1));
+      llvm::Value *cond = m_Builder.CreateICmpULT(nextI, arrayCount);
+      iVar->addIncoming(nextI, loopBB);
+
+      m_Builder.CreateCondBr(cond, loopBB, afterBB);
+      m_Builder.SetInsertPoint(afterBB);
+    } else {
+      m_Builder.CreateStore(initVal, castedPtr);
+    }
   }
   return castedPtr;
 }

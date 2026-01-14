@@ -44,12 +44,20 @@ fn check_raw_ptr(*?ptr: Data) {
 
 
 fn main() -> i32 {
-    auto *?q:Data = unsafe alloc [2]Data(val = 999, ptr_type = "raw_test")
+    auto *?q# = unsafe alloc [3]Data(val = 999, ptr_type = "raw_test")
     println("--- Before check_raw_ptr ---")
     check_raw_ptr(*?q)
     println("--- Before unsafe free ---")
+    if *?q# is *q#
+    {
+        unsafe {
+            q#[0].val = 100
+            q#[1].val = 200
+            q#[2].val = 300
+        }
+    }
     if *?q != nullptr {
-        unsafe free [2]*?q
+        unsafe free [3]*?q
         println("--- After unsafe free ---")
     }    
 
