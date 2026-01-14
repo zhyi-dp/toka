@@ -458,7 +458,9 @@ public:
 class FreeStmt : public Stmt {
 public:
   std::unique_ptr<Expr> Expression;
-  FreeStmt(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
+  std::unique_ptr<Expr> Count;
+  FreeStmt(std::unique_ptr<Expr> expr, std::unique_ptr<Expr> count = nullptr)
+      : Expression(std::move(expr)), Count(std::move(count)) {}
   std::string toString() const override { return "FreeStmt"; }
 };
 

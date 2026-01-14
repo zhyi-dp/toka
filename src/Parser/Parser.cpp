@@ -1567,9 +1567,14 @@ std::unique_ptr<Expr> Parser::parseUnsafeExpr() {
 
 std::unique_ptr<Stmt> Parser::parseFreeStmt() {
   Token tok = consume(TokenType::KwFree, "Expected 'free'");
+  std::unique_ptr<Expr> count = nullptr;
+  if (match(TokenType::LBracket)) {
+    count = parseExpr();
+    consume(TokenType::RBracket, "Expected ']'");
+  }
   auto expr = parseExpr();
   expectEndOfStatement();
-  auto node = std::make_unique<FreeStmt>(std::move(expr));
+  auto node = std::make_unique<FreeStmt>(std::move(expr), std::move(count));
   node->setLocation(tok, m_CurrentFile);
   return node;
 }

@@ -44,17 +44,19 @@ fn check_raw_ptr(*?ptr: Data) {
 
 
 fn main() -> i32 {
-    auto *?q:Data = unsafe alloc Data(val = 999, ptr_type = "raw_test")
+    auto *?q:Data = unsafe alloc [2]Data(val = 999, ptr_type = "raw_test")
     println("--- Before check_raw_ptr ---")
     check_raw_ptr(*?q)
     println("--- Before unsafe free ---")
     if *?q != nullptr {
-        unsafe free *?q
+        unsafe free [2]*?q
         println("--- After unsafe free ---")
     }    
 
     auto ~?r = new Data(val = 20, ptr_type = "shared")
     check_shared_ptr(~?r)
+    auto ~?rr = ~?r
+    check_shared_ptr(~?rr)
 
 
     auto ^?p = new Data(val = 10, ptr_type = "unique")
@@ -66,6 +68,9 @@ fn main() -> i32 {
         println("Unique pointer is nullptr confirmed")
         assert(false, "Unique  pointer is nullptr confirmed")
     }
+    auto ^?pp = ^?p
+    check_unique_ptr(^?pp)
+
 
     //auto ~?r = new Data(val = 20, ptr_type = "shared")
     //check_shared_ptr(~?r)

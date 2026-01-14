@@ -68,6 +68,7 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
     std::string typeName = "";
     bool isArray = false;
     uint64_t arraySize = 0;
+    llvm::Value *dynamicCount = nullptr;
 
     // Try to deduce type from expression
     const Expr *rawExpr = fs->Expression.get();
@@ -128,6 +129,13 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
         dropFunc = try2;
     }
 
+    // Use explicit count if provided, otherwise parsed array size
+    if (fs->Count) {
+      PhysEntity res = genExpr(fs->Count.get());
+      dynamicCount = res.load(m_Builder);
+      isArray = true;
+    }
+
     if (!dropFunc.empty()) {
       llvm::Function *dFn = m_Module->getFunction(dropFunc);
       if (dFn) {
@@ -135,8 +143,18 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
           // Loop and drop
           // We need the element size
           llvm::Type *elemTy = resolveType(typeName, false);
-          llvm::Value *countVal = llvm::ConstantInt::get(
-              llvm::Type::getInt64Ty(m_Context), arraySize);
+
+          llvm::Value *countVal = dynamicCount;
+          if (!countVal) {
+            countVal = llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context),
+                                              arraySize);
+          }
+
+          if (countVal->getType() != llvm::Type::getInt64Ty(m_Context)) {
+            countVal = m_Builder.CreateIntCast(
+                countVal, llvm::Type::getInt64Ty(m_Context), false,
+                "count_cast");
+          }
 
           llvm::BasicBlock *preHeaderBB = m_Builder.GetInsertBlock();
           llvm::Function *F = preHeaderBB->getParent();
