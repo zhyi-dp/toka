@@ -1,0 +1,6 @@
+fn main() -> i32 {
+    auto x# = 10
+    auto &r1 = &x#
+    auto &r2 = &x# // Error: already borrowed
+    return 0
+}

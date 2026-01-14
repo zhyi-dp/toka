@@ -1,0 +1,9 @@
+shape Data(v: i32)
+
+fn main() -> i32 {
+    auto ^p = new Data(v=10)
+    auto ^q = ^p // Explicit Move
+    // p is now invalid
+    auto x = p.v // Error: moved
+    return 0
+}

@@ -1,0 +1,14 @@
+import std/io::println
+
+fn main() -> i32 {
+    auto x# = 10
+    {
+        auto &y# = &x#
+        y# = 20
+        println("y = {}", y)
+    }
+    // y is dead. x should be free.
+    x# = 30
+    println("x = {}", x)
+    return 0
+}
