@@ -6,6 +6,24 @@
 
 namespace toka {
 
+std::string CodeGen::stripMorphology(const std::string &name) {
+  std::string s = name;
+  if (!s.empty() &&
+      (s[0] == '&' || s[0] == '*' || s[0] == '^' || s[0] == '~')) {
+    s = s.substr(1); // is a pointer or reference
+
+    if (!s.empty() &&
+        (s[0] == '$' || s[0] == '#' || s[0] == '?' || s[0] == '!')) {
+      s = s.substr(1); // pointer or reference with flags
+    }
+  }
+  if (!s.empty() && (s.back() == '$' || s.back() == '#' || s.back() == '?' ||
+                     s.back() == '!')) {
+    s.pop_back(); // soul entity with flags
+  }
+  return s;
+}
+
 llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                                      const std::string &overrideName,
                                      bool declOnly) {
@@ -71,13 +89,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     std::string argName = argDecl.Name;
 
     // 1. Strip morphology to get the base symbol name
-    while (!argName.empty() &&
-           (argName[0] == '*' || argName[0] == '#' || argName[0] == '&' ||
-            argName[0] == '^' || argName[0] == '~' || argName[0] == '!'))
-      argName = argName.substr(1);
-    while (!argName.empty() && (argName.back() == '#' ||
-                                argName.back() == '?' || argName.back() == '!'))
-      argName.pop_back();
+    argName = stripMorphology(argName);
 
     arg.setName(argName);
 
@@ -90,10 +102,9 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     }
 
     // 3. Address Layering Flags
-    bool isCaptured =
-        (pTy->isStructTy() || pTy->isArrayTy() || argDecl.IsMutable ||
-         argDecl.IsRebindable || argDecl.HasPointer) &&
-        !argDecl.IsReference;
+    bool isCaptured = (pTy->isStructTy() || pTy->isArrayTy() ||
+                       argDecl.IsMutable || argDecl.IsRebindable) &&
+                      !argDecl.IsReference;
     bool isExplicit = (argDecl.HasPointer || argDecl.IsUnique ||
                        argDecl.IsShared || argDecl.IsReference);
 
@@ -130,8 +141,17 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     // so getEntityAddr loads the real address from the alloca.
     if (isCaptured) {
       sym.mode = AddressingMode::Pointer;
-      if (sym.indirectionLevel == 0)
-        sym.indirectionLevel = 1;
+      // If the underlying type is ALREADY a pointer (Unique, Raw Pointer),
+      // Capture adds another layer.
+      // Struct: Data -> Capture Data* (Level 1)
+      // Unique: Data* -> Capture Data** (Level 2)
+      // Raw Pointer: Data* -> Passed as Data* (Level 1) [Not Captured by Expr]
+      if (argDecl.IsUnique) {
+        sym.indirectionLevel = 2;
+      } else {
+        if (sym.indirectionLevel == 0)
+          sym.indirectionLevel = 1;
+      }
     }
 
     sym.isRebindable = argDecl.IsRebindable;
@@ -145,8 +165,11 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     m_ValueIsMutable[argName] = sym.isMutable;
 
     if (!m_ScopeStack.empty()) {
-      m_ScopeStack.back().push_back(
-          {argName, alloca, argDecl.IsUnique, argDecl.IsShared});
+      // [Fix] Argument Lifecycle
+      // Arguments passed by In-Place Capture (Unique Pointers) are effectively
+      // borrowed. The Callee must NOT free them. Ownership remains with Caller.
+      // So we register them as IsUnique=false for cleanup purposes.
+      m_ScopeStack.back().push_back({argName, alloca, false, argDecl.IsShared});
     }
 
     idx++;
@@ -277,14 +300,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 }
 
 llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
-  std::string varName = var->Name;
-  while (!varName.empty() &&
-         (varName[0] == '*' || varName[0] == '#' || varName[0] == '&' ||
-          varName[0] == '^' || varName[0] == '~' || varName[0] == '!'))
-    varName = varName.substr(1);
-  while (!varName.empty() && (varName.back() == '#' || varName.back() == '?' ||
-                              varName.back() == '!'))
-    varName.pop_back();
+  std::string varName = stripMorphology(var->Name);
 
   llvm::Value *initVal = nullptr;
   std::string inferredTypeName = "";
@@ -426,16 +442,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       if (ve) {
         // Stripping logic for unique variable lookup could be added here if
         // needed, but m_NamedValues should have stripped keys now.
-        std::string veName = ve->Name;
-        while (!veName.empty() &&
-               (veName[0] == '*' || veName[0] == '#' || veName[0] == '&' ||
-                veName[0] == '^' || veName[0] == '~' || veName[0] == '!'))
-          veName = veName.substr(1);
-        while (!veName.empty() &&
-               (veName.back() == '#' || veName.back() == '?' ||
-                veName.back() == '!'))
-          veName.pop_back();
-
+        std::string veName = stripMorphology(ve->Name);
         if (m_ValueIsUnique[veName]) {
           llvm::Value *s = m_NamedValues[veName];
           if (s && llvm::isa<llvm::AllocaInst>(s))
@@ -580,7 +587,9 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       }
     }
 
-    if (!var->IsReference) { // Do not auto-drop references!
+    if (!var->IsReference &&
+        (!var->HasPointer || var->IsUnique ||
+         var->IsShared)) { // Do not auto-drop references or raw pointers!
       VariableScopeInfo info;
       info.Name = varName;
       info.Alloca = alloca;
@@ -590,7 +599,14 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       info.DropFunc = dropFunc;
       m_ScopeStack.back().push_back(info);
     }
+    // Debug Lookup
+    // llvm::errs() << "DEBUG: genFreeStmt lookup varName='" << varName
+    //              << "' count=" << m_ValueTypeNames.count(varName) << " val='"
+    //              << m_ValueTypeNames[varName] << "'\n";
   }
+  // Debug
+  // llvm::errs() << "DEBUG: genVariableDecl varName=" << varName
+  //              << " TypeName=" << m_ValueTypeNames[varName] << "\n";
 
   return nullptr;
 }
@@ -614,14 +630,7 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     }
 
     const auto &v = dest->Variables[i];
-    std::string vName = v.Name;
-    while (!vName.empty() &&
-           (vName[0] == '*' || vName[0] == '#' || vName[0] == '&' ||
-            vName[0] == '^' || vName[0] == '~' || vName[0] == '!'))
-      vName = vName.substr(1);
-    while (!vName.empty() &&
-           (vName.back() == '#' || vName.back() == '?' || vName.back() == '!'))
-      vName.pop_back();
+    std::string vName = stripMorphology(v.Name);
 
     llvm::Value *val = m_Builder.CreateExtractValue(initVal, i, vName);
     llvm::Type *ty = val->getType();
@@ -634,6 +643,32 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     m_ValueElementTypes[vName] = ty; // fallback for basic types
     m_ValueIsMutable[vName] = v.IsMutable;
     m_ValueIsNullable[vName] = v.IsNullable;
+
+    // [Fix] Register Type Name for Lookup (Auto Deduction)
+    // We attempt to extract the user-written type from AST (AllocExpr/NewExpr).
+    std::string deducedType = "";
+    Expr *rawInit = dest->Init.get();
+
+    // Peel UnsafeExpr wrapper
+    if (auto *ue = dynamic_cast<UnsafeExpr *>(rawInit)) {
+      rawInit = ue->Expression.get();
+    }
+
+    if (auto *ae = dynamic_cast<AllocExpr *>(rawInit)) {
+      deducedType = ae->TypeName; // "Data"
+    } else if (auto *ne = dynamic_cast<NewExpr *>(rawInit)) {
+      deducedType = ne->Type; // "Data"
+    }
+
+    // Strip decorators if present
+    deducedType = stripMorphology(deducedType);
+
+    llvm::errs() << "DEBUG: genDestructuringDecl vName=" << vName
+                 << " deducedType='" << deducedType << "'\n";
+
+    if (!deducedType.empty()) {
+      m_ValueTypeNames[vName] = deducedType;
+    }
 
     TokaSymbol sym;
     sym.allocaPtr = alloca;
@@ -903,10 +938,16 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
   // --- Dynamic Dispatch (dyn @Trait) ---
   std::string dynamicTypeName = "";
   if (auto *ve = dynamic_cast<const VariableExpr *>(expr->Object.get())) {
-    if (m_ValueTypeNames.count(ve->Name)) {
-      std::string t = m_ValueTypeNames[ve->Name];
-      if (t.size() >= 4 && t.substr(0, 3) == "dyn") {
-        dynamicTypeName = t;
+    std::string varName = stripMorphology(ve->Name);
+    if (m_ValueTypeNames.count(varName)) {
+      std::string vType = m_ValueTypeNames[varName];
+      // vType is e.g. *Data or Data
+      if (!vType.empty()) {
+        if (vType[0] == '*') {
+          dynamicTypeName = vType.substr(1); // Peel pointer
+        } else {
+          dynamicTypeName = vType; // Already base type (e.g. "Data")
+        }
       }
     }
   }

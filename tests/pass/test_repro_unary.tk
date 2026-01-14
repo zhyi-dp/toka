@@ -1,0 +1,74 @@
+import std/io::println
+import std/memory::assert
+
+shape Data (
+    val: i32,
+    ptr_type: str
+)
+
+impl Data@encap {
+    fn drop(self#) {
+        println("Dropping Data, ptr_type={} val={}", self.ptr_type, self.val)
+    }
+}
+
+fn check_unique_ptr(^?ptr: Data) {
+    if ^?ptr is ^ptr {
+        println("Unique pointer is not nullptr confirmed, ptr.val={}", ptr.val)
+        assert(ptr.val == 10, "Unique pointer is not nullptr confirmed")
+    } else {
+        println("Unique pointer is nullptr confirmed")
+        assert(false, "Unique pointer is nullptr confirmed")
+    }
+}
+
+fn check_shared_ptr(~?ptr: Data) {
+    if ~?ptr is ~ptr {
+        println("Shared pointer is not nullptr confirmed, ptr.val={}", ptr.val)
+        assert(ptr.val == 20, "Shared pointer is not nullptr confirmed")
+    } else {
+        println("Shared pointer is nullptr confirmed")
+        assert(false, "Shared  pointer is nullptr confirmed")
+    }
+}
+
+fn check_raw_ptr(*?ptr: Data) {
+    if *?ptr != nullptr {
+        println("Raw pointer is not nullptr confirmed")
+    } else {
+        println("Raw pointer is nullptr confirmed")
+        assert(false, "Raw  pointer is nullptr confirmed")
+    }
+}
+
+
+
+fn main() -> i32 {
+    auto *?q:Data = unsafe alloc Data(val = 999, ptr_type = "raw_test")
+    println("--- Before check_raw_ptr ---")
+    check_raw_ptr(*?q)
+    println("--- Before unsafe free ---")
+    if *?q != nullptr {
+        unsafe free *?q
+        println("--- After unsafe free ---")
+    }    
+
+    auto ~?r = new Data(val = 20, ptr_type = "shared")
+    check_shared_ptr(~?r)
+
+
+    auto ^?p = new Data(val = 10, ptr_type = "unique")
+    check_unique_ptr(^?p)
+    if ^?p is ^p {
+        println("Unique pointer is not nullptr confirmed, ptr.val={}", p.val)
+        assert(p.val == 10, "Unique pointer is not nullptr confirmed")
+    } else {
+        println("Unique pointer is nullptr confirmed")
+        assert(false, "Unique  pointer is nullptr confirmed")
+    }
+
+    //auto ~?r = new Data(val = 20, ptr_type = "shared")
+    //check_shared_ptr(~?r)
+
+    return 0
+}

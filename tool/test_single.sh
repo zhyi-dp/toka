@@ -2,6 +2,13 @@
 
 # tool/test_single.sh - Run a single Toka test case
 
+# Auto-Compile Compiler if needed
+make -C build -j8
+if [ $? -ne 0 ]; then
+    echo "Compiler Build Failed"
+    exit 1
+fi
+
 if [ -z "$1" ]; then
   echo "Usage: $0 <tk_file>"
   echo "Example: $0 tests/pass/test_small.tk"

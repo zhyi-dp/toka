@@ -63,6 +63,127 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
     ptrAddr = genAddr(fs->Expression.get());
 
   if (freeHook && ptrAddr) {
+    // [Feature] Drop before Free for Raw Pointers
+    // Check if the type being freed has a drop method
+    std::string typeName = "";
+    bool isArray = false;
+    uint64_t arraySize = 0;
+
+    // Try to deduce type from expression
+    const Expr *rawExpr = fs->Expression.get();
+    // Peel layers (*, ?, etc.)
+    while (true) {
+      if (auto *ue = dynamic_cast<const UnaryExpr *>(rawExpr)) {
+        rawExpr = ue->RHS.get();
+      } else if (auto *pe = dynamic_cast<const PostfixExpr *>(rawExpr)) {
+        rawExpr = pe->LHS.get();
+      } else {
+        break;
+      }
+    }
+
+    if (auto *ve = dynamic_cast<const VariableExpr *>(rawExpr)) {
+      std::string varName = stripMorphology(ve->Name);
+
+      // Debug Lookup
+      // llvm::errs() << "DEBUG: genFreeStmt lookup varName='" << varName
+      //              << "' count=" << m_ValueTypeNames.count(varName) << "
+      //              val='"
+      //              << m_ValueTypeNames[varName] << "'\n";
+
+      if (m_ValueTypeNames.count(varName)) {
+        std::string vType = m_ValueTypeNames[varName];
+        // vType is e.g. *Data or *[10]Data
+        if (!vType.empty()) {
+          if (vType[0] == '*') {
+            typeName = vType.substr(1); // Peel pointer
+          } else {
+            typeName = vType;
+          }
+        }
+      }
+    }
+
+    // Handle Array Type parsing (e.g. [10]Data)
+    if (!typeName.empty() && typeName[0] == '[') {
+      size_t close = typeName.find(']');
+      if (close != std::string::npos) {
+        std::string sizeStr = typeName.substr(1, close - 1);
+        try {
+          arraySize = std::stoull(sizeStr);
+          typeName = typeName.substr(close + 1);
+          isArray = true;
+        } catch (...) {
+        }
+      }
+    }
+
+    std::string dropFunc = "";
+    if (!typeName.empty()) {
+      std::string try1 = "encap_" + typeName + "_drop";
+      std::string try2 = typeName + "_drop"; // Legacy
+      if (m_Functions.count(try1))
+        dropFunc = try1;
+      else if (m_Functions.count(try2))
+        dropFunc = try2;
+    }
+
+    if (!dropFunc.empty()) {
+      llvm::Function *dFn = m_Module->getFunction(dropFunc);
+      if (dFn) {
+        if (isArray) {
+          // Loop and drop
+          // We need the element size
+          llvm::Type *elemTy = resolveType(typeName, false);
+          llvm::Value *countVal = llvm::ConstantInt::get(
+              llvm::Type::getInt64Ty(m_Context), arraySize);
+
+          llvm::BasicBlock *preHeaderBB = m_Builder.GetInsertBlock();
+          llvm::Function *F = preHeaderBB->getParent();
+          llvm::BasicBlock *loopBB =
+              llvm::BasicBlock::Create(m_Context, "drop_loop", F);
+          llvm::BasicBlock *afterBB =
+              llvm::BasicBlock::Create(m_Context, "drop_after", F);
+
+          m_Builder.CreateBr(loopBB);
+          m_Builder.SetInsertPoint(loopBB);
+
+          llvm::PHINode *iVar =
+              m_Builder.CreatePHI(llvm::Type::getInt64Ty(m_Context), 2, "i");
+          iVar->addIncoming(
+              llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 0),
+              preHeaderBB);
+
+          // GEP to element
+          // ptrAddr is the base pointer (void* or T*). Cast to T*
+          llvm::Value *typedBase = m_Builder.CreateBitCast(
+              ptrAddr, llvm::PointerType::getUnqual(elemTy));
+          llvm::Value *elemPtr =
+              m_Builder.CreateInBoundsGEP(elemTy, typedBase, iVar);
+
+          m_Builder.CreateCall(dFn, {elemPtr});
+
+          llvm::Value *nextI = m_Builder.CreateAdd(
+              iVar,
+              llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 1));
+          llvm::Value *cond = m_Builder.CreateICmpULT(nextI, countVal);
+          iVar->addIncoming(nextI, loopBB);
+
+          m_Builder.CreateCondBr(cond, loopBB, afterBB);
+          m_Builder.SetInsertPoint(afterBB);
+
+        } else {
+          // Single drop
+          // Cast ptrAddr to correct type if needed (though opaque pointers
+          // handling makes it easier, drop expects T*)
+          llvm::Type *elemTy = resolveType(typeName, false);
+          llvm::Value *typedPtr = m_Builder.CreateBitCast(
+              ptrAddr, llvm::PointerType::getUnqual(elemTy));
+          m_Builder.CreateCall(dFn, {typedPtr});
+        }
+      }
+    }
+
     llvm::Value *casted =
         m_Builder.CreateBitCast(ptrAddr, m_Builder.getPtrTy());
     m_Builder.CreateCall(freeHook, casted);

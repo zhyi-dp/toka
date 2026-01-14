@@ -197,6 +197,9 @@ private:
   llvm::Value *genDestructuringDecl(const DestructuringDecl *stmt);
   llvm::Value *genDeleteStmt(const DeleteStmt *stmt);
   llvm::Value *genFreeStmt(const FreeStmt *stmt);
+
+  // Helpers
+  std::string stripMorphology(const std::string &name);
   llvm::Value *genUnsafeStmt(const UnsafeStmt *stmt);
   llvm::Value *genExprStmt(const ExprStmt *stmt);
 };

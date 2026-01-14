@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Auto-Compile Compiler if needed
+make -C build -j8
+if [ $? -ne 0 ]; then
+    echo "Compiler Build Failed"
+    exit 1
+fi
+
 # Configuration
 TOKAC="./build/src/tokac"
 GREEN='\033[0;32m'
