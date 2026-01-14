@@ -301,13 +301,48 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
 llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   std::string varName = stripMorphology(var->Name);
+  std::cerr << "DEBUG: genVariableDecl: " << varName
+            << " (TypeName: " << var->TypeName << ")\n";
 
   llvm::Value *initVal = nullptr;
+  llvm::Type *decayArrayType = nullptr;
   std::string inferredTypeName = "";
   if (var->Init) {
     m_CFStack.push_back({varName, nullptr, nullptr, nullptr});
     PhysEntity initEnt = genExpr(var->Init.get());
-    initVal = initEnt.load(m_Builder);
+
+    // [Fix] Array-to-Pointer Decay Interception
+    // Check if RHS is physically an array type that should decay to a pointer
+    if (var->HasPointer || var->IsReference) {
+      if (var->Init) {
+        if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
+          if (ue->Op == TokenType::Star) {
+            if (auto *ve = dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
+              std::string veName = stripMorphology(ve->Name);
+              if (m_ValueElementTypes.count(veName)) {
+                llvm::Type *t = m_ValueElementTypes[veName];
+                if (t && t->isArrayTy()) {
+                  decayArrayType = t;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (decayArrayType) {
+
+      llvm::Value *arrPtr =
+          initEnt.value; // PhysEntity.value gives address due to genUnaryExpr
+      llvm::Value *zero =
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0);
+      initVal = m_Builder.CreateInBoundsGEP(decayArrayType, arrPtr,
+                                            {zero, zero}, "array.decay");
+    } else {
+      initVal = initEnt.load(m_Builder);
+    }
+
     inferredTypeName = initEnt.typeName;
     m_CFStack.pop_back();
     if (!initVal)
@@ -381,6 +416,13 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
             tn = tn.substr(1);
           elemTy = resolveType(tn, false);
         }
+      } else if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
+        // [Fix] Handle *var for type deduction
+        if (ue->Op == TokenType::Star) {
+          if (auto *ve = dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
+            elemTy = m_ValueElementTypes[ve->Name];
+          }
+        }
       } else if (initVal->getType()->isPointerTy()) {
         // Fallback: use the value type itself as elem
         elemTy = initVal->getType();
@@ -401,11 +443,32 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
 
   // The Form (Identity) is always what resolveType returns for the full name
   if (!type) { // Only try to resolve if type hasn't been determined yet
-    type = resolveType(var->TypeName, var->HasPointer || var->IsUnique ||
-                                          var->IsShared || var->IsReference);
+    if (!var->TypeName.empty()) {
+      type = resolveType(var->TypeName, var->HasPointer || var->IsUnique ||
+                                            var->IsShared || var->IsReference);
+    } else if (elemTy && (var->HasPointer || var->IsReference)) {
+      // [Fix] Auto-deduction with pointer modifiers/decorators
+      // If we have 'auto *p = ...', we deduced elemTy from initVal, but we
+      // need to ensure 'type' is a pointer to elemTy.
+      // Additionally, if elemTy is an Array, we must decay it to Pointer to
+      // Element.
+      llvm::Type *innerTy = elemTy;
+      if (innerTy->isArrayTy()) {
+        innerTy = innerTy->getArrayElementType();
+      }
+      type = llvm::PointerType::getUnqual(innerTy);
+    }
   }
   if (!type && initVal)
     type = initVal->getType();
+
+  // [Fix] Update the element type map with the FINAL resolved type
+  // This ensures that pointers decayed from arrays are registered as pointers
+  // to the ELEMENT type (e.g. i32), not the ARRAY type ([N]i32).
+  if (decayArrayType) {
+    elemTy = decayArrayType->getArrayElementType();
+    m_ValueElementTypes[varName] = elemTy;
+  }
 
   // CRITICAL: For Shared variables, ALWAYS use the handle struct { ptr, ptr
   // }, regardless of what resolveType returned. This ensures all Shared
@@ -539,6 +602,24 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       } else if (initVal->getType()->isIntegerTy() && type->isIntegerTy()) {
         initVal = m_Builder.CreateIntCast(initVal, type, true);
       } else {
+        if (initVal->getType() != type) {
+          std::string s1 = "Unknown", s2 = "Unknown";
+          if (type) {
+            llvm::raw_string_ostream os1(s1);
+            type->print(os1);
+          }
+          if (initVal) {
+            llvm::raw_string_ostream os2(s2);
+            initVal->getType()->print(os2);
+          }
+          error(var, "Internal Error: Type mismatch in VariableDecl despite "
+                     "Sema: Expected " +
+                         s1 + ", Got " + s2);
+          return nullptr;
+        }
+      }
+
+      if (initVal->getType() != type) {
         std::string s1 = "Unknown", s2 = "Unknown";
         if (type) {
           llvm::raw_string_ostream os1(s1);
@@ -548,14 +629,16 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
           llvm::raw_string_ostream os2(s2);
           initVal->getType()->print(os2);
         }
+
         error(var, "Internal Error: Type mismatch in VariableDecl despite "
                    "Sema: Expected " +
                        s1 + ", Got " + s2);
         return nullptr;
       }
     }
-    m_Builder.CreateStore(initVal, alloca);
   }
+
+  m_Builder.CreateStore(initVal, alloca);
 
   // Automatic Drop Registration
   if (!m_ScopeStack.empty()) {

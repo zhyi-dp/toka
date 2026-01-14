@@ -9,3 +9,4 @@
 - 生成 IR 到.ll 文件：build/src/tokac tests/pass/xxx.tk > x.ll
 - 执行.ll 文件：lli x.ll
 - git commit -m 信息不能包含可能被 bash/zsh 等截断内容的符号
+- 如果遇到编译器代码出现大括号不匹配的问题，可以使用 tool/check_braces.py 工具辅助定位
