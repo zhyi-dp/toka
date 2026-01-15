@@ -670,7 +670,8 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
       // Find elemTy
       llvm::Type *elemTy = nullptr;
       if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-        elemTy = m_ValueElementTypes[ve->Name];
+        if (m_Symbols.count(ve->Name))
+          elemTy = m_Symbols[ve->Name].soulType;
       } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(lhs)) {
         elemTy = gep->getResultElementType();
       }
@@ -691,7 +692,8 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     if (lhs->getType()->isPointerTy()) {
       llvm::Type *elemTy = nullptr;
       if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-        elemTy = m_ValueElementTypes[ve->Name];
+        if (m_Symbols.count(ve->Name))
+          elemTy = m_Symbols[ve->Name].soulType;
       }
       if (!elemTy)
         elemTy = llvm::Type::getInt8Ty(m_Context);
@@ -778,7 +780,8 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
       return nullptr;
     llvm::Type *type = nullptr;
     if (auto *var = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-      type = m_ValueElementTypes[var->Name];
+      if (m_Symbols.count(var->Name))
+        type = m_Symbols[var->Name].soulType;
     } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
       type = gep->getResultElementType();
     } else if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(addr)) {
@@ -948,7 +951,7 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
     if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
       llvm::Value *alloca = m_NamedValues[v->Name];
       if (alloca) {
-        return m_Builder.CreateLoad(m_ValueTypes[v->Name], alloca,
+        return m_Builder.CreateLoad(m_Symbols[v->Name].soulType, alloca,
                                     v->Name + "_shared");
       }
     }
@@ -1019,7 +1022,27 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
 }
 
 PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
-  llvm::Value *soulAddr = getEntityAddr(var->Name);
+  llvm::Value *soulAddr = nullptr;
+
+  // Check morphology to decide proper address (Soul vs Handle)
+  // For Shared variables, we want the Handle ({ptr, refptr}*) as the value
+  // so that assignments trigger RefCounting/Sharing, not Deep Copying.
+  bool isShared = false;
+  std::string varName = var->Name;
+  std::string checkName = varName;
+  // Strip morphology for lookup
+  while (!checkName.empty() &&
+         (checkName.back() == '?' || checkName.back() == '!'))
+    checkName.pop_back();
+
+  if (m_Symbols.count(checkName) &&
+      m_Symbols[checkName].morphology == Morphology::Shared) {
+    soulAddr = getIdentityAddr(checkName);
+    isShared = true;
+  } else {
+    soulAddr = getEntityAddr(var->Name);
+  }
+
   if (!soulAddr) {
     return nullptr;
   }
@@ -1584,8 +1607,8 @@ PhysEntity CodeGen::genForExpr(const ForExpr *fe) {
 
   // Register in legacy and new symbol tables
   m_NamedValues[vName] = vAlloca;
-  m_ValueTypes[vName] = elem->getType();
-  m_ValueElementTypes[vName] = elemTy;
+  // m_ValueTypes[vName] = elem->getType(); // LEGACY REMOVED
+  // m_ValueElementTypes[vName] = elemTy; // LEGACY REMOVED
 
   TokaSymbol sym;
   sym.allocaPtr = vAlloca;
@@ -1656,8 +1679,8 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
     m_Builder.CreateStore(val, alloca);
 
     m_NamedValues[pName] = alloca;
-    m_ValueTypes[pName] = allocaType;
-    m_ValueElementTypes[pName] = targetType;
+    // m_ValueTypes[pName] = allocaType; // LEGACY REMOVED
+    // m_ValueElementTypes[pName] = targetType; // LEGACY REMOVED
     // Legacy maps removed
     // m_ValueIsReference[pName] = pat->IsReference;
     // m_ValueIsMutable[pName] = pat->IsMutable;
@@ -2185,8 +2208,8 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         std::string concreteName = "";
         const Expr *argExpr = call->Args[i].get();
         if (auto *ve = dynamic_cast<const VariableExpr *>(argExpr)) {
-          if (m_ValueElementTypes.count(ve->Name)) {
-            llvm::Type *ct = m_ValueElementTypes[ve->Name];
+          if (m_Symbols.count(ve->Name)) {
+            llvm::Type *ct = m_Symbols[ve->Name].soulType;
             if (m_TypeToName.count(ct))
               concreteName = m_TypeToName[ct];
           }
@@ -2270,7 +2293,8 @@ PhysEntity CodeGen::genPostfixExpr(const PostfixExpr *post) {
     return nullptr;
   llvm::Type *type = nullptr;
   if (auto *var = dynamic_cast<const VariableExpr *>(post->LHS.get())) {
-    type = m_ValueElementTypes[var->Name];
+    if (m_Symbols.count(var->Name))
+      type = m_Symbols[var->Name].soulType;
   } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
     type = gep->getResultElementType();
   } else if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(addr)) {

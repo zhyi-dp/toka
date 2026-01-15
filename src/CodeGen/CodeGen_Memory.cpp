@@ -368,8 +368,8 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
         while (!baseName.empty() &&
                (baseName[0] == '*' || baseName[0] == '&' || baseName[0] == '#'))
           baseName = baseName.substr(1);
-        if (m_ValueElementTypes.count(baseName))
-          objType = m_ValueElementTypes[baseName];
+        if (m_Symbols.count(baseName))
+          objType = m_Symbols[baseName].soulType;
       }
     }
   }
@@ -722,6 +722,21 @@ llvm::Value *CodeGen::getEntityAddr(const std::string &name) {
   }
 
   // 2. Pointer Mode: Peeling Recursive loads
+  // Special Handling for Shared: Extract Data Pointer from Handle
+  if (sym.morphology == Morphology::Shared) {
+    // allocaPtr is {T*, Ref*}*. We want T*.
+    // GEP 0 -> T**. Load -> T*.
+    llvm::Type *elem0Ty = llvm::PointerType::getUnqual(sym.soulType);
+    llvm::Type *elem1Ty =
+        llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+    llvm::Type *structTy = llvm::StructType::get(m_Context, {elem0Ty, elem1Ty});
+
+    llvm::Value *dataPtrAddr = m_Builder.CreateStructGEP(
+        structTy, sym.allocaPtr, 0, baseName + ".shared_data_gep");
+    return m_Builder.CreateLoad(m_Builder.getPtrTy(), dataPtrAddr,
+                                baseName + ".shared_data_ptr");
+  }
+
   // LLVM 17 requires explicit type for loads.
   for (int i = 0; i < sym.indirectionLevel; ++i) {
     current = m_Builder.CreateLoad(m_Builder.getPtrTy(), current,

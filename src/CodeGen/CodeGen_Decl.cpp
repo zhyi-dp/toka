@@ -45,7 +45,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
   llvm::errs() << "DEBUG: genFunction " << funcName
                << " (AST Name: " << func->Name << ")\n";
   m_Functions[funcName] = func;
-  m_ValueElementTypes.clear();
+  // m_ValueElementTypes.clear(); // LEGACY REMOVED
   m_Symbols.clear();
 
   llvm::Function *f = m_Module->getFunction(funcName);
@@ -203,10 +203,9 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     m_Symbols[argName] = sym;
 
     // Legacy maps for compatibility
-    m_ValueTypeNames[argName] = argDecl.Type;
-    m_ValueElementTypes[argName] =
-        sym.soulType; // Now comes from fillSymbolMetadata
-    m_ValueTypes[argName] = allocaType;
+    // m_ValueTypeNames[argName] = argDecl.Type;
+    // m_ValueElementTypes[argName] = sym.soulType; // Now comes from
+    // fillSymbolMetadata m_ValueTypes[argName] = allocaType;
     m_NamedValues[argName] = alloca;
     // m_ValueIsMutable[argName] = sym.isMutable; // LEGACY REMOVED
 
@@ -365,8 +364,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
           if (ue->Op == TokenType::Star) {
             if (auto *ve = dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
               std::string veName = stripMorphology(ve->Name);
-              if (m_ValueElementTypes.count(veName)) {
-                llvm::Type *t = m_ValueElementTypes[veName];
+              if (m_Symbols.count(veName)) {
+                llvm::Type *t = m_Symbols[veName].soulType;
                 if (t && t->isArrayTy()) {
                   decayArrayType = t;
                 }
@@ -433,12 +432,15 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     // for safety)
     if (!elemTy) {
       if (auto *ve = dynamic_cast<const VariableExpr *>(var->Init.get())) {
-        elemTy = m_ValueElementTypes[ve->Name];
+        if (m_Symbols.count(ve->Name))
+          elemTy = m_Symbols[ve->Name].soulType;
       } else if (auto *ae =
                      dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
         if (auto *vae =
-                dynamic_cast<const VariableExpr *>(ae->Expression.get()))
-          elemTy = m_ValueElementTypes[vae->Name];
+                dynamic_cast<const VariableExpr *>(ae->Expression.get())) {
+          if (m_Symbols.count(vae->Name))
+            elemTy = m_Symbols[vae->Name].soulType;
+        }
       } else if (auto *allocExpr =
                      dynamic_cast<const AllocExpr *>(var->Init.get())) {
         // auto *p = alloc Point(...) -> elemTy should be Point
@@ -471,7 +473,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
         // [Fix] Handle *var for type deduction
         if (ue->Op == TokenType::Star) {
           if (auto *ve = dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
-            elemTy = m_ValueElementTypes[ve->Name];
+            if (m_Symbols.count(ve->Name))
+              elemTy = m_Symbols[ve->Name].soulType;
           }
         }
       } else if (initVal->getType()->isPointerTy()) {
@@ -489,8 +492,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   }
 
   // Ensure m_ValueElementTypes is set early
-  m_ValueElementTypes[varName] = elemTy;
-  m_ValueTypeNames[varName] = var->TypeName;
+  // m_ValueElementTypes[varName] = elemTy; // LEGACY REMOVED
+  // m_ValueTypeNames[varName] = var->TypeName; // LEGACY REMOVED
 
   // The Form (Identity) is always what resolveType returns for the full name
   if (!type) { // Only try to resolve if type hasn't been determined yet
@@ -518,7 +521,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   // to the ELEMENT type (e.g. i32), not the ARRAY type ([N]i32).
   if (decayArrayType) {
     elemTy = decayArrayType->getArrayElementType();
-    m_ValueElementTypes[varName] = elemTy;
+    // m_ValueElementTypes[varName] = elemTy; // LEGACY REMOVED
   }
 
   // CRITICAL: For Shared variables, ALWAYS use the handle struct { ptr, ptr
@@ -578,8 +581,10 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
         llvm::Value *inc = m_Builder.CreateAdd(
             c, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
         m_Builder.CreateStore(inc, ref);
-      } else if (initVal->getType()->isPointerTy()) {
-        if (llvm::isa<llvm::ConstantPointerNull>(initVal)) {
+      } else {
+        // Promote to Shared Handle (Ptr or Value)
+        if (initVal->getType()->isPointerTy() &&
+            llvm::isa<llvm::ConstantPointerNull>(initVal)) {
           // Null shared pointer initialization
           llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
           llvm::Type *refTy =
@@ -599,25 +604,54 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
           type = st;
         } else {
           llvm::Function *mallocFn = m_Module->getFunction("malloc");
+          if (!mallocFn) {
+            std::vector<llvm::Type *> args;
+            args.push_back(llvm::Type::getInt64Ty(m_Context));
+            llvm::FunctionType *ft =
+                llvm::FunctionType::get(m_Builder.getPtrTy(), args, false);
+            mallocFn = llvm::Function::Create(
+                ft, llvm::Function::ExternalLinkage, "malloc", m_Module.get());
+          }
           if (mallocFn) {
-            llvm::Value *size =
+            // 1. Allocate RefCount
+            llvm::Value *rcSize =
                 llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 4);
-            llvm::Value *refPtr = m_Builder.CreateCall(mallocFn, size);
+            llvm::Value *refPtr = m_Builder.CreateCall(mallocFn, rcSize);
             refPtr = m_Builder.CreateBitCast(
                 refPtr, llvm::PointerType::getUnqual(
                             llvm::Type::getInt32Ty(m_Context)));
             m_Builder.CreateStore(
                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1),
                 refPtr);
+
+            // 2. Prepare Data Pointer
+            llvm::Value *dataPtr = nullptr;
+            if (initVal->getType()->isPointerTy()) {
+              // Already a pointer, use it (assume ownership transfer or raw ->
+              // shared promotion)
+              dataPtr = m_Builder.CreateBitCast(
+                  initVal, llvm::PointerType::getUnqual(elemTy));
+            } else {
+              // Value Type -> Allocate and Copy
+              llvm::DataLayout dl(m_Module.get());
+              uint64_t dataSz = dl.getTypeAllocSize(elemTy);
+              llvm::Value *valSize = llvm::ConstantInt::get(
+                  llvm::Type::getInt64Ty(m_Context), dataSz);
+              dataPtr = m_Builder.CreateCall(mallocFn, valSize);
+              dataPtr = m_Builder.CreateBitCast(
+                  dataPtr, llvm::PointerType::getUnqual(elemTy));
+              m_Builder.CreateStore(initVal, dataPtr);
+            }
+
+            // 3. Create Handle
             llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
             llvm::Type *refTy =
                 llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
             llvm::StructType *st =
                 llvm::StructType::get(m_Context, {ptrTy, refTy});
             llvm::Value *u = llvm::UndefValue::get(st);
-            llvm::Value *ci = m_Builder.CreateBitCast(initVal, ptrTy);
             initVal = m_Builder.CreateInsertValue(
-                m_Builder.CreateInsertValue(u, ci, 0), refPtr, 1);
+                m_Builder.CreateInsertValue(u, dataPtr, 0), refPtr, 1);
             type = st;
           }
         }
@@ -640,7 +674,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   m_Symbols[varName] = sym;
 
   m_NamedValues[varName] = alloca;
-  m_ValueTypes[varName] = type;
+  // m_ValueTypes[varName] = type; // LEGACY REMOVED
   // LEGACY MAPS REMOVED
   // m_ValueIsUnique[varName] = var->IsUnique;
   // m_ValueIsShared[varName] = var->IsShared;
@@ -776,10 +810,9 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     m_Builder.CreateStore(val, alloca);
 
     m_NamedValues[vName] = alloca;
-    m_ValueTypes[vName] = ty;
-    m_ValueElementTypes[vName] = ty; // fallback for basic types
-    // LEGACY MAPS REMOVED
-    // m_ValueIsMutable[vName] = v.IsMutable;
+    // m_ValueTypes[vName] = ty; // LEGACY REMOVED
+    // m_ValueElementTypes[vName] = ty; // fallback for basic types // LEGACY
+    // REMOVED LEGACY MAPS REMOVED m_ValueIsMutable[vName] = v.IsMutable;
     // m_ValueIsNullable[vName] = v.IsNullable;
 
     // [Fix] Register Type Name for Lookup (Auto Deduction)
@@ -881,7 +914,7 @@ void CodeGen::genGlobal(const Stmt *stmt) {
     }
 
     m_NamedValues[var->Name] = globalVar;
-    m_ValueTypes[var->Name] = type;
+    // m_ValueTypes[var->Name] = type; // LEGACY REMOVED
 
     TokaSymbol sym;
     sym.allocaPtr = globalVar;
@@ -1171,8 +1204,8 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
 
     if (!structTy) {
       if (auto *ve = dynamic_cast<const VariableExpr *>(expr->Object.get())) {
-        if (m_ValueElementTypes.count(ve->Name)) {
-          structTy = m_ValueElementTypes[ve->Name];
+        if (m_Symbols.count(ve->Name)) {
+          structTy = m_Symbols[ve->Name].soulType;
         }
       }
     }

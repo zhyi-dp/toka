@@ -116,18 +116,23 @@ private:
   std::map<std::string, TokaSymbol> m_Symbols;
   std::string m_CurrentSelfType;
   std::map<std::string, std::string> m_ValueTypeNames;
-  std::map<std::string, llvm::Type *> m_ValueElementTypes;
+  std::map<std::string, llvm::Value *> m_NamedValues;
+
+  // Legacy maps removed
+  // std::map<std::string, llvm::Type *> m_ValueTypes;
+  // std::map<std::string, llvm::Type *> m_ValueElementTypes;
+  // Legacy boolean maps removed
+
+  // NOTE: These are NOT legacy. They are essential context tracking maps.
+  // Although m_ValueElementTypes is redundant with m_Symbols for Variables, it
+  // might be used elsewhere. But m_StructTypes, m_Shapes, etc. are absolutely
+  // required.
   std::map<std::string, llvm::StructType *> m_StructTypes;
   std::map<std::string, std::vector<std::string>> m_StructFieldNames;
   std::map<std::string, std::string> m_TypeAliases;
   std::map<std::string, const ShapeDecl *> m_Shapes;
   std::map<std::string, const TraitDecl *> m_Traits;
   std::map<llvm::Type *, std::string> m_TypeToName;
-
-  // Legacy Mapping (Sema/CodeGen interoperability)
-  std::map<std::string, llvm::Value *> m_NamedValues;
-  std::map<std::string, llvm::Type *> m_ValueTypes;
-  // Legacy boolean maps removed
 
   struct CFInfo {
     std::string Label;
