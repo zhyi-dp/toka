@@ -1929,6 +1929,14 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
     calleeName = calleeName.substr(5);
   }
   llvm::Function *callee = m_Module->getFunction(calleeName);
+  if (!callee && call->ResolvedFn) {
+    genFunction(call->ResolvedFn, "", true);
+    callee = m_Module->getFunction(call->ResolvedFn->Name);
+  }
+  if (!callee && call->ResolvedExtern) {
+    genExtern(call->ResolvedExtern);
+    callee = m_Module->getFunction(call->ResolvedExtern->Name);
+  }
   if (!callee) {
     // Check for ADT Constructor (Type::Member)
     std::string callName = call->Callee;

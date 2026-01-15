@@ -94,7 +94,8 @@ public:
   bool isBoolean() const override { return Name == "bool"; }
   bool isInteger() const override {
     return Name == "i32" || Name == "i64" || Name == "u32" || Name == "u64" ||
-           Name == "char"; // char is integer-like
+           Name == "i8" || Name == "u8" || Name == "i16" || Name == "u16" ||
+           Name == "usize" || Name == "char";
   }
   bool isFloatingPoint() const override {
     return Name == "f32" || Name == "f64";
@@ -121,6 +122,7 @@ public:
       : PointerType(RawPtr, pointee) {}
   std::string toString() const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  bool isCompatibleWith(const Type &target) const override;
 };
 
 class UniquePointerType : public PointerType {
@@ -129,6 +131,7 @@ public:
       : PointerType(UniquePtr, pointee) {}
   std::string toString() const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  bool isCompatibleWith(const Type &target) const override;
 };
 
 class SharedPointerType : public PointerType {
@@ -137,6 +140,7 @@ public:
       : PointerType(SharedPtr, pointee) {}
   std::string toString() const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  bool isCompatibleWith(const Type &target) const override;
 };
 
 class ReferenceType : public PointerType {
@@ -145,6 +149,7 @@ public:
       : PointerType(Reference, pointee) {}
   std::string toString() const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  bool isCompatibleWith(const Type &target) const override;
 };
 
 // --- Composite Types ---

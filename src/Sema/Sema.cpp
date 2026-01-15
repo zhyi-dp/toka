@@ -547,6 +547,32 @@ bool allPathsJump(Stmt *S) {
 }
 } // namespace
 
+// Helper to strip attributes and morphology from a type string for Map lookups
+static std::string getSoulName(const std::string &TypeStr) {
+  if (TypeStr.empty())
+    return "";
+  std::string s = TypeStr;
+  // 1. Strip suffixes
+  while (!s.empty()) {
+    char back = s.back();
+    if (back == '#' || back == '?' || back == '!')
+      s.pop_back();
+    else
+      break;
+  }
+  // 2. Strip prefixes
+  size_t start = 0;
+  while (start < s.size()) {
+    char c = s[start];
+    if (c == '*' || c == '^' || c == '~' || c == '&' || c == '#' || c == '?' ||
+        c == '!')
+      start++;
+    else
+      break;
+  }
+  return s.substr(start);
+}
+
 void Sema::checkFunction(FunctionDecl *Fn) {
   CurrentFunctionReturnType = Fn->ReturnType;
   enterScope(); // Function scope
@@ -832,24 +858,21 @@ void Sema::checkStmt(Stmt *S) {
     }
     clearStmtBorrows();
   } else if (auto *Destruct = dynamic_cast<DestructuringDecl *>(S)) {
-    std::string InitType = resolveType(checkExprStr(Destruct->Init.get()));
-    std::string DeclType = resolveType(Destruct->TypeName);
+    // Stage 1: Resolve Types using the new Type system
+    auto initType = checkExpr(Destruct->Init.get());
+    auto declType = toka::Type::fromString(Destruct->TypeName);
 
-    // Basic check: DeclType should match InitType (or InitType is
-    // tuple/struct compatible)
-    if (DeclType != InitType && InitType != "unknown" &&
-        InitType != "tuple") { // "tuple" is weak type for now
-      error(Destruct, "destructuring type mismatch: expected '" + DeclType +
-                          "', got '" + InitType + "'");
+    // Basic check: declType should match initType
+    if (initType->toString() != "unknown" && initType->toString() != "tuple" &&
+        !isTypeCompatible(declType, initType)) {
+      error(Destruct, "destructuring type mismatch: expected '" +
+                          declType->toString() + "', got '" +
+                          initType->toString() + "'");
     }
 
-    // We need to define the variables.
-    // For now, blindly assume the fields match the variables in order/count.
-    // In a real compiler we'd check against the Struct/Tuple definition.
-    // Real implementation needs to iterate Struct fields and assign types to
-    // Variables by index.
-    if (ShapeMap.count(DeclType)) {
-      ShapeDecl *SD = ShapeMap[DeclType];
+    std::string soulName = getSoulName(Destruct->TypeName);
+    if (ShapeMap.count(soulName)) {
+      ShapeDecl *SD = ShapeMap[soulName];
       size_t Limit = std::min(SD->Members.size(), Destruct->Variables.size());
       for (size_t i = 0; i < Limit; ++i) {
         SymbolInfo Info;
@@ -870,7 +893,7 @@ void Sema::checkStmt(Stmt *S) {
 
         CurrentScope->define(Destruct->Variables[i].Name, Info);
       }
-    } else if (TypeAliasMap.count(DeclType)) {
+    } else if (TypeAliasMap.count(soulName)) {
       for (const auto &Var : Destruct->Variables) {
         SymbolInfo Info;
         Info.Type = "i32"; // Fallback
@@ -921,25 +944,35 @@ static bool isLValue(const Expr *expr) {
 // [Sema.cpp]
 // 语义合成器：从 "变量形态(Flags)" 和 "灵魂类型(Type)" 合成完整的物理签名
 // 用于在函数调用检查时，生成期望的参数类型字符串
-static std::string synthesizePhysicalType(const FunctionDecl::Arg &Arg) {
+template <typename T> static std::string synthesizePhysicalType(const T &Arg) {
   std::string Signature = "";
 
-  // 1. 读取变量名上的形态符号 (Morphology on Variable Name)
+  // 1. Morphologies
   if (Arg.IsUnique) {
-    Signature += "^"; // 对应代码中的 ^ptr
+    Signature += "^";
   } else if (Arg.IsShared) {
-    Signature += "~"; // 对应代码中的 ~ptr
+    Signature += "~";
+  } else if (Arg.IsReference) {
+    Signature += "&";
   } else if (Arg.HasPointer) {
-    Signature += "*"; // 对应代码中的 *ptr
+    Signature += "*";
   }
 
-  // 2. 读取变量名上的可空/绑定符号
-  if (Arg.IsPointerNullable) {
-    Signature += "?"; // 对应代码中的 ?ptr
-  }
+  // 2. Pointer Attributes (on prefix level if needed, but Type::fromString
+  // expects suffixes) Actually, for consistency with Type::fromString recursive
+  // parsing: *Data? means Pointer (isNullable=true) to Data. *Data# means
+  // Pointer (isWritable=true) to Data.
 
-  // 3. 拼接灵魂类型 (Soul Type)
-  Signature += Arg.Type; // 对应代码中的 : Data
+  // 3. Soul Type
+  Signature += Arg.Type;
+
+  // 4. Value Attributes
+  if (Arg.IsPointerNullable || Arg.IsValueNullable) {
+    Signature += "?";
+  }
+  if (Arg.IsRebindable || Arg.IsValueMutable) {
+    Signature += "#";
+  }
 
   return Signature;
 }
@@ -1204,15 +1237,14 @@ std::string Sema::checkExprStr(Expr *E) {
     if (Info.IsPointerNullable && !sigil.empty()) {
       sigil += "?";
     }
-    // Position 2: Value Nullability (Appended to Base Type)
-    // If baseType already has ?, don't add another unless strictly nested
-    std::string suffix = "";
-    if (Info.IsValueNullable && (baseType.empty() || baseType.back() != '?')) {
-      suffix = "?";
-    }
-    std::string fullType = sigil + baseType + suffix;
-    if (Info.IsRebindable && !fullType.empty() && fullType.back() != '!')
-      fullType += "!";
+
+    std::string typeSuffix = "";
+    if (Info.IsValueNullable)
+      typeSuffix += "?";
+    if (Info.IsRebindable || Info.IsValueMutable)
+      typeSuffix += "#";
+
+    std::string fullType = sigil + baseType + typeSuffix;
     return fullType;
   } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
     return "nullptr";
@@ -1542,434 +1574,7 @@ std::string Sema::checkExprStr(Expr *E) {
     // Continue target must be a loop
     return "void";
   } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
-    // Check GlobalFunctions
-    std::string CallName = Call->Callee;
-
-    // Primitives as constructors: i32(42)
-    if (CallName == "i32" || CallName == "u32" || CallName == "i64" ||
-        CallName == "u64" || CallName == "f32" || CallName == "f64" ||
-        CallName == "i16" || CallName == "u16" || CallName == "i8" ||
-        CallName == "u8" || CallName == "usize" || CallName == "isize" ||
-        CallName == "bool") {
-      for (auto &Arg : Call->Args)
-        checkExprStr(Arg.get());
-      return CallName;
-    }
-
-    // Intrinsic: println (Compiler Magic)
-    // Avoids strict function lookup and arg checking for this special
-    // intrinsic
-    if (CallName == "println" || CallName == "std::io::println") {
-      bool visible = (CallName == "std::io::println");
-      if (!visible) {
-        SymbolInfo val;
-        // Must be in current scope (imported or defined)
-        // We explicitly do NOT fallback to ExternMap global lookup for this
-        // intrinsic namespace
-        if (CurrentScope->lookup("println", val)) {
-          visible = true;
-        }
-      }
-
-      if (!visible) {
-        error(Call, "println must be explicitly imported from std/io (e.g. "
-                    "import std/io::{println})");
-        return "void";
-      }
-
-      if (Call->Args.empty()) {
-        error(Call, "println requires at least a format string");
-      }
-      // Validate args are checkable
-      for (auto &Arg : Call->Args) {
-        checkExprStr(Arg.get());
-      }
-      return "void";
-    }
-
-    std::string ShapeName = "";
-    std::string VariantName = "";
-
-    // Resolve Shape::Variant
-    size_t pos = CallName.find("::");
-    if (pos != std::string::npos) {
-      ShapeName = CallName.substr(0, pos);
-      VariantName = CallName.substr(pos + 2);
-
-      if (ShapeMap.count(ShapeName)) {
-        // 1. Check for Static Method (impl Shape { fn ... })
-        if (MethodMap.count(ShapeName) &&
-            MethodMap[ShapeName].count(VariantName)) {
-          for (auto &Arg : Call->Args)
-            checkExprStr(Arg.get());
-          return MethodMap[ShapeName][VariantName];
-        }
-
-        // 2. Check for Enum Variant
-        ShapeDecl *SD = ShapeMap[ShapeName];
-        if (SD->Kind == ShapeKind::Enum) {
-          for (auto &Memb : SD->Members) {
-            if (Memb.Name == VariantName) {
-              // It's a variant constructor
-              for (auto &Arg : Call->Args)
-                checkExprStr(Arg.get());
-              return ShapeName;
-            }
-          }
-        }
-      }
-    }
-
-    // Regular call
-    FunctionDecl *Fn = nullptr;
-    std::string FnName = Call->Callee;
-
-    // 1. Check if name is namespaced (e.g. lib::foo)
-    size_t scopePos = FnName.find("::");
-    ExternDecl *Ext = nullptr;
-    ShapeDecl *Sh = nullptr;
-
-    if (scopePos != std::string::npos) {
-      std::string ModName = FnName.substr(0, scopePos);
-      std::string FuncName = FnName.substr(scopePos + 2);
-
-      SymbolInfo modSpec;
-      if (CurrentScope->lookup(ModName, modSpec) && modSpec.ReferencedModule) {
-        ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
-        if (target->Functions.count(FuncName)) {
-          Fn = target->Functions[FuncName];
-        } else if (target->Externs.count(FuncName)) {
-          Ext = target->Externs[FuncName];
-        } else if (target->Shapes.count(FuncName)) {
-          Sh = target->Shapes[FuncName];
-        }
-      } else {
-        error(Call, "Module '" + ModName + "' not found or not imported");
-        return "";
-      }
-    } else {
-      // Not namespaced
-      // 1. Check current module's symbols
-      if (CurrentModule && ModuleMap.count(CurrentModule->FileName)) {
-        auto &ms = ModuleMap[CurrentModule->FileName];
-        if (ms.Functions.count(FnName)) {
-          Fn = ms.Functions[FnName];
-        } else if (ms.Externs.count(FnName)) {
-          Ext = ms.Externs[FnName];
-        } else if (ms.Shapes.count(FnName)) {
-          Sh = ms.Shapes[FnName];
-        }
-      }
-
-      // 2. Check explicitly imported symbols in current scope
-      if (!Fn && !Ext && !Sh) {
-        SymbolInfo sym;
-        if (CurrentScope->lookup(FnName, sym)) {
-          if (sym.Type == "fn") {
-            // Find in GlobalFunctions
-            for (auto *GF : GlobalFunctions) {
-              if (GF->Name == FnName) {
-                Fn = GF;
-                break;
-              }
-            }
-          } else if (sym.Type == "extern") {
-            if (ExternMap.count(FnName))
-              Ext = ExternMap[FnName];
-          } else if (sym.Type == "shape") {
-            if (ShapeMap.count(FnName))
-              Sh = ShapeMap[FnName];
-          }
-        }
-      }
-
-      // 3. Fallback to global maps (legacy/flat)
-      if (!Fn && !Ext && !Sh) {
-        if (ExternMap.count(FnName))
-          Ext = ExternMap[FnName];
-        else if (ShapeMap.count(FnName))
-          Sh = ShapeMap[FnName];
-        else {
-          // We might still find a function in GlobalFunctions even if not in
-          // scope? Actually most functions should be in GlobalFunctions if
-          // they are top-level.
-          for (auto *GF : GlobalFunctions) {
-            if (GF->Name == FnName) {
-              Fn = GF;
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    if (!Fn && !Ext && !Sh) {
-      error(Call, "Undefined function or shape: " + FnName);
-      return "";
-    }
-
-    if (Fn) {
-      Call->ResolvedFn = Fn;
-
-      if (!Fn->IsPub && Fn->FileName != Call->FileName) {
-        // Relaxed privacy check: allow calls within the same module,
-        // regardless of file. This means if a function is private, it can
-        // still be called by other functions in the same module, even if they
-        // are in different files within that module. The original check was
-        // too strict, requiring the *exact* same file.
-        bool sameModule = false;
-        if (CurrentModule && !CurrentModule->Functions.empty()) {
-          // Check if the called function's file belongs to the current module
-          // This is a heuristic, assuming functions in the same module share
-          // a common base path or are explicitly listed. A more robust check
-          // would involve a module-level function registry.
-          for (const auto &funcInModule : CurrentModule->Functions) {
-            if (funcInModule->FileName == Fn->FileName) {
-              sameModule = true;
-              break;
-            }
-          }
-        }
-        if (!sameModule) {
-          error(Call, "Function '" + Fn->Name + "' is private to '" +
-                          Fn->FileName + "'");
-        }
-      }
-
-      if (Fn->Args.size() != Call->Args.size() && !Fn->IsVariadic) {
-        error(Call, "incorrect number of arguments for function '" +
-                        Call->Callee + "'");
-      }
-      for (size_t i = 0; i < Call->Args.size(); ++i) {
-        std::string ArgType = checkExprStr(Call->Args[i].get());
-
-        if (i < Fn->Args.size()) {
-          if (Fn->Args[i].IsReference) {
-            if (isTypeCompatible("&" + Fn->Args[i].Type, ArgType) ||
-                isTypeCompatible("^" + Fn->Args[i].Type, ArgType)) {
-              continue;
-            }
-            // Enforce L-Value for References
-            if (!isLValue(Call->Args[i].get())) {
-              error(Call->Args[i].get(),
-                    "cannot bind R-Value to reference parameter '" +
-                        Fn->Args[i].Name + "'");
-            }
-          }
-
-          // The Fix: Directly reconstruct the full physical type from the
-          // function signature
-
-          std::string ExpectedTy = Fn->Args[i].Type;
-          std::string prefix = "";
-
-          if (Fn->Args[i].IsReference) {
-            prefix = "&";
-          } else if (Fn->Args[i].IsUnique) {
-            prefix = "^";
-          } else if (Fn->Args[i].IsShared) {
-            prefix = "~";
-          } else if (Fn->Args[i].HasPointer) {
-            prefix = "*";
-          }
-
-          // Position 1: Pointer Nullability
-          if (Fn->Args[i].IsPointerNullable) {
-            prefix += "?";
-          }
-
-          // Position 2: Value Nullability
-          std::string suffix = "";
-          if (Fn->Args[i].IsNullable) {
-            if (ExpectedTy.back() != '?')
-              suffix = "?";
-          }
-
-          ExpectedTy = prefix + ExpectedTy + suffix;
-
-          // Legacy R-Value Struct Check (Only if strictly by value)
-          // We allow implicit copy/move if types are compatible, so we
-          // disable strict R-Value check. IsTypeCompatible will enforce type
-          // safety.
-
-          if (!isTypeCompatible(ExpectedTy, ArgType)) {
-            error(Call->Args[i].get(), "argument type mismatch: expected '" +
-                                           ExpectedTy + "', got '" + ArgType +
-                                           "'");
-          }
-        }
-      }
-      return Fn->ReturnType;
-    }
-
-    // Check Extern
-    if (Ext) {
-      Call->ResolvedExtern = Ext;
-      ExternDecl *Fn = Ext;
-      if (Fn->Args.size() != Call->Args.size() && !Fn->IsVariadic) {
-        // If variadic, we need at least fixed args
-        if (Call->Args.size() < Fn->Args.size())
-          error(Call, "incorrect number of arguments for extern function '" +
-                          Call->Callee + "'");
-      }
-      for (size_t i = 0; i < Call->Args.size(); ++i) {
-        std::string ArgType = checkExprStr(Call->Args[i].get());
-        if (i < Fn->Args.size()) {
-          const auto &arg = Fn->Args[i];
-          std::string ExpectedTy = arg.Type;
-          if (arg.IsReference)
-            ExpectedTy = "^" + ExpectedTy;
-          else if (arg.HasPointer)
-            ExpectedTy = "*" + ExpectedTy;
-
-          if (!isTypeCompatible(ExpectedTy, ArgType)) {
-            error(Call->Args[i].get(), "argument type mismatch: expected '" +
-                                           ExpectedTy + "', got '" + ArgType +
-                                           "'");
-          }
-        }
-      }
-      return Fn->ReturnType;
-      return Fn->ReturnType;
-    }
-    // Check for Shape Constructor (Struct Initialization via Call)
-    else if (Sh) {
-      Call->ResolvedShape = Sh;
-      ShapeDecl *sh = Sh;
-      if (sh->Kind == ShapeKind::Struct || sh->Kind == ShapeKind::Tuple) {
-        // Validate arguments
-        std::set<std::string> providedFields;
-        // We allow named args matching fields, or positional args if Tuple.
-        // Or mixed? Toka seems to use named for internal fields.
-
-        size_t argIdx = 0;
-        for (auto &arg : Call->Args) {
-          // Check if argument is "Field = Value" (Named Argument)
-          bool isNamed = false;
-          std::string fieldName;
-          Expr *valueExpr = arg.get();
-
-          // We only support named args on the top level of the call arg
-          // Parsing produces BinaryExpr(=) for this.
-          if (auto *bin = dynamic_cast<BinaryExpr *>(arg.get())) {
-            if (bin->Op == "=") {
-              if (auto *var = dynamic_cast<VariableExpr *>(bin->LHS.get())) {
-                fieldName = var->Name;
-                valueExpr = bin->RHS.get();
-                isNamed = true;
-              } else if (auto *un = dynamic_cast<UnaryExpr *>(bin->LHS.get())) {
-                // Handle label with prefix: *ptr = ...
-                if (auto *labelVar =
-                        dynamic_cast<VariableExpr *>(un->RHS.get())) {
-                  fieldName = labelVar->Name;
-                  valueExpr = bin->RHS.get();
-                  isNamed = true;
-                }
-              }
-            }
-          }
-
-          if (isNamed) {
-            // Validate field name and type
-            bool found = false;
-            std::string fieldType;
-            for (auto &mem : sh->Members) {
-              if (mem.Name == fieldName) {
-                found = true;
-                fieldType = mem.Type;
-                break;
-              }
-            }
-            if (!found) {
-              error(arg.get(), "Shape '" + Call->Callee +
-                                   "' has no field named '" + fieldName + "'");
-            } else {
-              // Check value type
-              // We invoke checkExpr on the RHS, ignoring the LHS (label) to
-              // avoid undeclared var error
-              std::string valType = checkExprStr(valueExpr);
-              if (!isTypeCompatible(fieldType, valType)) {
-                error(valueExpr, "Field '" + fieldName + "' expects type '" +
-                                     fieldType + "', got '" + valType + "'");
-              }
-            }
-          } else {
-            // Positional Argument
-            // Only valid for Tuples or if we decide to support positional
-            // struct init
-            if (sh->Kind == ShapeKind::Struct) {
-              // Positional for struct
-              if (argIdx < sh->Members.size()) {
-                std::string fname = sh->Members[argIdx].Name;
-                if (providedFields.count(fname)) {
-                  error(arg.get(),
-                        "Duplicate initialization of field '" + fname + "'");
-                }
-                providedFields.insert(fname);
-
-                std::string valType = checkExprStr(valueExpr);
-                if (!isTypeCompatible(sh->Members[argIdx].Type, valType)) {
-                  error(valueExpr, "Field '" + fname + "' (arg " +
-                                       std::to_string(argIdx) + ") expects '" +
-                                       sh->Members[argIdx].Type + "', got '" +
-                                       valType + "'");
-                }
-              } else {
-                error(arg.get(),
-                      "Too many arguments for shape '" + Call->Callee + "'");
-              }
-            } else { // Tuple
-              if (argIdx < sh->Members.size()) {
-                std::string valType = checkExprStr(valueExpr);
-                if (!isTypeCompatible(sh->Members[argIdx].Type, valType)) {
-                  error(valueExpr, "Tuple element " + std::to_string(argIdx) +
-                                       " expects '" + sh->Members[argIdx].Type +
-                                       "', got '" + valType + "'");
-                }
-              }
-            }
-          } // End positional
-
-          if (isNamed) {
-            if (providedFields.count(fieldName)) {
-              error(arg.get(),
-                    "Duplicate initialization of field '" + fieldName + "'");
-            }
-            providedFields.insert(fieldName);
-          }
-
-          argIdx++;
-        }
-
-        // Missing fields check for Structs
-        if (sh->Kind == ShapeKind::Struct) {
-          for (const auto &mem : sh->Members) {
-            if (!providedFields.count(mem.Name)) {
-              error(Call, "Missing field '" + mem.Name +
-                              "' in initialization of '" + Call->Callee + "'");
-            }
-          }
-        }
-
-        return Call->Callee;
-      }
-    }
-    // Check Option Variants Name::Variant
-    else if (Call->Callee.find("::") != std::string::npos) {
-      size_t pos = Call->Callee.find("::");
-      std::string optName = Call->Callee.substr(0, pos);
-      // Verify variant exists?
-      // For now assume yes or checked during codegen/parsing?
-      // Sema should check.
-      if (ShapeMap.count(optName)) {
-        // It's a valid shape. check variant?
-        // The variant name is in Call->Callee.
-      }
-      return optName;
-    }
-
-    error(Call, "call to undefined function or shape '" + Call->Callee + "'");
-    return "unknown";
+    return checkCallExpr(Call)->toString();
   } else if (auto *New = dynamic_cast<NewExpr *>(E)) {
     // Return the Type being created.
     // Validating the Initializer matches the Type is good (e.g.
@@ -2040,10 +1645,11 @@ std::string Sema::checkExprStr(Expr *E) {
       }
     }
 
-    if (MethodMap.count(ObjType) && MethodMap[ObjType].count(Met->Method)) {
-      if (MethodDecls.count(ObjType) &&
-          MethodDecls[ObjType].count(Met->Method)) {
-        FunctionDecl *FD = MethodDecls[ObjType][Met->Method];
+    std::string soulType = getSoulName(ObjType);
+    if (MethodMap.count(soulType) && MethodMap[soulType].count(Met->Method)) {
+      if (MethodDecls.count(soulType) &&
+          MethodDecls[soulType].count(Met->Method)) {
+        FunctionDecl *FD = MethodDecls[soulType][Met->Method];
         if (!FD->IsPub) {
           // Check visibility (simplified: allows same-file access, needs
           // expansion for crate)
@@ -2065,13 +1671,20 @@ std::string Sema::checkExprStr(Expr *E) {
           }
         }
       }
-      return MethodMap[ObjType][Met->Method];
+      return MethodMap[soulType][Met->Method];
     }
+    // Check with @encap suffix as fallback
+    std::string encapType = soulType + "@encap";
+    if (MethodMap.count(encapType) && MethodMap[encapType].count(Met->Method)) {
+      return MethodMap[encapType][Met->Method];
+    }
+
     // Check if it's a reference to a struct
     if (ObjType.size() > 1 && ObjType[0] == '^') {
       std::string Pointee = ObjType.substr(1);
-      if (MethodMap.count(Pointee) && MethodMap[Pointee].count(Met->Method)) {
-        return MethodMap[Pointee][Met->Method];
+      std::string pSoul = getSoulName(Pointee);
+      if (MethodMap.count(pSoul) && MethodMap[pSoul].count(Met->Method)) {
+        return MethodMap[pSoul][Met->Method];
       }
     }
     error(Met,
@@ -2562,16 +2175,11 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   auto primT = std::dynamic_pointer_cast<toka::PrimitiveType>(T);
   auto primS = std::dynamic_pointer_cast<toka::PrimitiveType>(S);
   if (primT && primS) {
-    if ((primT->Name == "i32" || primT->Name == "u32" || primT->Name == "i64" ||
-         primT->Name == "u64" || primT->Name == "i8" || primT->Name == "u8" ||
-         primT->Name == "i16" || primT->Name == "u16") &&
-        (primS->Name == "i32" || primS->Name == "u32" || primS->Name == "i64" ||
-         primS->Name == "u64" || primS->Name == "i8" || primS->Name == "u8" ||
-         primS->Name == "i16" || primS->Name == "u16")) {
+    if (primT->isInteger() && primS->isInteger()) {
       return true;
     }
-    // String Literal (str -> *i8 etc)
-    if (primS->Name == "str" && (primT->Name == "str"))
+    // String Literal (str -> str)
+    if (primS->Name == "str" && primT->Name == "str")
       return true;
   }
 
@@ -2630,29 +2238,16 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   // 5. Pointer Nullability Subtyping (*Data compatible with *?Data)
   if (auto ptrT = std::dynamic_pointer_cast<toka::PointerType>(T)) {
     if (auto ptrS = std::dynamic_pointer_cast<toka::PointerType>(S)) {
-      // If Target is nullable, Source can be non-nullable
-      // If Target is !Nullable (Strict), Source must be !Nullable.
-      bool tNull = ptrT->IsNullable; // Check attributes?
-      // Actually PointerType might store nullability in name or attribute
-
       if (ptrS->getPointeeType()->equals(*ptrT->getPointeeType())) {
         // Same Pointee. Check nullability.
-        // We assume strict subtyping: NonNullable <: Nullable
+        // We assume subtyping: NonNullable <: Nullable
         // So if Target is Nullable, Source can be anything.
-        // If Target is Not Nullable, Source must be Not Nullable.
-
-        bool targetCanBeNull = T->IsNullable; // Using attributes
-        // Also check '?' in string name if not parsed into attribute fully
-        // yet? The `resolveType` should have handled attributes.
-
-        if (targetCanBeNull)
+        if (ptrT->IsNullable)
           return true; // *?T accepts *T or *?T
-        if (!S->IsNullable)
+        if (!ptrS->IsNullable)
           return true; // *T accepts *T
-
-        // *T does NOT accept *?T (Runtime check needed, handled by 'cast' or
-        // 'check' not implicit)
-        return false;
+        // Fallback: Raw pointers allow *?T -> *T (Unsafe) if
+        // Type::isCompatibleWith allows it. But we handle it there.
       }
     }
   }
@@ -2704,8 +2299,8 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   // Shape" as ShapeType("dyn Shape")? No, `dyn @Shape`. `fromString`
   // fallback: ShapeType("dyn @Shape"). So we can check name.
 
-  // Use core compatibility
-  return T->isCompatibleWith(*S);
+  // Use core compatibility (Source flows to Target)
+  return S->isCompatibleWith(*T);
 }
 
 bool Sema::isTypeCompatible(const std::string &Target,
@@ -2853,7 +2448,10 @@ std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
     return checkBinaryExpr(Bin);
   }
   if (auto *Idx = dynamic_cast<ArrayIndexExpr *>(E)) {
-    return checkIndexExpr(Idx); // Stage 5b
+    return checkIndexExpr(Idx);
+  }
+  if (auto *Call = dynamic_cast<CallExpr *>(E)) {
+    return checkCallExpr(Call); // Stage 5c
   }
   std::string typeStr = checkExprStr(E);
   return toka::Type::fromString(typeStr);
@@ -2921,15 +2519,17 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
             error(Unary,
                   "cannot move '" + Var->Name + "' while it is borrowed");
           }
-          // Fix: Do not mark moved here.
-          return rhsType;
+          auto unq = std::make_shared<toka::UniquePointerType>(rhsType);
+          unq->IsNullable = Unary->HasNull;
+          unq->IsWritable = Unary->IsRebindable;
+          return unq;
         } else if (Unary->Op == TokenType::Tilde) {
           if (rhsType->isSharedPtr()) {
             return rhsType; // Idempotent
           }
           auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
-          // Recursion check logic for tilde?
-          // If rhsType is ALREADY a shared ptr, we returned above.
+          sh->IsNullable = Unary->HasNull;
+          sh->IsWritable = Unary->IsRebindable;
           return sh;
         } else if (Unary->Op == TokenType::Star) {
           // Identity (*)
@@ -2942,6 +2542,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
             inner = rhsType;
           }
           auto rawPtr = std::make_shared<toka::RawPointerType>(inner);
+          rawPtr->IsNullable = Unary->HasNull;
+          rawPtr->IsWritable = Unary->IsRebindable;
           return rawPtr;
         }
       }
@@ -2958,21 +2560,27 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
         inner = rhsType;
       }
       auto rawPtr = std::make_shared<toka::RawPointerType>(inner);
+      rawPtr->IsNullable = Unary->HasNull;
+      rawPtr->IsWritable = Unary->IsRebindable;
       return rawPtr;
     }
 
     if (Unary->Op == TokenType::Ampersand) {
       auto ref = std::make_shared<toka::ReferenceType>(rhsType);
+      ref->IsNullable = Unary->HasNull;
+      ref->IsWritable = Unary->IsRebindable;
       return ref;
     }
     if (Unary->Op == TokenType::Caret) {
-      return rhsType;
+      auto unq = std::make_shared<toka::UniquePointerType>(rhsType);
+      unq->IsNullable = Unary->HasNull;
+      unq->IsWritable = Unary->IsRebindable;
+      return unq;
     }
     if (Unary->Op == TokenType::Tilde) {
-      if (rhsType->isSharedPtr()) {
-        return rhsType; // Idempotent
-      }
       auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
+      sh->IsNullable = Unary->HasNull;
+      sh->IsWritable = Unary->IsRebindable;
       return sh;
     }
   }
@@ -3178,6 +2786,19 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     return lhsType->withAttributes(false, lhsType->IsNullable);
   }
 
+  if (Bin->Op == "is" || Bin->Op == "is!") {
+    // Basic validation for 'is' / 'is!'
+    if (auto *rhsVar = dynamic_cast<VariableExpr *>(Bin->RHS.get())) {
+      // If RHS is just a Shape name, it's NOT a valid pattern (should be a
+      // variable or variant)
+      if (ShapeMap.count(rhsVar->Name)) {
+        error(Bin->RHS.get(), "'" + rhsVar->Name +
+                                  "' is a shape, not a valid pattern for 'is'");
+      }
+    }
+    return toka::Type::fromString("bool");
+  }
+
   return toka::Type::fromString("unknown");
 }
 
@@ -3224,6 +2845,263 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
       resultType->withAttributes(isBaseWritable, resultType->IsNullable);
 
   return resultType;
+}
+
+// Stage 5c: Object-Oriented Call Expression Check
+std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
+  std::string CallName = Call->Callee;
+
+  // 1. Primitives (Constructors/Casts) e.g. i32(42)
+  if (CallName == "i32" || CallName == "u32" || CallName == "i64" ||
+      CallName == "u64" || CallName == "f32" || CallName == "f64" ||
+      CallName == "i16" || CallName == "u16" || CallName == "i8" ||
+      CallName == "u8" || CallName == "usize" || CallName == "isize" ||
+      CallName == "bool") {
+    for (auto &Arg : Call->Args) {
+      checkExpr(Arg.get());
+    }
+    return toka::Type::fromString(CallName);
+  }
+
+  // 2. Intrinsics (println)
+  if (CallName == "println" || CallName == "std::io::println") {
+    bool visible = (CallName == "std::io::println");
+    if (!visible) {
+      SymbolInfo val;
+      if (CurrentScope->lookup("println", val))
+        visible = true;
+    }
+    if (!visible) {
+      error(Call, "println must be explicitly imported from std/io");
+      return toka::Type::fromString("void");
+    }
+    if (Call->Args.empty()) {
+      error(Call, "println requires at least a format string");
+    }
+    for (auto &Arg : Call->Args) {
+      checkExpr(Arg.get());
+    }
+    return toka::Type::fromString("void");
+  }
+
+  std::shared_ptr<toka::FunctionType> funcType = nullptr;
+
+  // 3. Resolve Static Methods / Enum Variants
+  size_t pos = CallName.find("::");
+  if (pos != std::string::npos) {
+    std::string ShapeName = getSoulName(CallName.substr(0, pos));
+    std::string VariantName = CallName.substr(pos + 2);
+
+    if (ShapeMap.count(ShapeName)) {
+      // Static Method
+      if (MethodMap.count(ShapeName) &&
+          MethodMap[ShapeName].count(VariantName)) {
+        // We don't have full signature for static methods in MethodMap (just
+        // return string) For Stage 5, we check args as expressions but CANNOT
+        // verify arity/types strictly yet unless we store Method Decl via
+        // visitShapeDecl. Existing legacy logic just returned
+        // MethodMap[ShapeName][VariantName].
+        for (auto &Arg : Call->Args)
+          checkExpr(Arg.get());
+        return toka::Type::fromString(MethodMap[ShapeName][VariantName]);
+      }
+      // Enum Variant Constructor
+      ShapeDecl *SD = ShapeMap[ShapeName];
+      if (SD->Kind == ShapeKind::Enum) {
+        for (auto &Memb : SD->Members) {
+          if (Memb.Name == VariantName) {
+            // Enum Variant Constructor: Variant(Args...) -> ShapeName
+            // We need Memb's type to verify arg?
+            // Members in Enum are Variants. If Variant has payload, its Type is
+            // the payload type? Checking args...
+            for (auto &Arg : Call->Args)
+              checkExpr(Arg.get());
+            return toka::Type::fromString(ShapeName);
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Regular Function Lookup
+  FunctionDecl *Fn = nullptr;
+  ExternDecl *Ext = nullptr;
+  ShapeDecl *Sh = nullptr; // Constructor
+
+  size_t scopePos = CallName.find("::");
+  if (scopePos != std::string::npos) {
+    std::string ModName = CallName.substr(0, scopePos);
+    std::string FuncName = CallName.substr(scopePos + 2);
+    SymbolInfo modSpec;
+    if (CurrentScope->lookup(ModName, modSpec) && modSpec.ReferencedModule) {
+      ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
+      if (target->Functions.count(FuncName))
+        Fn = target->Functions[FuncName];
+      else if (target->Externs.count(FuncName))
+        Ext = target->Externs[FuncName];
+      else if (target->Shapes.count(FuncName))
+        Sh = target->Shapes[FuncName];
+    } else {
+      error(Call, "Module '" + ModName + "' not found or not imported");
+      return toka::Type::fromString("unknown");
+    }
+  } else {
+    // Local Scope Lookup (Shadowing Global)
+    // Usually Functions are Global. But maybe local closure in future?
+    // For now, look in ModuleMap
+    // Current Module Context?
+    // Legacy logic looked in GlobalFunctions and ExternMap directly if local
+    // lookup failed? Actually legacy checks GlobalFunctions list.
+
+    // Let's iterate GlobalFunctions
+    for (auto *GF : GlobalFunctions) {
+      if (GF->Name == CallName) {
+        Fn = GF;
+        break;
+      }
+    }
+    if (!Fn) {
+      // Check ExternMap
+      for (auto &pair : ExternMap) {
+        if (pair.second->Name == CallName) {
+          Ext = pair.second;
+          break;
+        }
+      }
+    }
+    std::string soulName = getSoulName(CallName);
+    if (!Fn && !Ext && ShapeMap.count(soulName)) {
+      Sh = ShapeMap[soulName];
+    }
+  }
+
+  if (!Fn && !Ext && !Sh) {
+    if (CallName != "str" && CallName != "unknown") // checkExprStr fallbacks
+      error(Call,
+            "use of undeclared function or type (NEW) '" + CallName + "'");
+    return toka::Type::fromString("unknown");
+  }
+
+  // 5. Synthesize FunctionType
+  // ParamTypes, ReturnType
+  std::vector<std::shared_ptr<toka::Type>> ParamTypes;
+  std::shared_ptr<toka::Type> ReturnType;
+  bool IsVariadic = false;
+
+  if (Fn) {
+    Call->ResolvedFn = Fn;
+    for (auto &Arg : Fn->Args) {
+      ParamTypes.push_back(toka::Type::fromString(synthesizePhysicalType(Arg)));
+    }
+    ReturnType = toka::Type::fromString(Fn->ReturnType);
+    IsVariadic = Fn->IsVariadic;
+  } else if (Ext) {
+    Call->ResolvedExtern = Ext;
+    for (auto &Arg : Ext->Args) {
+      ParamTypes.push_back(toka::Type::fromString(synthesizePhysicalType(Arg)));
+    }
+    ReturnType = toka::Type::fromString(Ext->ReturnType);
+    IsVariadic = Ext->IsVariadic;
+  } else if (Sh) {
+    // Constructor: Params = Members, Return = ShapeName
+    if (Sh->Kind == ShapeKind::Struct) {
+      // Shape Constructor Logic (Named or Positional)
+      Call->ResolvedShape = Sh;
+      std::set<std::string> providedFields;
+      size_t argIdx = 0;
+
+      for (auto &arg : Call->Args) {
+        std::string fieldName;
+        Expr *valExpr = arg.get();
+        bool isNamed = false;
+
+        // Detect Named Arg: Field = Value
+        if (auto *bin = dynamic_cast<BinaryExpr *>(arg.get())) {
+          if (bin->Op == "=") {
+            if (auto *var = dynamic_cast<VariableExpr *>(bin->LHS.get())) {
+              fieldName = var->Name;
+              valExpr = bin->RHS.get();
+              isNamed = true;
+            }
+          }
+        }
+
+        std::string expectedTypeStr = "unknown";
+        if (isNamed) {
+          bool found = false;
+          for (auto &M : Sh->Members) {
+            if (M.Name == fieldName) {
+              found = true;
+              expectedTypeStr = M.Type;
+              break;
+            }
+          }
+          if (!found)
+            error(arg.get(), "Shape '" + Sh->Name + "' has no field named '" +
+                                 fieldName + "'");
+          providedFields.insert(fieldName);
+        } else {
+          // Positional
+          if (argIdx < Sh->Members.size()) {
+            expectedTypeStr = Sh->Members[argIdx].Type;
+            providedFields.insert(Sh->Members[argIdx].Name);
+          } else {
+            error(arg.get(),
+                  "Too many arguments for struct '" + Sh->Name + "'");
+          }
+        }
+
+        // Check Type Compatibility
+        // Note: valExpr is the expression to check.
+        // We use checkExpr(valExpr) to get object.
+        auto valType = checkExpr(valExpr);
+        auto expectedType = toka::Type::fromString(expectedTypeStr);
+
+        if (!valType->isCompatibleWith(*expectedType)) {
+          error(valExpr, "Type mismatch for field '" +
+                             (isNamed ? fieldName : std::to_string(argIdx)) +
+                             "': expected " + expectedType->toString() +
+                             ", got " + valType->toString());
+        }
+        argIdx++;
+      }
+      return toka::Type::fromString(Sh->Name);
+
+    } else {
+      // Enum / Alias ?
+      return toka::Type::fromString(Sh->Name);
+    }
+  }
+
+  // Generic Function/Extern Matching
+  funcType =
+      std::make_shared<toka::FunctionType>(ParamTypes, ReturnType, IsVariadic);
+
+  // 6. Argument Matching
+  if (!IsVariadic && Call->Args.size() != ParamTypes.size()) {
+    error(Call, "Argument count mismatch for '" + CallName + "': expected " +
+                    std::to_string(ParamTypes.size()) + ", got " +
+                    std::to_string(Call->Args.size()));
+  }
+
+  for (size_t i = 0; i < Call->Args.size(); ++i) {
+    auto argType = checkExpr(Call->Args[i].get());
+
+    if (IsVariadic && i >= ParamTypes.size())
+      continue;
+    if (i >= ParamTypes.size())
+      break; // Should be caught by count check unless variadic
+
+    auto paramType = ParamTypes[i];
+    if (!argType->isCompatibleWith(*paramType)) {
+      error(Call->Args[i].get(), "Type mismatch for argument " +
+                                     std::to_string(i + 1) + ": expected " +
+                                     paramType->toString() + ", got " +
+                                     argType->toString());
+    }
+  }
+
+  return ReturnType;
 }
 
 } // namespace toka

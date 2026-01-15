@@ -190,7 +190,8 @@ private:
   std::shared_ptr<toka::Type>
   checkBinaryExpr(BinaryExpr *Bin); // New Object API
   std::shared_ptr<toka::Type>
-  checkIndexExpr(ArrayIndexExpr *Idx); // New Object API
+  checkIndexExpr(ArrayIndexExpr *Idx);                       // New Object API
+  std::shared_ptr<toka::Type> checkCallExpr(CallExpr *Call); // New Object API
   void checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
                     bool SourceIsMutable);
 

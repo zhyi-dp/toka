@@ -59,15 +59,23 @@ bool PrimitiveType::equals(const Type &other) const {
   return otherPrim && Name == otherPrim->Name;
 }
 
-bool PrimitiveType::isCompatibleWith(const Type &target) const {
-  if (!Type::isCompatibleWith(target))
-    return false;
-  const auto *otherPrim = dynamic_cast<const PrimitiveType *>(&target);
-  return otherPrim && Name == otherPrim->Name;
-}
-
 std::shared_ptr<Type> PrimitiveType::withAttributes(bool w, bool n) const {
   return cloneWithAttrs(this, w, n);
+}
+
+bool PrimitiveType::isCompatibleWith(const Type &target) const {
+  if (!Type::isCompatibleWith(target)) {
+    const auto *otherPrim = dynamic_cast<const PrimitiveType *>(&target);
+    if (otherPrim && isInteger() && otherPrim->isInteger())
+      return true; // Loose integer compatibility
+    return false;
+  }
+  const auto *otherPrim = dynamic_cast<const PrimitiveType *>(&target);
+  if (!otherPrim)
+    return false;
+  if (Name == otherPrim->Name)
+    return true;
+  return isInteger() && otherPrim->isInteger();
 }
 
 // --- Pointers ---
@@ -87,50 +95,95 @@ bool PointerType::isCompatibleWith(const Type &target) const {
   const auto *otherPtr = dynamic_cast<const PointerType *>(&target);
   if (!otherPtr)
     return false;
-  // Recursively check compatibility of pointee
   return PointeeType->isCompatibleWith(*otherPtr->PointeeType);
 }
 
 std::string RawPointerType::toString() const {
   std::string s = "*";
-  if (IsWritable /* applied to pointer */)
-    s += "#"; // This is ambiguous in current spec vs code
-              // Current spec: *#p (swappable ident) vs *p# (mutable soul).
-              // Type object represents the SOUL type mostly.
-              // Let's stick to standard representation: *T
-              // If the pointer itself implies attributes on the pointee view?
-              // Let's just output *Pointee
+  if (IsNullable)
+    s += "?";
+  if (IsWritable)
+    s += "#";
+  return s + PointeeType->toString();
+}
 
-  // Correction: The Type object for `*i32` should be
-  // RawPointer(Primitive(i32)). If it is `*i32#`, it is
-  // RawPointer(Primitive(i32, Writable=true)).
-
-  return "*" + PointeeType->toString();
+bool RawPointerType::isCompatibleWith(const Type &target) const {
+  const auto *otherPtr = dynamic_cast<const RawPointerType *>(&target);
+  if (!otherPtr)
+    return false;
+  if (target.IsWritable && !IsWritable)
+    return false;
+  // Loose: *?T flows to *T for Raw Pointers (Unsafe)
+  return PointeeType->isCompatibleWith(*otherPtr->PointeeType);
 }
 
 std::shared_ptr<Type> RawPointerType::withAttributes(bool w, bool n) const {
-  // Attributes on the Pointer Type itself usually mean metadata about the
-  // pointer SLOT, or are propagated. For now, distinct from Pointee.
   return cloneWithAttrs(this, w, n);
 }
 
 std::string UniquePointerType::toString() const {
-  return "^" + PointeeType->toString();
+  std::string s = "^";
+  if (IsNullable)
+    s += "?";
+  if (IsWritable)
+    s += "#";
+  return s + PointeeType->toString();
 }
+
+bool UniquePointerType::isCompatibleWith(const Type &target) const {
+  const auto *otherPtr = dynamic_cast<const UniquePointerType *>(&target);
+  if (otherPtr)
+    return Type::isCompatibleWith(target) &&
+           PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+  return false;
+}
+
 std::shared_ptr<Type> UniquePointerType::withAttributes(bool w, bool n) const {
   return cloneWithAttrs(this, w, n);
 }
 
 std::string SharedPointerType::toString() const {
-  return "~" + PointeeType->toString();
+  std::string s = "~";
+  if (IsNullable)
+    s += "?";
+  if (IsWritable)
+    s += "#";
+  return s + PointeeType->toString();
 }
+
+bool SharedPointerType::isCompatibleWith(const Type &target) const {
+  const auto *otherPtr = dynamic_cast<const SharedPointerType *>(&target);
+  if (otherPtr) {
+    return Type::isCompatibleWith(target) &&
+           PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+  }
+  if (!dynamic_cast<const PointerType *>(&target)) {
+    return PointeeType->isCompatibleWith(target);
+  }
+  return false;
+}
+
 std::shared_ptr<Type> SharedPointerType::withAttributes(bool w, bool n) const {
   return cloneWithAttrs(this, w, n);
 }
 
 std::string ReferenceType::toString() const {
-  return "&" + PointeeType->toString();
+  std::string s = "&";
+  if (IsNullable)
+    s += "?";
+  if (IsWritable)
+    s += "#";
+  return s + PointeeType->toString();
 }
+
+bool ReferenceType::isCompatibleWith(const Type &target) const {
+  const auto *otherPtr = dynamic_cast<const ReferenceType *>(&target);
+  if (otherPtr)
+    return Type::isCompatibleWith(target) &&
+           PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+  return false;
+}
+
 std::shared_ptr<Type> ReferenceType::withAttributes(bool w, bool n) const {
   return cloneWithAttrs(this, w, n);
 }
@@ -138,23 +191,27 @@ std::shared_ptr<Type> ReferenceType::withAttributes(bool w, bool n) const {
 // --- Composite ---
 
 std::string ArrayType::toString() const {
-  return "[" + ElementType->toString() + "; " + std::to_string(Size) + "]";
+  std::string s =
+      "[" + ElementType->toString() + "; " + std::to_string(Size) + "]";
+  if (IsWritable)
+    s += "#";
+  if (IsNullable)
+    s += "?";
+  return s;
 }
 
 bool ArrayType::equals(const Type &other) const {
   if (!Type::equals(other))
     return false;
   const auto *otherArr = dynamic_cast<const ArrayType *>(&other);
-  ElementType->equals(*otherArr->ElementType);
+  return otherArr && Size == otherArr->Size &&
+         ElementType->equals(*otherArr->ElementType);
 }
 
 bool ArrayType::isCompatibleWith(const Type &target) const {
   if (!Type::isCompatibleWith(target))
     return false;
   const auto *otherArr = dynamic_cast<const ArrayType *>(&target);
-  // Arrays must be invariant in size and element type for safety usually?
-  // Toka rules: size must match. Element type can flow?
-  // Let's assume element type must be compatible.
   return otherArr && Size == otherArr->Size &&
          ElementType->isCompatibleWith(*otherArr->ElementType);
 }
@@ -180,10 +237,15 @@ bool ShapeType::equals(const Type &other) const {
 }
 
 bool ShapeType::isCompatibleWith(const Type &target) const {
-  if (!Type::isCompatibleWith(target))
-    return false;
   const auto *otherSh = dynamic_cast<const ShapeType *>(&target);
-  return otherSh && Name == otherSh->Name;
+  if (otherSh) {
+    if (otherSh->Name.rfind("dyn@", 0) == 0)
+      return true;
+    if (Name == otherSh->Name)
+      return Type::isCompatibleWith(target);
+    return false;
+  }
+  return false;
 }
 
 std::shared_ptr<Type> ShapeType::withAttributes(bool w, bool n) const {
@@ -198,6 +260,10 @@ std::string TupleType::toString() const {
     s += Elements[i]->toString();
   }
   s += ")";
+  if (IsWritable)
+    s += "#";
+  if (IsNullable)
+    s += "?";
   return s;
 }
 
@@ -253,9 +319,7 @@ bool FunctionType::equals(const Type &other) const {
   const auto *otherFn = dynamic_cast<const FunctionType *>(&other);
   if (!otherFn || ParamTypes.size() != otherFn->ParamTypes.size())
     return false;
-  if (!ReturnType->equals(*otherFn->ReturnType))
-    return false;
-  return true;
+  return ReturnType->equals(*otherFn->ReturnType);
 }
 
 bool FunctionType::isCompatibleWith(const Type &target) const {
@@ -264,17 +328,9 @@ bool FunctionType::isCompatibleWith(const Type &target) const {
   const auto *otherFn = dynamic_cast<const FunctionType *>(&target);
   if (!otherFn || ParamTypes.size() != otherFn->ParamTypes.size())
     return false;
-
-  // Function covariance/contravariance?
-  // Return type: covariant (can return subtype of target return)
-  // Params: contravariant (can accept supertype of target param)
-  // For now, let's stick to strict equality or simple compatibility
-
   if (!ReturnType->isCompatibleWith(*otherFn->ReturnType))
     return false;
-
   for (size_t i = 0; i < ParamTypes.size(); ++i) {
-    // strict for params for now to avoid ambiguity
     if (!ParamTypes[i]->equals(*otherFn->ParamTypes[i]))
       return false;
   }
@@ -291,7 +347,6 @@ std::shared_ptr<Type> UnresolvedType::withAttributes(bool w, bool n) const {
 
 // --- Static Factory (The Parser) ---
 
-// Helper to strip outer whitespace
 static std::string trim(const std::string &str) {
   size_t first = str.find_first_not_of(' ');
   if (std::string::npos == first)
@@ -305,11 +360,9 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
   if (s.empty())
     return std::make_shared<VoidType>();
 
-  // Parse Attributes (Suffixes)
+  // Parse Suffixes (applies to the OUTERMOST type being constructed)
   bool isWritable = false;
   bool isNullable = false;
-
-  // Peel from end
   while (!s.empty()) {
     char back = s.back();
     if (back == '#') {
@@ -319,60 +372,59 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
       isNullable = true;
       s.pop_back();
     } else if (back == '!') {
-      isWritable = true;
-      isNullable = true;
+      isWritable = isNullable = true;
       s.pop_back();
-    } else {
+    } else if (back == ' ') {
+      s.pop_back();
+    } else
       break;
-    }
   }
 
-  // Pointer Prefixes
-  // Need to handle recursive pointers like **char
   if (s.empty())
     return std::make_shared<UnresolvedType>(rawType);
 
   char first = s[0];
-  if (first == '*') {
-    auto pointee = Type::fromString(s.substr(1));
-    auto ptr = std::make_shared<RawPointerType>(pointee);
-    ptr->IsWritable = isWritable;
-    ptr->IsNullable = isNullable;
-    return ptr;
-  }
-  if (first == '^') {
-    auto pointee = Type::fromString(s.substr(1));
-    auto ptr = std::make_shared<UniquePointerType>(pointee);
-    ptr->IsWritable = isWritable;
-    ptr->IsNullable = isNullable;
-    return ptr;
-  }
-  if (first == '~') {
-    auto pointee = Type::fromString(s.substr(1));
-    auto ptr = std::make_shared<SharedPointerType>(pointee);
-    ptr->IsWritable = isWritable;
-    ptr->IsNullable = isNullable;
-    return ptr;
-  }
-  if (first == '&') {
-    auto pointee = Type::fromString(s.substr(1));
-    auto ptr = std::make_shared<ReferenceType>(pointee);
-    ptr->IsWritable = isWritable;
-    ptr->IsNullable = isNullable;
+  if (first == '*' || first == '^' || first == '~' || first == '&') {
+    size_t offset = 1;
+    bool ptrNullable = false;
+    bool ptrWritable = false;
+    while (offset < s.size()) {
+      if (s[offset] == '?') {
+        ptrNullable = true;
+        offset++;
+      } else if (s[offset] == '#') {
+        ptrWritable = true;
+        offset++;
+      } else if (s[offset] == '!') {
+        ptrNullable = ptrWritable = true;
+        offset++;
+      } else
+        break;
+    }
+    auto pointee = Type::fromString(s.substr(offset));
+    std::shared_ptr<PointerType> ptr;
+    if (first == '*')
+      ptr = std::make_shared<RawPointerType>(pointee);
+    else if (first == '^')
+      ptr = std::make_shared<UniquePointerType>(pointee);
+    else if (first == '~')
+      ptr = std::make_shared<SharedPointerType>(pointee);
+    else
+      ptr = std::make_shared<ReferenceType>(pointee);
+
+    ptr->IsNullable = ptrNullable || isNullable;
+    ptr->IsWritable = ptrWritable || isWritable;
     return ptr;
   }
 
-  // Arrays [T; N]
   if (first == '[') {
     size_t semi = s.find(';');
     size_t close = s.find_last_of(']');
     if (semi != std::string::npos && close != std::string::npos) {
-      std::string elemStr = s.substr(1, semi - 1);
-      std::string sizeStr = s.substr(semi + 1, close - semi - 1);
-      auto elem = Type::fromString(elemStr);
+      auto elem = Type::fromString(s.substr(1, semi - 1));
       uint64_t size = 0;
       try {
-        size = std::stoull(sizeStr);
+        size = std::stoull(s.substr(semi + 1, close - semi - 1));
       } catch (...) {
       }
       auto arr = std::make_shared<ArrayType>(elem, size);
@@ -382,21 +434,19 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     }
   }
 
-  // Basic Types
   if (s == "void")
     return std::make_shared<VoidType>();
   if (s == "i32" || s == "i64" || s == "u32" || s == "u64" || s == "f32" ||
-      s == "f64" || s == "bool" || s == "char" || s == "str") {
+      s == "f64" || s == "bool" || s == "char" || s == "str" || s == "i8" ||
+      s == "u8" || s == "i16" || s == "u16" || s == "usize") {
     auto prim = std::make_shared<PrimitiveType>(s);
     prim->IsWritable = isWritable;
     prim->IsNullable = isNullable;
     return prim;
   }
 
-  // Fallback: Shape or Alias
-  if (s == "unknown") {
+  if (s == "unknown")
     return std::make_shared<UnresolvedType>(s);
-  }
 
   auto shape = std::make_shared<ShapeType>(s);
   shape->IsWritable = isWritable;

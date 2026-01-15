@@ -708,6 +708,8 @@ public:
     bool IsNullable = false;
 
     // New Permissions match FunctionDecl
+    bool IsUnique = false;
+    bool IsShared = false;
     bool IsRebindable = false;
     bool IsValueMutable = false;
     bool IsPointerNullable = false;
