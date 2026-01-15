@@ -135,7 +135,7 @@ void Sema::registerGlobals(Module &M) {
           v->TypeName = "str";
         } else {
           // Last resort: run full checkExpr (e.g. for AnonymousRecordExpr)
-          std::string inferred = checkExpr(v->Init.get());
+          std::string inferred = checkExprStr(v->Init.get());
           if (inferred != "unknown" && inferred != "void") {
             v->TypeName = inferred;
           }
@@ -655,7 +655,7 @@ void Sema::checkStmt(Stmt *S) {
     if (Ret->ReturnValue) {
       m_ControlFlowStack.push_back(
           {"", CurrentFunctionReturnType, false, true});
-      ExprType = checkExpr(Ret->ReturnValue.get());
+      ExprType = checkExprStr(Ret->ReturnValue.get());
       m_ControlFlowStack.pop_back();
     }
     clearStmtBorrows();
@@ -665,7 +665,7 @@ void Sema::checkStmt(Stmt *S) {
                      CurrentFunctionReturnType + "', got '" + ExprType + "'");
     }
   } else if (auto *Free = dynamic_cast<FreeStmt *>(S)) {
-    std::string ExprType = checkExpr(Free->Expression.get());
+    std::string ExprType = checkExprStr(Free->Expression.get());
     if (ExprType.empty() || ExprType[0] != '*') {
       if (ExprType.size() > 0 && (ExprType[0] == '^' || ExprType[0] == '~')) {
         error(Free, "manual 'free' is forbidden for smart pointers ('" +
@@ -678,14 +678,14 @@ void Sema::checkStmt(Stmt *S) {
   } else if (auto *ExprS = dynamic_cast<ExprStmt *>(S)) {
     // Standalone expressions are NOT receivers
     m_ControlFlowStack.push_back({"", "void", false, false});
-    checkExpr(ExprS->Expression.get());
+    checkExprStr(ExprS->Expression.get());
     m_ControlFlowStack.pop_back();
     clearStmtBorrows();
   } else if (auto *Var = dynamic_cast<VariableDecl *>(S)) {
     std::string InitType = "";
     if (Var->Init) {
       m_ControlFlowStack.push_back({Var->Name, "void", false, true});
-      InitType = checkExpr(Var->Init.get());
+      InitType = checkExprStr(Var->Init.get());
       m_ControlFlowStack.pop_back();
     }
 
@@ -832,7 +832,7 @@ void Sema::checkStmt(Stmt *S) {
     }
     clearStmtBorrows();
   } else if (auto *Destruct = dynamic_cast<DestructuringDecl *>(S)) {
-    std::string InitType = resolveType(checkExpr(Destruct->Init.get()));
+    std::string InitType = resolveType(checkExprStr(Destruct->Init.get()));
     std::string DeclType = resolveType(Destruct->TypeName);
 
     // Basic check: DeclType should match InitType (or InitType is
@@ -944,8 +944,8 @@ static std::string synthesizePhysicalType(const FunctionDecl::Arg &Arg) {
   return Signature;
 }
 
-std::string Sema::checkUnaryExpr(UnaryExpr *Unary) {
-  std::string rhsInfo = checkExpr(Unary->RHS.get());
+std::string Sema::checkUnaryExprStr(UnaryExpr *Unary) {
+  std::string rhsInfo = checkExprStr(Unary->RHS.get());
   if (rhsInfo == "unknown")
     return "unknown";
 
@@ -1004,8 +1004,6 @@ std::string Sema::checkUnaryExpr(UnaryExpr *Unary) {
                   "cannot move '" + Var->Name + "' while it is borrowed");
           }
           // Fix: Do not mark moved here.
-          // Implicit Capture: Passing ^Var often treated as reference or
-          // identity. Move logic handles explicit Assignments separately.
           return rhsInfo;
         } else if (Unary->Op == TokenType::Tilde) {
           if (!rhsInfo.empty() && rhsInfo[0] == '~') {
@@ -1018,9 +1016,6 @@ std::string Sema::checkUnaryExpr(UnaryExpr *Unary) {
             return rhsInfo;
           return res;
         } else if (Unary->Op == TokenType::Star) {
-          // Identity (*)
-          // If pointer: Return RawPointer(Pointee) (View as address)
-          // If value: Return RawPointer(Type) (Address of value)
           std::shared_ptr<toka::Type> inner;
           if (rhsType->isPointer()) {
             inner = rhsType->getPointeeType();
@@ -1036,7 +1031,6 @@ std::string Sema::checkUnaryExpr(UnaryExpr *Unary) {
     }
 
     if (Unary->Op == TokenType::Star) {
-      // Identity (*) on non-variable (e.g. expression result)
       std::shared_ptr<toka::Type> inner;
       if (rhsType->isPointer()) {
         inner = rhsType->getPointeeType();
@@ -1058,11 +1052,10 @@ std::string Sema::checkUnaryExpr(UnaryExpr *Unary) {
     }
     if (Unary->Op == TokenType::Tilde) {
       if (!rhsInfo.empty() && rhsInfo[0] == '~') {
-        return rhsInfo; // Idempotent Identity via String
+        return rhsInfo;
       }
       auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
       std::string res = sh->toString();
-      // Ensure we don't double up via object method if it recurses
       if (!rhsInfo.empty() && rhsInfo[0] == '~' && res.size() > 1 &&
           res[1] == '~') {
         return rhsInfo;
@@ -1094,7 +1087,7 @@ std::string Sema::checkUnaryExpr(UnaryExpr *Unary) {
   return rhsInfo;
 }
 
-std::string Sema::checkExpr(Expr *E) {
+std::string Sema::checkExprStr(Expr *E) {
   if (!E)
     return "void";
 
@@ -1112,14 +1105,14 @@ std::string Sema::checkExpr(Expr *E) {
     // strict: &T -> &T (Reference)
     // Toka Spec: &x creates a Reference.
     // If x is T, &x is &T.
-    std::string inner = checkExpr(Addr->Expression.get());
+    std::string inner = checkExprStr(Addr->Expression.get());
     if (inner == "unknown")
       return "unknown";
     return "&" + inner;
   } else if (auto *Idx = dynamic_cast<ArrayIndexExpr *>(E)) {
-    std::string ArrType = checkExpr(Idx->Array.get());
+    std::string ArrType = checkExprStr(Idx->Array.get());
     for (auto &idxExpr : Idx->Indices) {
-      checkExpr(idxExpr.get());
+      checkExprStr(idxExpr.get());
     }
 
     if (ArrType.size() > 1 && ArrType[0] == '*') {
@@ -1157,7 +1150,7 @@ std::string Sema::checkExpr(Expr *E) {
       }
       seenFields.insert(f.first);
 
-      std::string fieldT = checkExpr(f.second.get());
+      std::string fieldT = checkExprStr(f.second.get());
       if (fieldT == "unknown")
         return "unknown";
 
@@ -1186,7 +1179,7 @@ std::string Sema::checkExpr(Expr *E) {
 
     return UniqueName;
   } else if (auto *Deref = dynamic_cast<DereferenceExpr *>(E)) {
-    std::string inner = checkExpr(Deref->Expression.get());
+    std::string inner = checkExprStr(Deref->Expression.get());
     if (inner == "unknown")
       return "unknown";
 
@@ -1206,7 +1199,7 @@ std::string Sema::checkExpr(Expr *E) {
     error(Deref, "cannot dereference non-pointer type '" + inner + "'");
     return "unknown";
   } else if (auto *Unary = dynamic_cast<UnaryExpr *>(E)) {
-    return checkUnaryExpr(Unary);
+    return checkUnaryExprStr(Unary);
   } else if (auto *Str = dynamic_cast<StringExpr *>(E)) {
     return "str";
   } else if (auto *ve = dynamic_cast<VariableExpr *>(E)) {
@@ -1255,7 +1248,7 @@ std::string Sema::checkExpr(Expr *E) {
     return "none";
   } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) {
     if (Bin->Op == "is") {
-      checkExpr(Bin->LHS.get());
+      checkExprStr(Bin->LHS.get());
 
       // Special logic: 'is' operator checks should not move variables in the
       // pattern/RHS. E.g. 'if ^?ptr is ^ptr' shouldn't kill 'ptr'. We check if
@@ -1283,7 +1276,7 @@ std::string Sema::checkExpr(Expr *E) {
         }
       }
 
-      checkExpr(Bin->RHS.get());
+      checkExprStr(Bin->RHS.get());
 
       if (foundVar && infoPtr) {
         // Verify we found same symbol (ptr didn't invalidate)
@@ -1296,14 +1289,14 @@ std::string Sema::checkExpr(Expr *E) {
       }
       return "bool";
     }
-    std::string LHS = checkExpr(Bin->LHS.get());
+    std::string LHS = checkExprStr(Bin->LHS.get());
     std::string RHS;
     if (Bin->Op == "=") {
       m_ControlFlowStack.push_back({"", "void", false, true});
-      RHS = checkExpr(Bin->RHS.get());
+      RHS = checkExprStr(Bin->RHS.get());
       m_ControlFlowStack.pop_back();
     } else {
-      RHS = checkExpr(Bin->RHS.get());
+      RHS = checkExprStr(Bin->RHS.get());
     }
 
     bool isRefAssign = false;
@@ -1359,8 +1352,27 @@ std::string Sema::checkExpr(Expr *E) {
 
     if (isAssign) {
       // Phase 2: Object-Oriented Assignment Check
-      auto lhsType = toka::Type::fromString(LHS);
-      auto rhsType = toka::Type::fromString(RHS);
+      // Prioritize existing TypeObj (from Stage 1) if available
+      std::shared_ptr<toka::Type> lhsType = nullptr;
+      std::shared_ptr<toka::Type> rhsType = nullptr;
+
+      if (auto *v = dynamic_cast<VariableExpr *>(Bin->LHS.get())) {
+        SymbolInfo si;
+        if (CurrentScope->lookup(v->Name, si) && si.TypeObj) {
+          lhsType = si.TypeObj;
+        }
+      }
+      if (!lhsType)
+        lhsType = toka::Type::fromString(LHS);
+
+      if (auto *v = dynamic_cast<VariableExpr *>(Bin->RHS.get())) {
+        SymbolInfo si;
+        if (CurrentScope->lookup(v->Name, si) && si.TypeObj) {
+          rhsType = si.TypeObj;
+        }
+      }
+      if (!rhsType)
+        rhsType = toka::Type::fromString(RHS);
 
       // Handle Smart Pointer NewExpr Special Case
       bool isSmartNew = false;
@@ -1552,7 +1564,7 @@ std::string Sema::checkExpr(Expr *E) {
     }
   } else if (auto *ie = dynamic_cast<IfExpr *>(E)) {
 
-    std::string condType = checkExpr(ie->Condition.get());
+    std::string condType = checkExprStr(ie->Condition.get());
 
     // Type Narrowing for 'is' check
     std::string narrowedVar;
@@ -1580,6 +1592,23 @@ std::string Sema::checkExpr(Expr *E) {
               infoPtr->Type = infoPtr->Type.substr(1);
             if (!infoPtr->Type.empty() && infoPtr->Type.back() == '?')
               infoPtr->Type.pop_back();
+
+            // Sync TypeObj
+            if (infoPtr->TypeObj) {
+              // Determine what nullability means for this type
+              // IsPointerNullable vs IsValueNullable
+              // For simplicity in Stage 3, we reconstruct or strip attributes
+              bool isPtrNull =
+                  infoPtr->IsPointerNullable;            // Should be false now
+              bool isValNull = infoPtr->IsValueNullable; // Should be false now
+              // Reconstruct from source of truth properties?
+              // Or just use withAttributes(writable, nullable=false)?
+              // Nullable means *either* pointer or value nullability in Toka?
+              // Narrowing removes nullability.
+              infoPtr->TypeObj = infoPtr->TypeObj->withAttributes(
+                  infoPtr->TypeObj->IsWritable, false);
+            }
+
             narrowed = true;
           }
         }
@@ -1629,7 +1658,7 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return (thenType != "void") ? thenType : elseType;
   } else if (auto *we = dynamic_cast<WhileExpr *>(E)) {
-    checkExpr(we->Condition.get());
+    checkExprStr(we->Condition.get());
     bool isReceiver = false;
     if (!m_ControlFlowStack.empty()) {
       isReceiver = m_ControlFlowStack.back().IsReceiver;
@@ -1700,7 +1729,7 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return res;
   } else if (auto *fe = dynamic_cast<ForExpr *>(E)) {
-    std::string collType = checkExpr(fe->Collection.get());
+    std::string collType = checkExprStr(fe->Collection.get());
     std::string elemType = "i32"; // TODO: better inference
     if (collType.size() > 2 && collType.substr(0, 2) == "[]")
       elemType = collType.substr(2);
@@ -1779,7 +1808,7 @@ std::string Sema::checkExpr(Expr *E) {
     if (isPrefixMatch || isPrefixIf || isPrefixFor || isPrefixWhile ||
         isPrefixLoop) {
       m_ControlFlowStack.push_back({"", "void", false, true});
-      valType = checkExpr(pe->Value.get());
+      valType = checkExprStr(pe->Value.get());
       m_ControlFlowStack.pop_back();
 
       if (valType == "void") {
@@ -1787,7 +1816,7 @@ std::string Sema::checkExpr(Expr *E) {
       }
     } else {
       // 2. Leaf 'pass' - must have a receiver
-      valType = checkExpr(pe->Value.get());
+      valType = checkExprStr(pe->Value.get());
     }
 
     bool foundReceiver = false;
@@ -1819,7 +1848,7 @@ std::string Sema::checkExpr(Expr *E) {
   } else if (auto *be = dynamic_cast<BreakExpr *>(E)) {
     std::string valType = "void";
     if (be->Value)
-      valType = checkExpr(be->Value.get());
+      valType = checkExprStr(be->Value.get());
 
     ControlFlowInfo *target = nullptr;
     if (be->TargetLabel.empty()) {
@@ -1865,7 +1894,7 @@ std::string Sema::checkExpr(Expr *E) {
         CallName == "u8" || CallName == "usize" || CallName == "isize" ||
         CallName == "bool") {
       for (auto &Arg : Call->Args)
-        checkExpr(Arg.get());
+        checkExprStr(Arg.get());
       return CallName;
     }
 
@@ -1894,7 +1923,7 @@ std::string Sema::checkExpr(Expr *E) {
       }
       // Validate args are checkable
       for (auto &Arg : Call->Args) {
-        checkExpr(Arg.get());
+        checkExprStr(Arg.get());
       }
       return "void";
     }
@@ -1913,7 +1942,7 @@ std::string Sema::checkExpr(Expr *E) {
         if (MethodMap.count(ShapeName) &&
             MethodMap[ShapeName].count(VariantName)) {
           for (auto &Arg : Call->Args)
-            checkExpr(Arg.get());
+            checkExprStr(Arg.get());
           return MethodMap[ShapeName][VariantName];
         }
 
@@ -1924,7 +1953,7 @@ std::string Sema::checkExpr(Expr *E) {
             if (Memb.Name == VariantName) {
               // It's a variant constructor
               for (auto &Arg : Call->Args)
-                checkExpr(Arg.get());
+                checkExprStr(Arg.get());
               return ShapeName;
             }
           }
@@ -2053,7 +2082,7 @@ std::string Sema::checkExpr(Expr *E) {
                         Call->Callee + "'");
       }
       for (size_t i = 0; i < Call->Args.size(); ++i) {
-        std::string ArgType = checkExpr(Call->Args[i].get());
+        std::string ArgType = checkExprStr(Call->Args[i].get());
 
         if (i < Fn->Args.size()) {
           if (Fn->Args[i].IsReference) {
@@ -2124,7 +2153,7 @@ std::string Sema::checkExpr(Expr *E) {
                           Call->Callee + "'");
       }
       for (size_t i = 0; i < Call->Args.size(); ++i) {
-        std::string ArgType = checkExpr(Call->Args[i].get());
+        std::string ArgType = checkExprStr(Call->Args[i].get());
         if (i < Fn->Args.size()) {
           const auto &arg = Fn->Args[i];
           std::string ExpectedTy = arg.Type;
@@ -2198,7 +2227,7 @@ std::string Sema::checkExpr(Expr *E) {
               // Check value type
               // We invoke checkExpr on the RHS, ignoring the LHS (label) to
               // avoid undeclared var error
-              std::string valType = checkExpr(valueExpr);
+              std::string valType = checkExprStr(valueExpr);
               if (!isTypeCompatible(fieldType, valType)) {
                 error(valueExpr, "Field '" + fieldName + "' expects type '" +
                                      fieldType + "', got '" + valType + "'");
@@ -2218,7 +2247,7 @@ std::string Sema::checkExpr(Expr *E) {
                 }
                 providedFields.insert(fname);
 
-                std::string valType = checkExpr(valueExpr);
+                std::string valType = checkExprStr(valueExpr);
                 if (!isTypeCompatible(sh->Members[argIdx].Type, valType)) {
                   error(valueExpr, "Field '" + fname + "' (arg " +
                                        std::to_string(argIdx) + ") expects '" +
@@ -2231,7 +2260,7 @@ std::string Sema::checkExpr(Expr *E) {
               }
             } else { // Tuple
               if (argIdx < sh->Members.size()) {
-                std::string valType = checkExpr(valueExpr);
+                std::string valType = checkExprStr(valueExpr);
                 if (!isTypeCompatible(sh->Members[argIdx].Type, valType)) {
                   error(valueExpr, "Tuple element " + std::to_string(argIdx) +
                                        " expects '" + sh->Members[argIdx].Type +
@@ -2286,10 +2315,10 @@ std::string Sema::checkExpr(Expr *E) {
     // Validating the Initializer matches the Type is good (e.g.
     // InitStructExpr)
     if (New->Initializer) {
-      std::string InitType = checkExpr(New->Initializer.get());
+      std::string InitType = checkExprStr(New->Initializer.get());
       if (!isTypeCompatible(New->Type, InitType) && InitType != "unknown") {
         // InitStruct returns "StructName".
-        // checkExpr(InitStruct) returns "StructName".
+        // checkExprStr(InitStruct) returns "StructName".
         // So this should match.
         error(New, "new expression type mismatch: expected '" + New->Type +
                        "', got '" + InitType + "'");
@@ -2301,7 +2330,7 @@ std::string Sema::checkExpr(Expr *E) {
   } else if (auto *UnsafeE = dynamic_cast<UnsafeExpr *>(E)) {
     bool oldUnsafe = m_InUnsafeContext;
     m_InUnsafeContext = true;
-    std::string type = checkExpr(UnsafeE->Expression.get());
+    std::string type = checkExprStr(UnsafeE->Expression.get());
     m_InUnsafeContext = oldUnsafe;
     return type;
   } else if (auto *AllocE = dynamic_cast<AllocExpr *>(E)) {
@@ -2313,15 +2342,15 @@ std::string Sema::checkExpr(Expr *E) {
     std::string baseType = AllocE->TypeName;
     if (AllocE->IsArray) {
       if (AllocE->ArraySize) {
-        checkExpr(AllocE->ArraySize.get());
+        checkExprStr(AllocE->ArraySize.get());
       }
     }
     if (AllocE->Initializer) {
-      checkExpr(AllocE->Initializer.get());
+      checkExprStr(AllocE->Initializer.get());
     }
     return "*" + baseType;
   } else if (auto *Met = dynamic_cast<MethodCallExpr *>(E)) {
-    std::string ObjType = resolveType(checkExpr(Met->Object.get()));
+    std::string ObjType = resolveType(checkExprStr(Met->Object.get()));
 
     // Check for Dynamic Trait Object
     if (ObjType.size() >= 4 && ObjType.substr(0, 3) == "dyn") {
@@ -2437,7 +2466,7 @@ std::string Sema::checkExpr(Expr *E) {
           continue; // Continue to find more errors
         }
 
-        std::string exprType = checkExpr(pair.second.get());
+        std::string exprType = checkExprStr(pair.second.get());
         if (!isTypeCompatible(expectedType, exprType)) {
           error(Init, "Field '" + pair.first + "' expects type '" +
                           expectedType + "', got '" + exprType + "'");
@@ -2457,7 +2486,7 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return Init->ShapeName;
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
-    std::string ObjTypeFull = checkExpr(Memb->Object.get());
+    std::string ObjTypeFull = checkExprStr(Memb->Object.get());
     if (ObjTypeFull == "module") {
       // It's a module access
       if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
@@ -2597,7 +2626,7 @@ std::string Sema::checkExpr(Expr *E) {
     }
     return "unknown";
   } else if (auto *Post = dynamic_cast<PostfixExpr *>(E)) {
-    std::string lhsInfo = checkExpr(Post->LHS.get());
+    std::string lhsInfo = checkExprStr(Post->LHS.get());
     if (auto *Var = dynamic_cast<VariableExpr *>(Post->LHS.get())) {
       SymbolInfo Info;
       if (CurrentScope->lookup(Var->Name, Info) && !Info.IsValueMutable) {
@@ -2628,7 +2657,7 @@ std::string Sema::checkExpr(Expr *E) {
             ElemType = SD->Members[0].Type;
 
           for (auto &idx : Arr->Indices) {
-            std::string ArgType = checkExpr(idx.get());
+            std::string ArgType = checkExprStr(idx.get());
             if (!isTypeCompatible(ElemType, ArgType)) {
               error(idx.get(), "Array element type mismatch: expected '" +
                                    ElemType + "', got '" + ArgType + "'");
@@ -2640,30 +2669,30 @@ std::string Sema::checkExpr(Expr *E) {
     }
 
     // Normal Array Indexing
-    std::string arrType = checkExpr(Arr->Array.get());
+    std::string arrType = checkExprStr(Arr->Array.get());
     if (Arr->Indices.size() != 1) {
       error(Arr, "Array indexing expects exactly 1 index");
     }
-    checkExpr(Arr->Indices[0].get());
+    checkExprStr(Arr->Indices[0].get());
     return "unknown"; // Placeholder for element type derivation
   } else if (auto *Tup = dynamic_cast<TupleExpr *>(E)) {
     std::string s = "(";
     for (size_t i = 0; i < Tup->Elements.size(); ++i) {
       if (i > 0)
         s += ", ";
-      s += checkExpr(Tup->Elements[i].get());
+      s += checkExprStr(Tup->Elements[i].get());
     }
     s += ")";
     return s;
   } else if (auto *ArrLit = dynamic_cast<ArrayExpr *>(E)) {
     // Infer from first element
     if (!ArrLit->Elements.empty()) {
-      std::string ElemTy = checkExpr(ArrLit->Elements[0].get());
+      std::string ElemTy = checkExprStr(ArrLit->Elements[0].get());
       return "[" + ElemTy + ";" + std::to_string(ArrLit->Elements.size()) + "]";
     }
     return "[i32; 0]";
   } else if (auto *me = dynamic_cast<MatchExpr *>(E)) {
-    std::string targetType = checkExpr(me->Target.get());
+    std::string targetType = checkExprStr(me->Target.get());
     std::string resultType = "void";
 
     bool isReceiver = false;
@@ -2675,7 +2704,7 @@ std::string Sema::checkExpr(Expr *E) {
       enterScope();
       checkPattern(arm->Pat.get(), targetType, false);
       if (arm->Guard) {
-        if (checkExpr(arm->Guard.get()) != "bool")
+        if (checkExprStr(arm->Guard.get()) != "bool")
           error(arm->Guard.get(), "guard must be bool");
       }
       m_ControlFlowStack.push_back({"", "void", false, isReceiver});
@@ -2718,7 +2747,7 @@ std::string Sema::checkExpr(Expr *E) {
 
     return resultType;
   } else if (auto *Cast = dynamic_cast<CastExpr *>(E)) {
-    checkExpr(Cast->Expression.get());
+    checkExprStr(Cast->Expression.get());
     return Cast->TargetType;
   }
 
@@ -3155,6 +3184,153 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
   }
 
   props.Status = ShapeAnalysisStatus::Analyzed;
+}
+
+// Stage 4: Object-Oriented Shims
+std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
+  std::string typeStr = checkExprStr(E);
+  return toka::Type::fromString(typeStr);
+}
+
+std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
+  auto rhsType = checkExpr(Unary->RHS.get());
+  // Assuming checkExpr returns object now.
+  if (!rhsType || rhsType->toString() == "unknown") // Or use isUnknown()?
+    return toka::Type::fromString("unknown");
+
+  std::string rhsInfo =
+      rhsType->toString(); // Keep string for error messages/legacy checks
+
+  if (Unary->Op == TokenType::Bang) {
+    if (!rhsType->isBoolean()) {
+      error(Unary, "operand of '!' must be bool, got '" + rhsInfo + "'");
+    }
+    return toka::Type::fromString("bool");
+  } else if (Unary->Op == TokenType::Minus) {
+    bool isNum = rhsType->isInteger() || rhsType->isFloatingPoint();
+    if (!isNum) {
+      error(Unary, "operand of '-' must be numeric, got '" + rhsInfo + "'");
+    }
+    return rhsType; // Return object directly
+  } else if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
+             Unary->Op == TokenType::Tilde ||
+             Unary->Op == TokenType::Ampersand) {
+
+    if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
+      SymbolInfo *Info = nullptr;
+      if (CurrentScope->findSymbol(Var->Name, Info)) {
+        if (Unary->Op == TokenType::Ampersand) {
+          bool wantMutable = Var->IsMutable;
+          if (wantMutable) {
+            if (!Info->IsValueMutable) {
+              error(Unary, "cannot mutably borrow immutable variable '" +
+                               Var->Name + "' (# required)");
+            }
+            if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+              error(Unary, "cannot mutably borrow '" + Var->Name +
+                               "' because it is already borrowed");
+            }
+            Info->IsMutablyBorrowed = true;
+          } else {
+            if (Info->IsMutablyBorrowed) {
+              error(Unary, "cannot borrow '" + Var->Name +
+                               "' because it is mutably borrowed");
+            }
+            Info->ImmutableBorrowCount++;
+          }
+          m_LastBorrowSource = Var->Name;
+          m_CurrentStmtBorrows.push_back({Var->Name, wantMutable});
+
+          // Use TypeObj if available, else generic logic
+          auto innerType = Info->TypeObj ? Info->TypeObj
+                                         : toka::Type::fromString(Info->Type);
+          bool innerWritable = Info->IsValueMutable || Var->IsMutable;
+          innerType =
+              innerType->withAttributes(innerWritable, innerType->IsNullable);
+          auto refType = std::make_shared<toka::ReferenceType>(innerType);
+          return refType;
+        } else if (Unary->Op == TokenType::Caret) {
+          if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+            error(Unary,
+                  "cannot move '" + Var->Name + "' while it is borrowed");
+          }
+          // Fix: Do not mark moved here.
+          return rhsType;
+        } else if (Unary->Op == TokenType::Tilde) {
+          if (rhsType->isSharedPtr()) {
+            return rhsType; // Idempotent
+          }
+          auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
+          // Recursion check logic for tilde?
+          // If rhsType is ALREADY a shared ptr, we returned above.
+          return sh;
+        } else if (Unary->Op == TokenType::Star) {
+          // Identity (*)
+          std::shared_ptr<toka::Type> inner;
+          if (rhsType->isPointer()) {
+            inner = rhsType->getPointeeType();
+            if (!inner)
+              inner = rhsType;
+          } else {
+            inner = rhsType;
+          }
+          auto rawPtr = std::make_shared<toka::RawPointerType>(inner);
+          return rawPtr;
+        }
+      }
+    }
+
+    if (Unary->Op == TokenType::Star) {
+      // Identity (*) on non-variable
+      std::shared_ptr<toka::Type> inner;
+      if (rhsType->isPointer()) {
+        inner = rhsType->getPointeeType();
+        if (!inner)
+          inner = rhsType;
+      } else {
+        inner = rhsType;
+      }
+      auto rawPtr = std::make_shared<toka::RawPointerType>(inner);
+      return rawPtr;
+    }
+
+    if (Unary->Op == TokenType::Ampersand) {
+      auto ref = std::make_shared<toka::ReferenceType>(rhsType);
+      return ref;
+    }
+    if (Unary->Op == TokenType::Caret) {
+      return rhsType;
+    }
+    if (Unary->Op == TokenType::Tilde) {
+      if (rhsType->isSharedPtr()) {
+        return rhsType; // Idempotent
+      }
+      auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
+      return sh;
+    }
+  }
+
+  if (Unary->Op == TokenType::PlusPlus || Unary->Op == TokenType::MinusMinus) {
+    if (!rhsType->isInteger()) {
+      error(Unary, "operand of increment/decrement must be integer, got '" +
+                       rhsInfo + "'");
+    }
+    if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
+      SymbolInfo *Info = nullptr;
+      if (CurrentScope->findSymbol(Var->Name, Info)) {
+        if (!Info->IsValueMutable) {
+          error(Unary, "cannot modify immutable variable '" + Var->Name +
+                           "' (# suffix required)");
+        }
+        if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+          error(Unary,
+                "cannot modify '" + Var->Name + "' while it is borrowed");
+        }
+      }
+    }
+    return rhsType;
+  }
+  return rhsType;
 }
 
 } // namespace toka

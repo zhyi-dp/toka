@@ -182,8 +182,11 @@ private:
   void registerGlobals(Module &M);
   void checkFunction(FunctionDecl *Fn);
   void checkStmt(Stmt *S);
-  std::string checkExpr(Expr *E); // Returns type name
-  std::string checkUnaryExpr(UnaryExpr *Unary);
+  std::string checkExprStr(Expr *E);               // Legacy
+  std::string checkUnaryExprStr(UnaryExpr *Unary); // Legacy
+  std::shared_ptr<toka::Type> checkExpr(Expr *E);  // New Object API
+  std::shared_ptr<toka::Type>
+  checkUnaryExpr(UnaryExpr *Unary); // New Object API
   void checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
                     bool SourceIsMutable);
 
