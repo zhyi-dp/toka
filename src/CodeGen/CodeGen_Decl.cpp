@@ -208,7 +208,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
         sym.soulType; // Now comes from fillSymbolMetadata
     m_ValueTypes[argName] = allocaType;
     m_NamedValues[argName] = alloca;
-    m_ValueIsMutable[argName] = sym.isMutable;
+    // m_ValueIsMutable[argName] = sym.isMutable; // LEGACY REMOVED
 
     if (!m_ScopeStack.empty()) {
       // [Fix] Argument Lifecycle
@@ -557,8 +557,10 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
         // Stripping logic for unique variable lookup could be added here if
         // needed, but m_NamedValues should have stripped keys now.
         std::string veName = stripMorphology(ve->Name);
-        if (m_ValueIsUnique[veName]) {
-          llvm::Value *s = m_NamedValues[veName];
+        if (m_Symbols.count(veName) &&
+            m_Symbols[veName].morphology == Morphology::Unique) {
+          TokaSymbol &sSym = m_Symbols[veName];
+          llvm::Value *s = sSym.allocaPtr;
           if (s && llvm::isa<llvm::AllocaInst>(s))
             m_Builder.CreateStore(
                 llvm::Constant::getNullValue(
@@ -639,10 +641,11 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
 
   m_NamedValues[varName] = alloca;
   m_ValueTypes[varName] = type;
-  m_ValueIsUnique[varName] = var->IsUnique;
-  m_ValueIsShared[varName] = var->IsShared;
-  m_ValueIsReference[varName] = var->IsReference;
-  m_ValueIsMutable[varName] = var->IsMutable;
+  // LEGACY MAPS REMOVED
+  // m_ValueIsUnique[varName] = var->IsUnique;
+  // m_ValueIsShared[varName] = var->IsShared;
+  // m_ValueIsReference[varName] = var->IsReference;
+  // m_ValueIsMutable[varName] = var->IsMutable;
 
   if (initVal) {
     if (initVal->getType() != type) {
@@ -775,8 +778,9 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     m_NamedValues[vName] = alloca;
     m_ValueTypes[vName] = ty;
     m_ValueElementTypes[vName] = ty; // fallback for basic types
-    m_ValueIsMutable[vName] = v.IsMutable;
-    m_ValueIsNullable[vName] = v.IsNullable;
+    // LEGACY MAPS REMOVED
+    // m_ValueIsMutable[vName] = v.IsMutable;
+    // m_ValueIsNullable[vName] = v.IsNullable;
 
     // [Fix] Register Type Name for Lookup (Auto Deduction)
     // We attempt to extract the user-written type from AST (AllocExpr/NewExpr).

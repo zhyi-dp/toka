@@ -532,7 +532,8 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
                 baseName.back() == '!'))
           baseName.pop_back();
 
-        if (m_ValueIsShared.count(baseName) && m_ValueIsShared[baseName]) {
+        if (m_Symbols.count(baseName) &&
+            m_Symbols[baseName].morphology == Morphology::Shared) {
           return genExpr(target).load(m_Builder);
         }
         return getEntityAddr(v->Name);
@@ -1657,12 +1658,11 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
     m_NamedValues[pName] = alloca;
     m_ValueTypes[pName] = allocaType;
     m_ValueElementTypes[pName] = targetType;
-    m_ValueIsReference[pName] = pat->IsReference;
-    // Patterns are immutable by default unless 'mut'
-    m_ValueIsMutable[pName] = pat->IsMutable;
-    m_ValueIsUnique[pName] =
-        false; // IsUnique needs pat support? Assume false for now or infer
-    m_ValueIsShared[pName] = false;
+    // Legacy maps removed
+    // m_ValueIsReference[pName] = pat->IsReference;
+    // m_ValueIsMutable[pName] = pat->IsMutable;
+    // m_ValueIsUnique[pName] = false;
+    // m_ValueIsShared[pName] = false;
 
     TokaSymbol sym;
     sym.allocaPtr = alloca;

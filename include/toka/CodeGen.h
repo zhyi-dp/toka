@@ -127,11 +127,7 @@ private:
   // Legacy Mapping (Sema/CodeGen interoperability)
   std::map<std::string, llvm::Value *> m_NamedValues;
   std::map<std::string, llvm::Type *> m_ValueTypes;
-  std::map<std::string, bool> m_ValueIsReference;
-  std::map<std::string, bool> m_ValueIsMutable;
-  std::map<std::string, bool> m_ValueIsUnique;
-  std::map<std::string, bool> m_ValueIsShared;
-  std::map<std::string, bool> m_ValueIsNullable;
+  // Legacy boolean maps removed
 
   struct CFInfo {
     std::string Label;
