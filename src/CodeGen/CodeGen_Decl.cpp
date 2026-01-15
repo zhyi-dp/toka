@@ -2,6 +2,7 @@
 #include <cctype>
 #include <iostream>
 #include <set>
+#include <string>
 #include <typeinfo>
 
 namespace toka {
@@ -39,33 +40,40 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
   if (!f) {
     std::vector<llvm::Type *> argTypes;
     for (const auto &arg : func->Args) {
-      llvm::Type *pTy = resolveType(arg.Type, false); // Logic Type
-      bool isCaptured = (pTy && (pTy->isStructTy() || pTy->isArrayTy() ||
-                                 arg.IsMutable || arg.IsRebindable)) &&
-                        !arg.IsReference;
-      llvm::Type *t = resolveType(arg.Type, arg.HasPointer || arg.IsReference);
+      // Create Type Object from String (Temporary Bridge)
+      // Ideally, FunctionDecl would store shared_ptr<Type>, but for now we
+      // parse.
+      std::shared_ptr<Type> typeObj = Type::fromString(arg.Type);
 
-      // [Fix] Shared Pointer Arguments
-      // If argument is shared, the physical type must be the wrapper { T*, RC*
-      // }
-      if (arg.IsShared) {
-        llvm::Type *ptrTy = llvm::PointerType::getUnqual(pTy);
-        llvm::Type *refTy =
-            llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
-        t = llvm::StructType::get(m_Context, {ptrTy, refTy});
-        // Shared pointers are passed by value (the wrapper struct) which fits
-        // in registers or byval We don't mark isCaptured because the wrapper
-        // itself is the value we want.
-        isCaptured = false;
+      // Permission Decorators (AST overrides Type string if present)
+      if (arg.IsMutable)
+        typeObj = typeObj->withAttributes(true, typeObj->IsNullable);
+      if (arg.IsNullable || arg.IsPointerNullable)
+        typeObj = typeObj->withAttributes(typeObj->IsWritable, true);
+
+      // [Fix] Apply AST-level Morphology wrappers (Pointer, Unique, Reference,
+      // Shared) The AST 'Type' string often doesn't contain *, ^, ~ if they
+      // were parsed as decorators
+      if (arg.IsReference) {
+        typeObj = std::make_shared<ReferenceType>(typeObj);
+      } else if (arg.IsUnique) {
+        typeObj = std::make_shared<UniquePointerType>(typeObj);
+      } else if (arg.IsShared) {
+        typeObj = std::make_shared<SharedPointerType>(typeObj);
+      } else if (arg.HasPointer) {
+        typeObj = std::make_shared<RawPointerType>(typeObj);
       }
 
-      if (isCaptured)
-        t = llvm::PointerType::getUnqual(pTy);
+      // Determine LLVM Type
+      llvm::Type *t = getLLVMType(typeObj);
+
       if (t)
         argTypes.push_back(t);
     }
 
-    llvm::Type *retType = resolveType(func->ReturnType, false);
+    // Return Type
+    std::shared_ptr<Type> retTypeObj = Type::fromString(func->ReturnType);
+    llvm::Type *retType = getLLVMType(retTypeObj);
 
     llvm::FunctionType *ft = llvm::FunctionType::get(retType, argTypes, false);
     f = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, funcName,
@@ -93,73 +101,51 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
     arg.setName(argName);
 
-    // 2. Determine types
-    llvm::Type *pTy = resolveType(argDecl.Type, false); // Logic Type (Soul)
-    if (!pTy) {
-      error(func, "Internal Error: Could not resolve type '" + argDecl.Type +
-                      "' for argument '" + argDecl.Name + "'");
-      return nullptr;
+    // 2. Resolve Type Object
+    std::shared_ptr<Type> typeObj = Type::fromString(argDecl.Type);
+
+    // Apply Function Arg overrides (e.g. "x: i32#")
+    bool isMutable = argDecl.IsMutable || argDecl.IsValueMutable;
+    bool isNullable = argDecl.IsNullable || argDecl.IsPointerNullable;
+    typeObj = typeObj->withAttributes(isMutable, isNullable);
+
+    // [Fix] Apply AST-level Morphology wrappers (Pointer, Unique, Reference,
+    // Shared)
+    if (argDecl.IsReference) {
+      typeObj = std::make_shared<ReferenceType>(typeObj);
+    } else if (argDecl.IsUnique) {
+      typeObj = std::make_shared<UniquePointerType>(typeObj);
+    } else if (argDecl.IsShared) {
+      typeObj = std::make_shared<SharedPointerType>(typeObj);
+    } else if (argDecl.HasPointer) {
+      typeObj = std::make_shared<RawPointerType>(typeObj);
     }
 
-    // 3. Address Layering Flags
-    bool isCaptured = (pTy->isStructTy() || pTy->isArrayTy() ||
-                       argDecl.IsMutable || argDecl.IsRebindable) &&
-                      !argDecl.IsReference;
-    bool isExplicit = (argDecl.HasPointer || argDecl.IsUnique ||
-                       argDecl.IsShared || argDecl.IsReference);
-
-    // Identity slot: always a pointer to the value or pointer to the pointer
-    llvm::Type *allocaType = llvm::PointerType::getUnqual(pTy);
-
-    // [Fix] Shared Pointer Argument Handling
-    if (argDecl.IsShared) {
-      llvm::Type *ptrTy = llvm::PointerType::getUnqual(pTy);
-      llvm::Type *refTy =
-          llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
-      llvm::StructType *st = llvm::StructType::get(m_Context, {ptrTy, refTy});
-      allocaType = st; // The alloca should store the wrapper struct
-
-      // Disable capture logic for Shared, we handle it explicitly
-      isCaptured = false;
-    }
+    // 3. Get LLVM Type from Object
+    llvm::Type *allocaType = getLLVMType(typeObj);
+    llvm::Type *pTy = allocaType; // Soul type approx (refines later)
 
     llvm::AllocaInst *alloca =
         m_Builder.CreateAlloca(allocaType, nullptr, argName + ".addr");
     m_Builder.CreateStore(&arg, alloca);
 
-    // 4. Register in Symbol Table (Soul/Identity)
+    // 4. Register in Symbol Table using Type Object
     TokaSymbol sym;
     sym.allocaPtr = alloca;
-    fillSymbolMetadata(sym, argDecl.Type, argDecl.HasPointer, argDecl.IsUnique,
-                       argDecl.IsShared, argDecl.IsReference,
-                       argDecl.IsMutable || argDecl.IsValueMutable,
-                       argDecl.IsNullable || argDecl.IsPointerNullable, pTy);
-    m_ValueTypeNames[argName] = argDecl.Type;
-    m_ValueElementTypes[argName] = pTy;
 
-    // CRITICAL: Captured arguments (Implicit Pointers) must use Pointer mode
-    // so getEntityAddr loads the real address from the alloca.
-    if (isCaptured) {
-      sym.mode = AddressingMode::Pointer;
-      // If the underlying type is ALREADY a pointer (Unique, Raw Pointer),
-      // Capture adds another layer.
-      // Struct: Data -> Capture Data* (Level 1)
-      // Unique: Data* -> Capture Data** (Level 2)
-      // Raw Pointer: Data* -> Passed as Data* (Level 1) [Not Captured by Expr]
-      if (argDecl.IsUnique) {
-        sym.indirectionLevel = 2;
-      } else {
-        if (sym.indirectionLevel == 0)
-          sym.indirectionLevel = 1;
-      }
-    }
+    // Refactored Metadata Filler
+    fillSymbolMetadata(sym, typeObj, allocaType); // New overload
 
+    // Explicit permission/flag overrides from AST if not in Type String
     sym.isRebindable = argDecl.IsRebindable;
-    sym.isContinuous = pTy->isArrayTy();
+    sym.isMutable = isMutable;
+
     m_Symbols[argName] = sym;
 
-    // Backward compatibility maps
-    m_ValueElementTypes[argName] = pTy;
+    // Legacy maps for compatibility
+    m_ValueTypeNames[argName] = argDecl.Type;
+    m_ValueElementTypes[argName] =
+        sym.soulType; // Now comes from fillSymbolMetadata
     m_ValueTypes[argName] = allocaType;
     m_NamedValues[argName] = alloca;
     m_ValueIsMutable[argName] = sym.isMutable;
@@ -1497,6 +1483,189 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
   if (hasPointer && type)
     return llvm::PointerType::getUnqual(type);
   return type;
+}
+
+llvm::Type *CodeGen::getLLVMType(std::shared_ptr<Type> type) {
+  if (!type) {
+    return llvm::Type::getVoidTy(m_Context);
+  }
+
+  // Handle Primitives
+  if (type->typeKind == Type::Primitive) {
+    auto prim = std::static_pointer_cast<PrimitiveType>(type);
+    if (prim->Name == "i32" || prim->Name == "u32" || prim->Name == "int")
+      return llvm::Type::getInt32Ty(m_Context);
+    if (prim->Name == "i64" || prim->Name == "u64" || prim->Name == "long" ||
+        prim->Name == "usize")
+      return llvm::Type::getInt64Ty(m_Context);
+    if (prim->Name == "i8" || prim->Name == "u8" || prim->Name == "byte" ||
+        prim->Name == "char")
+      return llvm::Type::getInt8Ty(m_Context);
+    if (prim->Name == "i16" || prim->Name == "u16")
+      return llvm::Type::getInt16Ty(m_Context);
+    if (prim->Name == "bool" || prim->Name == "i1")
+      return llvm::Type::getInt1Ty(m_Context); // i1
+    if (prim->Name == "f32" || prim->Name == "float")
+      return llvm::Type::getFloatTy(m_Context);
+    if (prim->Name == "f64" || prim->Name == "double")
+      return llvm::Type::getDoubleTy(m_Context);
+    if (prim->Name == "void")
+      return llvm::Type::getVoidTy(m_Context);
+    if (prim->Name == "str")
+      return llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context));
+  }
+
+  // Handle Void
+  if (type->typeKind == Type::Void) {
+    return llvm::Type::getVoidTy(m_Context);
+  }
+
+  // Handle Pointers (Raw, Unique, Reference) -> Map to LLVM Pointer
+  // Note: Reference in Toka is a pointer in LLVM.
+  // Note: Unique is a pointer in LLVM.
+  if (type->typeKind == Type::RawPtr || type->typeKind == Type::UniquePtr ||
+      type->typeKind == Type::Reference) {
+
+    auto ptrType = std::static_pointer_cast<PointerType>(type);
+
+    // For opaque pointers (LLVM 17+), we could just return ptr.
+    // However, if we need typed pointers for GEPs or older LLVM logic (which
+    // Toka seems to rely on with resolveType returning typed ptrs):
+    llvm::Type *pointeeTy = getLLVMType(ptrType->PointeeType);
+    if (pointeeTy->isVoidTy()) {
+      // *void -> i8* (standard convention) or just opaque ptr if supported.
+      // Let's stick to i8* for void* equivalent if typed.
+      pointeeTy = llvm::Type::getInt8Ty(m_Context);
+    }
+    return llvm::PointerType::getUnqual(pointeeTy);
+  }
+
+  // Handle Shared Pointer (~T) -> { T*, i32* }
+  if (type->typeKind == Type::SharedPtr) {
+    auto sharedType = std::static_pointer_cast<SharedPointerType>(type);
+    llvm::Type *elemTy = getLLVMType(sharedType->PointeeType);
+
+    llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
+    llvm::Type *refCountTy =
+        llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+
+    return llvm::StructType::get(m_Context, {ptrTy, refCountTy});
+  }
+
+  // Handle Arrays ([T; N])
+  if (type->typeKind == Type::Array) {
+    auto arrType = std::static_pointer_cast<ArrayType>(type);
+    llvm::Type *elemTy = getLLVMType(arrType->ElementType);
+    return llvm::ArrayType::get(elemTy, arrType->Size);
+  }
+
+  // Handle Tuples ((T1, T2))
+  if (type->typeKind == Type::Tuple) {
+    auto tupleType = std::static_pointer_cast<TupleType>(type);
+    std::vector<llvm::Type *> elemTypes;
+    for (const auto &elem : tupleType->Elements) {
+      elemTypes.push_back(getLLVMType(elem));
+    }
+    return llvm::StructType::get(m_Context, elemTypes);
+  }
+
+  // Handle Shapes (Structs) via Name Lookup
+  if (type->typeKind == Type::Shape) {
+    auto shapeType = std::static_pointer_cast<ShapeType>(type);
+    if (m_StructTypes.count(shapeType->Name)) {
+      return m_StructTypes[shapeType->Name];
+    }
+    // If generic lookup fails, try resolving by name (backup)
+    return resolveType(shapeType->Name, false);
+  }
+
+  // Fallback to string based resolution if we have an Unresolved type wrapping
+  // a string
+  if (type->typeKind == Type::Unresolved) {
+    auto unresolved = std::static_pointer_cast<UnresolvedType>(type);
+    return resolveType(unresolved->Name, false);
+  }
+
+  // Default Void
+  return llvm::Type::getVoidTy(m_Context);
+}
+
+void CodeGen::fillSymbolMetadata(TokaSymbol &sym, std::shared_ptr<Type> typeObj,
+                                 llvm::Type *allocaElemTy) {
+  if (!typeObj)
+    return;
+
+  // 1. Indirection and Core Type Logic is now driven by TypeObj structure
+  sym.soulTypeObj = typeObj;
+
+  // Determine Morphology and Indirection based on Type Kind
+  sym.indirectionLevel = 0;
+  sym.morphology = Morphology::None;
+  sym.mode = AddressingMode::Direct;
+
+  std::shared_ptr<Type> current = typeObj;
+
+  // Unseal wrappers to find "Soul"
+  // We loop to peel of layers if needed, or just switch on the top layer logic.
+  // But TokaSymbol logic expects 'soulType' to be the underlying data type.
+
+  // Handle Reference
+  if (typeObj->isReference()) {
+    sym.mode = AddressingMode::Reference;
+    sym.indirectionLevel = 1;
+    sym.morphology = Morphology::None; // Reference is an alias, not ownership
+    // Peel for Soul
+    auto ptr = std::static_pointer_cast<PointerType>(typeObj);
+    sym.soulType = getLLVMType(ptr->PointeeType);
+    current = ptr->PointeeType;
+  } else if (typeObj->typeKind == Type::UniquePtr) {
+    sym.mode = AddressingMode::Pointer;
+    sym.indirectionLevel = 1;
+    sym.morphology = Morphology::Unique;
+    auto ptr = std::static_pointer_cast<PointerType>(typeObj);
+    sym.soulType = getLLVMType(ptr->PointeeType);
+    current = ptr->PointeeType;
+  } else if (typeObj->typeKind == Type::SharedPtr) {
+    sym.mode = AddressingMode::Pointer;
+    sym.indirectionLevel = 1; // Effectively a pointer access to value
+    sym.morphology = Morphology::Shared;
+    auto ptr = std::static_pointer_cast<SharedPointerType>(typeObj);
+    sym.soulType = getLLVMType(ptr->PointeeType);
+    current = ptr->PointeeType;
+  } else if (typeObj->typeKind == Type::RawPtr) {
+    sym.mode = AddressingMode::Pointer;
+    sym.indirectionLevel = 1;
+    sym.morphology = Morphology::Raw;
+    auto ptr = std::static_pointer_cast<PointerType>(typeObj);
+    sym.soulType = getLLVMType(ptr->PointeeType);
+    current = ptr->PointeeType;
+  } else {
+    // Direct Value
+    sym.mode = AddressingMode::Direct;
+    sym.morphology = Morphology::None;
+    sym.soulType = getLLVMType(typeObj);
+    // current remains typeObj
+  }
+
+  if (!sym.soulType)
+    sym.soulType = allocaElemTy;
+
+  // Attributes
+  sym.isMutable = typeObj->IsWritable;
+  sym.isNullable = typeObj->IsNullable;
+
+  // Arrays are continuous
+  if (current && current->isArray()) {
+    sym.isContinuous = true;
+  } else {
+    sym.isContinuous = false;
+  }
+
+  // Rebindable? usually strict to the variable decl itself, not the type
+  // always, but we can check if the top level pointer was rebindable if we
+  // stored it in Type? Currently Type has IsWritable. IsRebindable is typically
+  // a property of the binding, not the type (like `mut` binding in Rust). So
+  // we'll leave sym.isRebindable to be set by the caller (Declaration).
 }
 
 } // namespace toka

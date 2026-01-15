@@ -1,6 +1,7 @@
 #pragma once
 
 #include "toka/AST.h"
+#include "toka/Type.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -12,6 +13,7 @@
 #include <vector>
 
 namespace toka {
+class Type;
 class ASTNode;
 class Module;
 class Stmt;
@@ -46,6 +48,7 @@ struct TokaSymbol {
   bool isMutable;         // # on entity (Writable data)
   bool isContinuous;      // Sequence marker (alloc [N])
   bool isNullable;        // ?/! marker
+  std::shared_ptr<Type> soulTypeObj; // The new Type Object source of truth
 };
 
 struct PhysEntity {
@@ -137,9 +140,16 @@ private:
   std::vector<std::vector<VariableScopeInfo>> m_ScopeStack;
 
   llvm::Type *resolveType(const std::string &baseType, bool hasPointer);
+  llvm::Type *getLLVMType(std::shared_ptr<Type> type);
+
+  // Deprecated/Legacy version
   void fillSymbolMetadata(TokaSymbol &sym, const std::string &typeStr,
                           bool hasPointer, bool isUnique, bool isShared,
                           bool isReference, bool isMutable, bool isNullable,
+                          llvm::Type *allocaElemTy);
+
+  // New version
+  void fillSymbolMetadata(TokaSymbol &sym, std::shared_ptr<Type> typeObj,
                           llvm::Type *allocaElemTy);
 
   void cleanupScopes(size_t targetDepth);
