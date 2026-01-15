@@ -2076,12 +2076,13 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
 
     if (funcDecl && i < funcDecl->Args.size()) {
       const auto &arg = funcDecl->Args[i];
-      // Force Capture for Unique Pointers to enable In-Place Move
+      // Force Capture for Unique Pointers to enable In-Place Move / Borrow
       if (arg.IsUnique) {
         isCaptured = true;
       }
-      // Only capture if it's a Value Type (Struct/Array) AND NOT a Pointer
-      else if (!arg.HasPointer && !arg.IsShared) {
+      // Only capture if it's a Value Type (Struct/Array) AND NOT a
+      // Pointer/Shared/Reference
+      else if (!arg.HasPointer && !arg.IsShared && !arg.IsReference) {
         llvm::Type *logicalTy = resolveType(arg.Type, false);
         if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
           isCaptured = true;

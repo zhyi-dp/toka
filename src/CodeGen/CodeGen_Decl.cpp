@@ -67,6 +67,33 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
       // Determine LLVM Type
       llvm::Type *t = getLLVMType(typeObj);
 
+      // [Restored Logic] Implicit Capture (ABI)
+      // Structs, Arrays, and Mutable bindings are passed by pointer (Implicit
+      // Reference) unless they are already explicit pointers/references.
+      // SharedPtr and UniquePtr are already pointers (or struct wrappers acting
+      // as pointers), so checks below mostly separate them.
+
+      bool isAggregate = t->isStructTy() || t->isArrayTy();
+      // Note: SharedPtr is a struct {T*, i32*}, but we handle Shared explicitly
+      // in AST logic usually. However, old logic checked `!arg.IsReference`.
+      // New logic: `typeObj` already wraps Reference/Pointer if AST had them.
+      // So if `typeObj` is ALREADY a Pointer/Reference/Unique/Shared, `t` is a
+      // pointer (or {ptr,ptr}). We only want to capture if it is a DIRECT value
+      // (Primitive, Shape, Array, Tuple) that needs to be passed by ptr.
+
+      bool isDirectValue = !typeObj->isPointer() && !typeObj->isReference();
+      // isPointer() covers Raw, Unique, Shared, Reference in Type.h?
+      // Checking Type.h: isPointer() covers Raw, Unique, Shared, Reference.
+
+      // [Fix] Enable Capture for Unique Pointers
+      bool needsCapture = (isDirectValue && (isAggregate || arg.IsMutable ||
+                                             arg.IsRebindable)) ||
+                          arg.IsUnique;
+
+      if (needsCapture) {
+        t = llvm::PointerType::getUnqual(t);
+      }
+
       if (t)
         argTypes.push_back(t);
     }
@@ -125,6 +152,18 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     llvm::Type *allocaType = getLLVMType(typeObj);
     llvm::Type *pTy = allocaType; // Soul type approx (refines later)
 
+    // [Restored Logic] Implicit Capture (ABI) - Body
+    bool isAggregate = allocaType->isStructTy() || allocaType->isArrayTy();
+    bool isDirectValue = !typeObj->isPointer() && !typeObj->isReference();
+    bool needsCapture = (isDirectValue && (isAggregate || argDecl.IsMutable ||
+                                           argDecl.IsRebindable)) ||
+                        argDecl.IsUnique;
+
+    if (needsCapture) {
+      // Argument passed by pointer
+      allocaType = llvm::PointerType::getUnqual(allocaType);
+    }
+
     llvm::AllocaInst *alloca =
         m_Builder.CreateAlloca(allocaType, nullptr, argName + ".addr");
     m_Builder.CreateStore(&arg, alloca);
@@ -134,7 +173,15 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     sym.allocaPtr = alloca;
 
     // Refactored Metadata Filler
-    fillSymbolMetadata(sym, typeObj, allocaType); // New overload
+    fillSymbolMetadata(
+        sym, typeObj,
+        pTy); // Pass pTy (base element type) not the captured pointer type
+
+    if (needsCapture) {
+      sym.mode = AddressingMode::Pointer;
+      // If captured, we add a level of indirection (ptr -> ptr*)
+      sym.indirectionLevel++;
+    }
 
     // Explicit permission/flag overrides from AST if not in Type String
     sym.isRebindable = argDecl.IsRebindable;
