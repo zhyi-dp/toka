@@ -8,6 +8,33 @@ Toka is a systems programming language created by YiZhonghua in 2025. It is desi
 
 Toka eliminates hidden memory states by making properties explicit through orthogonal suffix tokens. This allows you to read the "shape" of memory usage at a glance.
 
+### 🚀 Key Innovations
+
+**1. Syntactic RAII (Native Smart Pointers)**
+Toka is one of the few languages that elevates **Smart Pointers to Core Syntax**. This means **"Lifecycle Management" is internalized as the language's breath**, rather than just a library feature.
+*   **^T (Unique)** and **~T (Shared)** exist as native grammatical constructs, making RAII the zero-visual-cost default pattern.
+
+**2. Soul-Identity Duality**
+Toka philosophically separates an object into its **Soul (Content/Value)** and **Identity (Extension/Address)**.
+*   **Precise Semantics**: Access the Soul via Borrow (`&`) and manipulate the Identity via Pointer (`*`).
+*   **Ambiguity Resolved**: This effectively solves the semantic ambiguity between "reference assignment" and "content modification." In Toka, moving identity (`move`) and modifying content (`mut`) are distinct grammatical dimensions.
+
+**3. Orthogonal Attribute System**
+Say goodbye to the keyword soup of `const volatile unsigned`.
+*   **Visual Formula**: Through orthogonal suffixes like `#` (Mutable), `?` (Nullable), and `!` (Both), Toka variable definitions look like clear chemical formulas. `T^#?` is instantly recognizable as a "Mutable, Nullable, Unique Pointer to T."
+
+**4. @encap Explicit Encapsulation**
+By default, `shape` members are transparent. Toka uses `@encap` for fine-grained access control.
+*   **Permission Convergence**: Inside an `impl Type@encap` block, developers must explicitly list (`pub`) which fields are visible to the outside. Unlisted fields become private automatically.
+*   **Lifecycle Binding**: The `@encap` block is also the exclusive place to define critical lifecycle methods (like `drop`), ensuring resource safety.
+
+**5. Contract-Based Control Flow**
+**"Everything produces a value; everything is a guarantee."**
+*   **Branch Balance**: Toka enforces that control flow expressions (like `match`, `for`) must fulfill their value delivery contract on all paths.
+*   **Loop Fallback**: The unique `for-or` syntax guarantees that the receiver gets its promised value even if the loop body is never executed (e.g., empty iteration).
+
+### Token System Table
+
 | Token | Meaning (Value/Content) | Meaning (Identity/Address) |
 | :--- | :--- | :--- |
 | `#` | **Writable**: Can modify fields | **Swappable**: Can point elsewhere |
@@ -19,7 +46,7 @@ Toka eliminates hidden memory states by making properties explicit through ortho
 | `*` | - | **Raw Pointer** (No Ownership) |
 
 **Example:**
-```scala
+```rust
 auto x# = 10        // Mutable Integer
 x# = 11            // OK
 
@@ -57,7 +84,7 @@ We are actively building the compiler self-hosting capabilities.
     - [x] File-based Modules
     - [x] `import` system (Physical & Logical)
     - [x] `pub` visibility modifier
-- [ ] **Semantic Analysis (Sema)** *(In Progress)*
+- [x] **Semantic Analysis (Sema)** *(Core Completed)*
     - [x] Infrastructure Scaffolding
     - [x] **Strict Mutability Enforcement** (`#` Check)
     - [x] Type Checking Pass
@@ -102,7 +129,7 @@ Currently, `tokac` compiles `.tk` source files into LLVM IR (`.ll`). You can exe
 ## 📄 Example
 
 **Traits & ADTs:**
-```scala
+```rust
 import std/io::println
 
 trait @Shape {
@@ -145,3 +172,45 @@ fn null_safety() {
     }
 }
 ```
+
+## Inspirations & Lineage
+
+Toka is a modern systems programming language built on the shoulders of giants. It was born not to reinvent the wheel, but to explore the optimal balance between **high performance** and **developer experience**, building upon the wisdom of its predecessors.
+
+We respectfully acknowledge the following pioneers whose design philosophies have shaped the core identity of Toka:
+
+### 1. C++ (Modern C++)
+**Core Inspiration: Smart Pointers & RAII (The Origin)**
+Toka's memory management mechanism is a direct descendant of Modern C++ (C++11/14+).
+* **Syntactic Smart Pointers**: Toka bakes the semantics of `std::unique_ptr` and `std::shared_ptr` directly into its **core grammar**. By using prefix symbols `^T` (Unique) and `~T` (Shared), developers enjoy full RAII semantics without verbose template code. This makes RAII the default, zero-visual-cost pattern.
+* **Low-Level Control**: Toka retains Raw Pointers (`*T`) and precise control over memory layout, adhering to the C++ philosophy of "Zero-overhead abstraction."
+
+### 2. Rust
+**Core Inspiration: The Borrowing Discipline**
+Toka adopts key insights from Rust regarding memory safety but makes different trade-offs in its implementation path.
+* **Borrowing Rules**: We have adopted the strict **"Read-Write Mutex" borrowing rules** (within a scope, allowing either multiple immutable references or a single mutable reference) to prevent data races at compile time.
+* **Simplified Mental Model**: Unlike Rust, Toka **deliberately discards explicit lifetime annotations** (e.g., `<'a>`). We prefer managing object lifetimes through smart pointer ownership transfer and lexical scope analysis, significantly lowering the learning curve for systems programming.
+
+### 3. Haskell / ML Family
+**Core Inspiration: Typeclasses & Orthogonality**
+Toka's Trait system spiritually inherits from **Haskell's Typeclasses** (rather than traditional OOP interfaces).
+*   **Separation of Data & Behavior**: We champion the complete decoupling of "Data Definition" (`shape`) from "Behavior Implementation" (`impl`). This design grants Toka immense extensibility—you can even implement custom Traits for standard library types.
+*   **Algebraic Data Types (ADTs)**: Toka's `shape` perfectly replicates the ML family's capability for precise data modeling.
+
+### 4. Swift / Kotlin / C#
+**Core Inspiration: Null Safety**
+To address "The Billion Dollar Mistake," Toka adopts the **Explicit Null Safety** design common in modern application-level languages.
+* **Type-Level Defense**: Using the suffix modifier (`?`), null pointer checks are enforced at the type system level rather than through defensive programming at runtime.
+
+### 5. Python
+**Core Inspiration: Readability & Productivity**
+Toka strives to bring the developer experience of scripting languages to systems programming. We admire Python's **minimalist syntax** and "Less is More" philosophy, aiming to make systems code as readable and approachable as high-level scripts.
+
+---
+
+### Special Acknowledgement
+
+**AI-Assisted Engineering**
+The implementation of the Toka compiler—specifically the **Type System Refactoring** and **CodeGen Adaptation**—was completed in deep collaboration with **Google Gemini**.
+
+This "Human Architect + AI Pair Programmer" development model drastically accelerated Toka's evolution from a design concept to an industrial-grade implementation. While all architectural decisions, design philosophies, and core logic were led by the human author, AI provided indispensable assistance in code implementation and test verification.
