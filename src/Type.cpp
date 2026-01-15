@@ -394,6 +394,10 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
   }
 
   // Fallback: Shape or Alias
+  if (s == "unknown") {
+    return std::make_shared<UnresolvedType>(s);
+  }
+
   auto shape = std::make_shared<ShapeType>(s);
   shape->IsWritable = isWritable;
   shape->IsNullable = isNullable;

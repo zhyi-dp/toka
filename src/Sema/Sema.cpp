@@ -1349,69 +1349,97 @@ std::string Sema::checkExpr(Expr *E) {
     }
 
     // Logic
-    if (Bin->Op == "&&" || Bin->Op == "||") {
-      if (LHS != "bool" || RHS != "bool") {
-        error(Bin, "operands of '" + Bin->Op + "' must be bool");
-      }
-      return "bool";
-    }
+    // Generic Binary Operation Check (Non-Assignment)
+    if (!isAssign) {
+      auto lhsType = toka::Type::fromString(LHS);
+      auto rhsType = toka::Type::fromString(RHS);
 
-    // Pointer arithmetic
-    if (LHS.size() > 1 && LHS[0] == '*' && (Bin->Op == "+" || Bin->Op == "-")) {
-      if (!m_InUnsafeContext) {
-        error(Bin, "pointer arithmetic requires unsafe context");
-      }
-      return LHS;
-    }
-
-    // Comparison
-    if (Bin->Op == "==" || Bin->Op == "!=" || Bin->Op == "<" ||
-        Bin->Op == ">" || Bin->Op == "<=" || Bin->Op == ">=") {
-      if (!isTypeCompatible(LHS, RHS)) {
-        error(Bin, "operands of '" + Bin->Op + "' must be same type ('" + LHS +
-                       "' vs '" + RHS + "')");
-      }
-
-      // Strict Integer Check: Disallow implicit numeric casting in comparisons
-      std::string T = resolveType(LHS);
-      std::string S = resolveType(RHS);
-      if (T != S) {
-        // Check if both are integers (list matches isTypeCompatible's promotion
-        // list)
-        bool T_isInt = (T == "i32" || T == "u32" || T == "i64" || T == "u64" ||
-                        T == "i8" || T == "u8" || T == "i16" || T == "u16");
-        bool S_isInt = (S == "i32" || S == "u32" || S == "i64" || S == "u64" ||
-                        S == "i8" || S == "u8" || S == "i16" || S == "u16");
-
-        if (T_isInt && S_isInt) {
-          error(Bin, "comparison operands must have exact same type ('" + LHS +
-                         "' vs '" + RHS + "')");
+      // Logic
+      if (Bin->Op == "&&" || Bin->Op == "||") {
+        if (LHS != "bool" ||
+            RHS != "bool") { // Optimization: bool is simple enough string
+                             // Using objects for consistency as requested
+          bool lBool =
+              (lhsType->typeKind == toka::Type::Primitive &&
+               std::dynamic_pointer_cast<toka::PrimitiveType>(lhsType)->Name ==
+                   "bool");
+          bool rBool =
+              (rhsType->typeKind == toka::Type::Primitive &&
+               std::dynamic_pointer_cast<toka::PrimitiveType>(rhsType)->Name ==
+                   "bool");
+          if (!lBool || !rBool) {
+            error(Bin, "operands of '" + Bin->Op + "' must be bool");
+          }
         }
+        return "bool";
       }
 
-      return "bool";
-    }
+      // Pointer arithmetic
+      // Check if LHS is pointer and Op is +/-
+      if (lhsType->isPointer() && (Bin->Op == "+" || Bin->Op == "-")) {
+        if (!m_InUnsafeContext) {
+          error(Bin, "pointer arithmetic requires unsafe context");
+        }
+        // Result is preserved pointer type (but rvalue, so stripped of # if
+        // any)
+        return lhsType->withAttributes(false, lhsType->IsNullable)->toString();
+      }
 
-    if (!isTypeCompatible(LHS, RHS) && LHS != "unknown" && RHS != "unknown") {
-      error(Bin, "binary operator '" + Bin->Op +
-                     "' operands must have same type ('" + LHS + "' vs '" +
-                     RHS + "')");
-      return "unknown";
-    }
-    // Arithmetic
-    if (Bin->Op == "+" || Bin->Op == "-" || Bin->Op == "*" || Bin->Op == "/") {
-      // Explicitly allow 'Addr' and pointer-sized integers to be treated as
-      // flat numbers
-      if (LHS != "i32" && LHS != "i64" && LHS != "f32" && LHS != "f64" &&
-          LHS != "u32" && LHS != "u64" && LHS != "i8" && LHS != "u8" &&
-          LHS != "i16" && LHS != "u16" && LHS != "Addr" && LHS != "usize" &&
-          LHS != "isize") {
-        error(Bin, "operands of '" + Bin->Op + "' must be numeric, got '" +
-                       LHS + "'");
+      // Comparison
+      if (Bin->Op == "==" || Bin->Op == "!=" || Bin->Op == "<" ||
+          Bin->Op == ">" || Bin->Op == "<=" || Bin->Op == ">=") {
+        if (!isTypeCompatible(lhsType, rhsType)) {
+          error(Bin, "operands of '" + Bin->Op + "' must be same type ('" +
+                         LHS + "' vs '" + RHS + "')");
+        }
+
+        // Strict Integer Check: Disallow implicit numeric casting in
+        // comparisons
+
+        if (!lhsType->equals(*rhsType)) {
+          // Check if both are integer primitives
+          auto lPrim = std::dynamic_pointer_cast<toka::PrimitiveType>(
+              resolveType(lhsType));
+          auto rPrim = std::dynamic_pointer_cast<toka::PrimitiveType>(
+              resolveType(rhsType));
+
+          if (lPrim && rPrim && lPrim->isInteger() && rPrim->isInteger()) {
+            error(Bin, "comparison operands must have exact same type ('" +
+                           LHS + "' vs '" + RHS + "')");
+          }
+        }
+
+        return "bool";
+      }
+
+      // General Arithmetic (+ - * /)
+      if (Bin->Op == "+" || Bin->Op == "-" || Bin->Op == "*" ||
+          Bin->Op == "/") {
+        bool isValid = false;
+        auto lPrim = std::dynamic_pointer_cast<toka::PrimitiveType>(lhsType);
+        if (lPrim) {
+          if (lPrim->isInteger() || lPrim->isFloatingPoint())
+            isValid = true;
+          if (lPrim->Name == "Addr" || lPrim->Name == "usize" ||
+              lPrim->Name == "isize")
+            isValid = true;
+        }
+
+        if (!isValid) {
+          if (!lhsType->equals(
+                  *rhsType)) { // Allow if custom operator overloading? Toka
+                               // doesn't support yet.
+            error(Bin, "operands of '" + Bin->Op + "' must be numeric, got '" +
+                           LHS + "'");
+          }
+        }
+
+        // Result type logic: Arithmetic result is RValue (not writable, same
+        // nullability?) Usually arithmetic on numeric types returns the type
+        // itself. Crucially, strip Writability (#).
+        return lhsType->withAttributes(false, lhsType->IsNullable)->toString();
       }
     }
-
-    return LHS;
   } else if (auto *ie = dynamic_cast<IfExpr *>(E)) {
 
     std::string condType = checkExpr(ie->Condition.get());
@@ -2629,6 +2657,10 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
                             std::shared_ptr<toka::Type> Source) {
   if (!Target || !Source)
     return false;
+
+  // Unknown/Unresolved types are compatible with everything (Error Recovery)
+  if (Target->isUnknown() || Source->isUnknown())
+    return true;
 
   // Identity
   if (Target->equals(*Source))
