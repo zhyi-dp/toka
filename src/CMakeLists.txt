@@ -1,6 +1,6 @@
 add_executable(tokac main.cpp Lexer/Lexer.cpp Parser/Parser.cpp 
 Sema/Sema.cpp
-#CodeGen/CodeGen.cpp  //rename to CodeGen.cpp.single.bak
+Type.cpp
 CodeGen/CodeGen.cpp 
 CodeGen/CodeGen_Expr.cpp 
 CodeGen/CodeGen_Stmt.cpp 

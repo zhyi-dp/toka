@@ -1,6 +1,7 @@
 #pragma once
 
 #include "toka/AST.h"
+#include "toka/Type.h"
 #include <map>
 #include <set>
 #include <string>
@@ -11,6 +12,9 @@ namespace toka {
 struct SymbolInfo {
   std::string Type;       // Soul Type (e.g., "Point")
   std::string Morphology; // "", "^", "~", "*", "&"
+
+  // Coexistence Phase: New Type Object
+  std::shared_ptr<toka::Type> TypeObj;
 
   // Dual-Location Attributes
   bool IsRebindable = false;      // # on ^, ~, *
@@ -187,7 +191,10 @@ private:
 
   // Helpers
   std::string resolveType(const std::string &Type);
+  std::shared_ptr<toka::Type> resolveType(std::shared_ptr<toka::Type> Type);
   bool isTypeCompatible(const std::string &Target, const std::string &Source);
+  bool isTypeCompatible(std::shared_ptr<toka::Type> Target,
+                        std::shared_ptr<toka::Type> Source);
 };
 
 } // namespace toka

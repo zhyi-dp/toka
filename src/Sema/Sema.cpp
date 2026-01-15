@@ -167,6 +167,8 @@ void Sema::registerGlobals(Module &M) {
       // 1. Simple Import: import std/io
       SymbolInfo info;
       info.Type = "module";
+      info.Morphology = "";
+      info.TypeObj = toka::Type::fromString("module");
       info.ReferencedModule = target;
       std::string modName = Imp->Alias.empty() ? target->Name : Imp->Alias;
       CurrentScope->define(modName, info);
@@ -177,8 +179,9 @@ void Sema::registerGlobals(Module &M) {
           // Import all functions
           for (auto const &[name, fn] : target->Functions)
             CurrentScope->define(item.Alias.empty() ? name : item.Alias,
-                                 {"fn", "", false, false, false, false, false,
-                                  0, false, "", nullptr});
+                                 {"fn", "", toka::Type::fromString("fn"), false,
+                                  false, false, false, false, 0, false, "",
+                                  nullptr});
           // Import all shapes
           for (auto const &[name, sh] : target->Shapes) {
             ShapeMap[name] =
@@ -195,8 +198,9 @@ void Sema::registerGlobals(Module &M) {
           // Import all externs
           for (auto const &[name, ext] : target->Externs) {
             ExternMap[name] = ext;
-            CurrentScope->define(name, {"extern", "", false, false, false,
-                                        false, false, 0, false, "", nullptr});
+            CurrentScope->define(
+                name, {"extern", "", toka::Type::fromString("extern"), false,
+                       false, false, false, false, 0, false, "", nullptr});
           }
           // Import all globals (constants)
           for (auto const &[name, v] : target->Globals) {
@@ -210,11 +214,19 @@ void Sema::registerGlobals(Module &M) {
             else if (v->IsReference)
               morph = "&";
 
-            CurrentScope->define(item.Alias.empty() ? name : item.Alias,
-                                 {v->TypeName, morph, v->IsRebindable,
-                                  v->IsValueMutable, v->IsPointerNullable,
-                                  v->IsValueNullable, false, 0, false, "",
-                                  nullptr});
+            std::string fullType = morph + v->TypeName;
+            if (v->IsRebindable)
+              fullType += "!";
+            if (v->IsValueMutable)
+              fullType += "#";
+            if (v->IsPointerNullable || v->IsValueNullable)
+              fullType += "?";
+
+            CurrentScope->define(
+                item.Alias.empty() ? name : item.Alias,
+                {v->TypeName, morph, toka::Type::fromString(fullType),
+                 v->IsRebindable, v->IsValueMutable, v->IsPointerNullable,
+                 v->IsValueNullable, false, 0, false, "", nullptr});
           }
         } else {
           // Import specific
@@ -227,8 +239,9 @@ void Sema::registerGlobals(Module &M) {
           }
 
           if (target->Functions.count(item.Symbol)) {
-            CurrentScope->define(name, {"fn", "", false, false, false, false,
-                                        false, 0, false, "", nullptr});
+            CurrentScope->define(name, {"fn", "", toka::Type::fromString("fn"),
+                                        false, false, false, false, false, 0,
+                                        false, "", nullptr});
             found = true;
           } else if (target->Shapes.count(item.Symbol)) {
             ShapeMap[name] = target->Shapes[item.Symbol];
@@ -241,8 +254,9 @@ void Sema::registerGlobals(Module &M) {
             found = true;
           } else if (target->Externs.count(item.Symbol)) {
             ExternMap[name] = target->Externs[item.Symbol];
-            CurrentScope->define(name, {"extern", "", false, false, false,
-                                        false, false, 0, false, "", nullptr});
+            CurrentScope->define(
+                name, {"extern", "", toka::Type::fromString("extern"), false,
+                       false, false, false, false, 0, false, "", nullptr});
             found = true;
           } else if (target->Globals.count(item.Symbol)) {
             auto *v = target->Globals[item.Symbol];
@@ -256,10 +270,18 @@ void Sema::registerGlobals(Module &M) {
             else if (v->IsReference)
               morph = "&";
 
-            CurrentScope->define(name, {v->TypeName, morph, v->IsRebindable,
-                                        v->IsValueMutable, v->IsPointerNullable,
-                                        v->IsValueNullable, false, 0, false, "",
-                                        nullptr});
+            std::string fullType = morph + v->TypeName;
+            if (v->IsRebindable)
+              fullType += "!";
+            if (v->IsValueMutable)
+              fullType += "#";
+            if (v->IsPointerNullable || v->IsValueNullable)
+              fullType += "?";
+
+            CurrentScope->define(
+                name, {v->TypeName, morph, toka::Type::fromString(fullType),
+                       v->IsRebindable, v->IsValueMutable, v->IsPointerNullable,
+                       v->IsValueNullable, false, 0, false, "", nullptr});
             found = true;
           }
 
@@ -538,6 +560,16 @@ void Sema::checkFunction(FunctionDecl *Fn) {
     else if (Arg.HasPointer)
       Info.Morphology = "*";
 
+    // Construct Full Type String for Type Object
+    std::string fullType = Info.Morphology + Info.Type;
+    if (Info.IsRebindable)
+      fullType += "!";
+    if (Info.IsValueMutable)
+      fullType += "#";
+    if (Info.IsPointerNullable || Info.IsValueNullable)
+      fullType += "?";
+
+    Info.TypeObj = toka::Type::fromString(fullType);
     CurrentScope->define(Arg.Name, Info);
   }
 
@@ -754,6 +786,17 @@ void Sema::checkStmt(Stmt *S) {
     }
     m_LastBorrowSource = ""; // Clear for next var
 
+    // Construct Full Type String for Type Object
+    std::string fullType = Info.Morphology + Info.Type;
+    if (Info.IsRebindable)
+      fullType += "!";
+    if (Info.IsValueMutable)
+      fullType += "#";
+    if (Info.IsPointerNullable || Info.IsValueNullable)
+      fullType += "?";
+
+    Info.TypeObj = toka::Type::fromString(fullType);
+
     CurrentScope->define(Var->Name, Info);
 
     // Move Logic: If initializing from a Unique Variable, move it.
@@ -805,6 +848,17 @@ void Sema::checkStmt(Stmt *S) {
         Info.IsValueMutable = Destruct->Variables[i].IsMutable;
         Info.IsValueNullable = Destruct->Variables[i].IsNullable;
         Info.Morphology = "";
+        Info.Morphology = "";
+
+        // Simple type for destructuring vars (usually primitives or basic
+        // shapes)
+        std::string fullType = Info.Type;
+        if (Info.IsValueMutable)
+          fullType += "#";
+        if (Info.IsValueNullable)
+          fullType += "?";
+        Info.TypeObj = toka::Type::fromString(fullType);
+
         CurrentScope->define(Destruct->Variables[i].Name, Info);
       }
     } else if (TypeAliasMap.count(DeclType)) {
@@ -814,6 +868,15 @@ void Sema::checkStmt(Stmt *S) {
         Info.IsValueMutable = Var.IsMutable;
         Info.IsValueNullable = Var.IsNullable;
         Info.Morphology = "";
+        Info.Morphology = "";
+
+        std::string fullType = Info.Type;
+        if (Info.IsValueMutable)
+          fullType += "#";
+        if (Info.IsValueNullable)
+          fullType += "?";
+        Info.TypeObj = toka::Type::fromString(fullType);
+
         CurrentScope->define(Var.Name, Info);
       }
     } else {
@@ -823,6 +886,8 @@ void Sema::checkStmt(Stmt *S) {
         Info.IsValueMutable = Var.IsMutable;
         Info.IsValueNullable = Var.IsNullable;
         Info.Morphology = "";
+        Info.Morphology = "";
+        Info.TypeObj = toka::Type::fromString("unknown");
         CurrentScope->define(Var.Name, Info);
         CurrentScope->define(Var.Name, Info);
       }
@@ -2504,138 +2569,204 @@ std::string Sema::resolveType(const std::string &Type) {
   return Type;
 }
 
+std::shared_ptr<toka::Type>
+Sema::resolveType(std::shared_ptr<toka::Type> type) {
+  if (!type)
+    return nullptr;
+
+  if (auto shape = std::dynamic_pointer_cast<toka::ShapeType>(type)) {
+    size_t scopePos = shape->Name.find("::");
+    if (scopePos != std::string::npos) {
+      std::string ModName = shape->Name.substr(0, scopePos);
+      std::string TargetType = shape->Name.substr(scopePos + 2);
+      SymbolInfo modSpec;
+      if (CurrentScope && CurrentScope->lookup(ModName, modSpec) &&
+          modSpec.ReferencedModule) {
+        ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
+        if (target->TypeAliases.count(TargetType)) {
+          auto resolved =
+              toka::Type::fromString(target->TypeAliases[TargetType].Target);
+          return resolveType(
+              resolved->withAttributes(type->IsWritable, type->IsNullable));
+        }
+      }
+    }
+
+    if (TypeAliasMap.count(shape->Name)) {
+      auto resolved = toka::Type::fromString(TypeAliasMap[shape->Name].Target);
+      return resolveType(
+          resolved->withAttributes(type->IsWritable, type->IsNullable));
+    }
+  }
+  // Primitives can also be aliased potentially? Or just shapes.
+  // currently Type::fromString parses unknown as ShapeType so this covers
+  // aliases.
+  return type;
+}
+
+bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
+                            std::shared_ptr<toka::Type> Source) {
+  if (!Target || !Source)
+    return false;
+
+  // Identity
+  if (Target->equals(*Source))
+    return true;
+
+  // Strong Type Check (Pre-resolution)
+  // We need the Name if possible.
+  std::string targetName;
+  if (auto s = std::dynamic_pointer_cast<toka::ShapeType>(Target))
+    targetName = s->Name;
+  else if (auto p = std::dynamic_pointer_cast<toka::PrimitiveType>(Target))
+    targetName = p->Name;
+
+  std::string sourceName;
+  if (auto s = std::dynamic_pointer_cast<toka::ShapeType>(Source))
+    sourceName = s->Name;
+  else if (auto p = std::dynamic_pointer_cast<toka::PrimitiveType>(Source))
+    sourceName = p->Name;
+
+  if (!targetName.empty() && TypeAliasMap.count(targetName) &&
+      TypeAliasMap[targetName].IsStrong)
+    return false;
+  if (!sourceName.empty() && TypeAliasMap.count(sourceName) &&
+      TypeAliasMap[sourceName].IsStrong)
+    return false;
+
+  auto T = resolveType(Target);
+  auto S = resolveType(Source);
+
+  // Re-check identity after resolution
+  if (T->equals(*S))
+    return true;
+
+  // Dynamic Trait Coercion (Unsizing)
+  // Check if Target is "dyn @Trait"
+  if (auto tShape = std::dynamic_pointer_cast<toka::ShapeType>(T)) {
+    std::string tName = tShape->Name;
+    if (tName.size() >= 4 && tName.substr(0, 3) == "dyn") {
+      std::string traitName = "";
+      if (tName.rfind("dyn @", 0) == 0)
+        traitName = tName.substr(5);
+      else if (tName.rfind("dyn@", 0) == 0)
+        traitName = tName.substr(4);
+
+      if (!traitName.empty()) {
+        // Get Soul Type Name from Source
+        std::string sName = "";
+        auto inner = S;
+        // Strip pointers to find soul
+        while (inner->isPointer()) {
+          if (auto ptr = std::dynamic_pointer_cast<toka::PointerType>(inner))
+            inner = ptr->getPointeeType();
+          else
+            break;
+        }
+
+        if (auto sPrim = std::dynamic_pointer_cast<toka::PrimitiveType>(inner))
+          sName = sPrim->Name;
+        else if (auto sShape =
+                     std::dynamic_pointer_cast<toka::ShapeType>(inner))
+          sName = sShape->Name;
+
+        if (!sName.empty()) {
+          std::string implKey = sName + "@" + traitName;
+          if (ImplMap.count(implKey))
+            return true;
+        }
+      }
+    }
+  }
+
+  // Integer Promotion
+  auto primT = std::dynamic_pointer_cast<toka::PrimitiveType>(T);
+  auto primS = std::dynamic_pointer_cast<toka::PrimitiveType>(S);
+  if (primT && primS) {
+    if ((primT->Name == "i32" || primT->Name == "u32" || primT->Name == "i64" ||
+         primT->Name == "u64" || primT->Name == "i8" || primT->Name == "u8" ||
+         primT->Name == "i16" || primT->Name == "u16") &&
+        (primS->Name == "i32" || primS->Name == "u32" || primS->Name == "i64" ||
+         primS->Name == "u64" || primS->Name == "i8" || primS->Name == "u8" ||
+         primS->Name == "i16" || primS->Name == "u16")) {
+      return true;
+    }
+    // String Literal (str -> *i8 etc)
+    if (primS->Name == "str" && (primT->Name == "str"))
+      return true;
+  }
+
+  // String literal to pointer
+  if (primS && primS->Name == "str") {
+    // T could be *i8 or ^i8
+    if (auto ptr = std::dynamic_pointer_cast<toka::PointerType>(T)) {
+      if (auto pte = std::dynamic_pointer_cast<toka::PrimitiveType>(
+              ptr->getPointeeType())) {
+        if (pte->Name == "i8")
+          return true;
+      }
+    }
+  }
+
+  // Nullptr Logic
+  bool sIsNull = false;
+  if (primS && primS->Name == "nullptr")
+    sIsNull = true;
+  else if (auto sShape = std::dynamic_pointer_cast<toka::ShapeType>(S)) {
+    if (sShape->Name == "nullptr")
+      sIsNull = true;
+  }
+
+  if (sIsNull) {
+    if (T->isPointer() || std::dynamic_pointer_cast<toka::PointerType>(T))
+      return true;
+  }
+
+  // Symmetric Nullptr (for Comparisons like nullptr == ptr)
+  bool tIsNull = false;
+  if (primT && primT->Name == "nullptr")
+    tIsNull = true;
+  else if (auto tShape = std::dynamic_pointer_cast<toka::ShapeType>(T)) {
+    if (tShape->Name == "nullptr")
+      tIsNull = true;
+  }
+
+  if (tIsNull) {
+    if (S->isPointer() || std::dynamic_pointer_cast<toka::PointerType>(S))
+      return true;
+  }
+
+  // Weak Tuple Check (Legacy Coexistence)
+  // Since Type::fromString parses tuples as ShapeType("..."), we check the
+  // name.
+  if (auto tShape = std::dynamic_pointer_cast<toka::ShapeType>(T)) {
+    if (auto sShape = std::dynamic_pointer_cast<toka::ShapeType>(S)) {
+      if (!tShape->Name.empty() && tShape->Name[0] == '(' &&
+          !sShape->Name.empty() && sShape->Name[0] == '(') {
+        return true;
+      }
+    }
+  }
+
+  // NOTE: Trait coercion (dyn) is omitted for briefness/complexity, will rely
+  // upon resolveType logic or add later. The original string logic had it. For
+  // Coexistence, we might skip it if not used in current tests, OR add it.
+  // Original logic checked string "dyn". `Type::fromString` parses "dyn Shape"
+  // as ShapeType("dyn Shape")? No, `dyn @Shape`. `fromString` fallback:
+  // ShapeType("dyn @Shape"). So we can check name.
+
+  // Use core compatibility
+  return T->isCompatibleWith(*S);
+}
+
 bool Sema::isTypeCompatible(const std::string &Target,
                             const std::string &Source) {
   if (Target == Source || Target == "unknown" || Source == "unknown")
     return true;
 
-  // Newtype System: if Target is a strong type, it only accepts itself
-  // (above)
-  if (TypeAliasMap.count(Target) && TypeAliasMap[Target].IsStrong) {
-    return false;
-  }
-  // If Source is a strong type, it cannot be implicitly cast TO Target.
-  if (TypeAliasMap.count(Source) && TypeAliasMap[Source].IsStrong) {
-    return false;
-  }
-
-  std::string T = resolveType(Target);
-  std::string S = resolveType(Source);
-
-  if (T == S)
-    return true;
-
-  // Dynamic Trait Coercion (Unsizing)
-  if (T.size() >= 4 && T.substr(0, 3) == "dyn") {
-    std::string traitName = "";
-    if (T.rfind("dyn @", 0) == 0)
-      traitName = T.substr(5);
-    else if (T.rfind("dyn@", 0) == 0)
-      traitName = T.substr(4);
-
-    if (!traitName.empty()) {
-      // Strip morphology from S to find the Soul type
-      std::string baseS = S;
-      while (baseS.size() > 0 && (baseS[0] == '^' || baseS[0] == '*' ||
-                                  baseS[0] == '&' || baseS[0] == '~')) {
-        baseS = baseS.substr(1);
-      }
-      while (!baseS.empty() && (baseS.back() == '!' || baseS.back() == '?')) {
-        baseS.pop_back();
-      }
-
-      std::string implKey = baseS + "@" + traitName;
-      llvm::errs() << "DEBUG: Checking Impl Key: '" << implKey << "'\n";
-      // Check Contract
-      if (ImplMap.count(implKey)) {
-        return true;
-      }
-      // Fallthrough: if explicit match failed, maybe S is already dyn @Shape?
-      // (Handled by T==S above)
-    }
-  }
-
-  // Integer Literal Promotion
-  if ((T == "i32" || T == "u32" || T == "i64" || T == "u64" || T == "i8" ||
-       T == "u8" || T == "i16" || T == "u16") &&
-      (S == "i32" || S == "u32" || S == "i64" || S == "u64" || S == "i8" ||
-       S == "u8" || S == "i16" || S == "u16")) {
-    return true;
-  }
-
-  // String literal conversion
-  if (S == "str" && (T == "*i8" || T == "^i8" || T == "str"))
-    return true;
-
-  if (S == "nullptr" || T == "nullptr") {
-    std::string Other = (S == "nullptr" ? Target : Source);
-    if (Other == "nullptr")
-      return true;
-
-    std::string O = resolveType(Other);
-    if (O.empty())
-      return false;
-
-    char prefix = O[0];
-    // nullptr is restricted to pointer morphologies (*, ^, ~)
-    if (prefix == '*' || prefix == '^' || prefix == '~') {
-      return true;
-    }
-    return false;
-  }
-
-  // Morphology Compatibility (ignore attributes like ! or ? for base
-  // match, but enforce nullable rules)
-  if (!T.empty() && !S.empty() &&
-      (T[0] == '^' || T[0] == '*' || T[0] == '~' || T[0] == '&') &&
-      (S[0] == '^' || S[0] == '*' || S[0] == '~' || S[0] == '&')) {
-
-    if (T[0] != S[0])
-      return false;
-
-    std::string TBase = T.substr(1);
-    if (!TBase.empty() && (TBase[0] == '?' || TBase[0] == '!'))
-      TBase = TBase.substr(1);
-
-    std::string SBase = S.substr(1);
-    if (!SBase.empty() && (SBase[0] == '?' || SBase[0] == '!'))
-      SBase = SBase.substr(1);
-
-    // If S is nullable and T is not, they are NOT compatible (save for
-    // null literal)
-    bool SIsNullable = (S.size() > 1 && S[1] == '?');
-    bool TIsNullable = (T.size() > 1 && T[1] == '?');
-
-    if (SIsNullable && !TIsNullable)
-      return false;
-
-    // Special Case: If SBase is "nullptr", it means we have a pointer to
-    // null/void (e.g. *?nullptr), which should be compatible with any other
-    // pointer type TBase (e.g. *?Data), provided nullability checks passed.
-    if (SBase == "nullptr")
-      return true;
-
-    return isTypeCompatible(TBase, SBase);
-  }
-
-  if (S == "none") {
-    // Value nulling: Requires the value type to have a nullable suffix
-    // But we must distinguish between ^?T (pointer nullable) and ^T?
-    // (value nullable) Actually in checkExpr(VariableExpr), we return
-    // baseType + "?" if either is nullable. To be strict, none should
-    // target the value attribute.
-    if (!T.empty() && T.back() == '?') {
-      return true;
-    }
-    return false;
-  }
-
-  // Basic Tuple/Struct weak check: if both look like tuples, allow for
-  // now
-  if (T.size() > 0 && T[0] == '(' && S.size() > 0 && S[0] == '(')
-    return true;
-
-  return false;
+  auto tObj = toka::Type::fromString(Target);
+  auto sObj = toka::Type::fromString(Source);
+  return isTypeCompatible(tObj, sObj);
 }
 
 void Sema::analyzeShapes(Module &M) {
