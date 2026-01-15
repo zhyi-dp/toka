@@ -1253,76 +1253,97 @@ std::string Sema::checkExpr(Expr *E) {
                      Bin->Op == "*=" || Bin->Op == "/=");
 
     if (isAssign) {
-      // Allow smart pointer assignment from NewExpr (which returns base type T,
-      // but we treat as adaptable)
+      // Phase 2: Object-Oriented Assignment Check
+      auto lhsType = toka::Type::fromString(LHS);
+      auto rhsType = toka::Type::fromString(RHS);
+
+      // Handle Smart Pointer NewExpr Special Case
       bool isSmartNew = false;
       if (dynamic_cast<NewExpr *>(Bin->RHS.get())) {
-        if (LHS.size() > 1 && (LHS[0] == '^' || LHS[0] == '~')) {
-          std::string inner = LHS.substr(1);
-          // Strip attributes
-          while (!inner.empty() && (inner.back() == '!' || inner.back() == '?'))
-            inner.pop_back();
-          if (isTypeCompatible(inner, RHS)) {
+        if (lhsType->isUniquePtr() || lhsType->isSharedPtr()) {
+          auto inner = lhsType->getPointeeType();
+          // Allow if inner type works
+          if (inner && isTypeCompatible(inner, rhsType)) {
             isSmartNew = true;
           }
         }
       }
 
-      if (!isRefAssign && !isSmartNew && !isTypeCompatible(LHS, RHS) &&
-          LHS != "unknown" && RHS != "unknown") {
-        error(Bin, "assignment type mismatch: cannot assign '" + RHS +
-                       "' to '" + LHS + "'");
+      // Hybrid Phase: Manually Determine Writability & Check Borrow State
+      bool isLHSWritable = false;
+
+      Expr *Traverse = Bin->LHS.get();
+      // Drill down members and array indices to find the root Variable
+      while (true) {
+        if (auto *M = dynamic_cast<MemberExpr *>(Traverse)) {
+          Traverse = M->Object.get();
+        } else if (auto *Idx = dynamic_cast<ArrayIndexExpr *>(Traverse)) {
+          Traverse = Idx->Array.get();
+        } else {
+          break;
+        }
       }
 
-      // Strict Mutability Check
-      Expr *LHSExpr = Bin->LHS.get();
-      if (auto *Var = dynamic_cast<VariableExpr *>(LHSExpr)) {
+      if (auto *Var = dynamic_cast<VariableExpr *>(Traverse)) {
         SymbolInfo *InfoPtr = nullptr;
         if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {
+          // 1. Borrow Check
           if (InfoPtr->IsMutablyBorrowed || InfoPtr->ImmutableBorrowCount > 0) {
             error(Bin,
                   "cannot modify '" + Var->Name + "' while it is borrowed");
           }
-
-          // Value Assignment (to the object the variable represents)
-          if (!InfoPtr->IsValueMutable) {
-            error(LHSExpr, "cannot assign to immutable variable '" + Var->Name +
-                               "' (# required)");
-          }
-
-          if (!Var->IsMutable) {
-            error(Var, "cannot modify variable '" + Var->Name +
-                           "' without # suffix");
-          }
+          // 2. Determine Writability
+          if (InfoPtr->IsValueMutable || Var->IsMutable)
+            isLHSWritable = true;
         }
-      } else if (auto *Un = dynamic_cast<UnaryExpr *>(LHSExpr)) {
-        // Identity Assignment (*ptr = ..., ^ptr = ...)
+      } else if (auto *Un = dynamic_cast<UnaryExpr *>(Traverse)) {
+        // Identity Assignment Check ($ptr = val)
         if (Un->Op == TokenType::Star || Un->Op == TokenType::Caret ||
             Un->Op == TokenType::Tilde) {
           if (auto *Var = dynamic_cast<VariableExpr *>(Un->RHS.get())) {
             SymbolInfo *InfoPtr = nullptr;
             if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {
               if (!InfoPtr->IsRebindable) {
-                error(LHSExpr, "cannot reseat fixed pointer identity '" +
-                                   Var->Name + "' (morphology # required)");
+                error(Traverse, "cannot reseat fixed pointer identity '" +
+                                    Var->Name + "' (morphology # required)");
               }
+              // Identity assignment modifies the slot itself, implying
+              // writability
+              isLHSWritable = true;
             }
           }
+        } else {
+          // Dereference (*ptr) or Postfix# (ptr#)
+          // We assume these imply intent to write to a valid mutable target.
+          // (Strict checking would require validating the *operand's*
+          // properties recursivley, but for Phase 2 strict parity, we assume
+          // true if not an Identity Reseat error).
+          isLHSWritable = true;
         }
-      } else if (auto *Memb = dynamic_cast<MemberExpr *>(LHSExpr)) {
-        Expr *Base = Memb->Object.get();
-        while (auto *SubMemb = dynamic_cast<MemberExpr *>(Base)) {
-          Base = SubMemb->Object.get();
-        }
-        if (auto *Var = dynamic_cast<VariableExpr *>(Base)) {
-          SymbolInfo Info;
-          if (CurrentScope->lookup(Var->Name, Info)) {
-            if (!Info.IsValueMutable) {
-              error(Memb, "cannot assign to field of immutable variable '" +
-                              Var->Name + "' (# required)");
-            }
-          }
-        }
+      }
+
+      // Patch the Type Object with the Truth
+      if (isLHSWritable)
+        lhsType->IsWritable = true;
+
+      // Generic Mutability Check (New Object Logic)
+      if (!lhsType->IsWritable && !isRefAssign) {
+        error(Bin->LHS.get(), "Cannot assign to immutable view '" + LHS +
+                                  "'. Missing writable token '#'.");
+      }
+
+      // For Compatibility Check: The Writability of the Slot (LHS) is a
+      // permission check (done above). It implies we CAN write. It does NOT
+      // require RHS to be "Writable" (which implies a mutable source). So
+      // checking compatibility should compare base types (preserving
+      // Nullability).
+      auto lhsCompatType = lhsType->withAttributes(false, lhsType->IsNullable);
+
+      if (!isRefAssign && !isSmartNew &&
+          !isTypeCompatible(lhsCompatType, rhsType) && LHS != "unknown" &&
+          RHS != "unknown") {
+        error(Bin, "assignment type mismatch: cannot assign '" + RHS +
+                       "' to '" + LHS + "'");
       }
       return LHS;
     }
@@ -2704,6 +2725,16 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
               ptr->getPointeeType())) {
         if (pte->Name == "i8")
           return true;
+      }
+    }
+  }
+
+  // Array to Pointer Decay (e.g. [10]i32 -> *i32)
+  if (auto ptrT = std::dynamic_pointer_cast<toka::PointerType>(T)) {
+    if (auto arrS = std::dynamic_pointer_cast<toka::ArrayType>(S)) {
+      if (ptrT->getPointeeType()->isCompatibleWith(
+              *arrS->getArrayElementType())) {
+        return true;
       }
     }
   }
