@@ -10,17 +10,8 @@
 namespace toka {
 
 struct SymbolInfo {
-  std::string Type;       // Soul Type (e.g., "Point")
-  std::string Morphology; // "", "^", "~", "*", "&"
-
-  // Coexistence Phase: New Type Object
+  // New Type Object (Source of Truth)
   std::shared_ptr<toka::Type> TypeObj;
-
-  // Dual-Location Attributes
-  bool IsRebindable = false;      // # on ^, ~, *
-  bool IsValueMutable = false;    // # on identifier
-  bool IsPointerNullable = false; // ? on ^, ~, *
-  bool IsValueNullable = false;   // ? on identifier
 
   bool Moved = false;
 
@@ -32,11 +23,21 @@ struct SymbolInfo {
 
   void *ReferencedModule = nullptr; // Pointer to ModuleScope (opaque here)
 
-  // Legacy/Helpers
-  bool IsMutable() const { return IsValueMutable; }
-  bool IsReference() const { return Morphology == "&"; }
-  bool IsUnique() const { return Morphology == "^"; }
-  bool IsShared() const { return Morphology == "~"; }
+  // Helpers redirection to TypeObj
+  bool IsMutable() const {
+    // Map to TypeObj IsWritable attribute (handles #)
+    return TypeObj && TypeObj->IsWritable;
+  }
+
+  bool IsReference() const { return TypeObj && TypeObj->isReference(); }
+
+  bool IsUnique() const {
+    return TypeObj && TypeObj->typeKind == toka::Type::UniquePtr;
+  }
+
+  bool IsShared() const {
+    return TypeObj && TypeObj->typeKind == toka::Type::SharedPtr;
+  }
 };
 
 class Scope {
@@ -54,7 +55,10 @@ public:
     Symbols[Name] = Info;
     if (!Info.BorrowedFrom.empty()) {
       ActiveBorrows[Name] = {Info.BorrowedFrom,
-                             Info.Morphology == "&" && Info.IsValueMutable};
+                             Info.IsReference() && Info.IsMutable()};
+      // llvm::errs() requires include. std::cerr works? No, Sema.h included
+      // everywhere. Skipping Sema.h debug print to avoid include mess. Rely on
+      // Sema.cpp.
     }
   }
 

@@ -166,8 +166,6 @@ void Sema::registerGlobals(Module &M) {
     if (Imp->Items.empty()) {
       // 1. Simple Import: import std/io
       SymbolInfo info;
-      info.Type = "module";
-      info.Morphology = "";
       info.TypeObj = toka::Type::fromString("module");
       info.ReferencedModule = target;
       std::string modName = Imp->Alias.empty() ? target->Name : Imp->Alias;
@@ -179,9 +177,7 @@ void Sema::registerGlobals(Module &M) {
           // Import all functions
           for (auto const &[name, fn] : target->Functions)
             CurrentScope->define(item.Alias.empty() ? name : item.Alias,
-                                 {"fn", "", toka::Type::fromString("fn"), false,
-                                  false, false, false, false, 0, false, "",
-                                  nullptr});
+                                 {toka::Type::fromString("fn")});
           // Import all shapes
           for (auto const &[name, sh] : target->Shapes) {
             ShapeMap[name] =
@@ -198,9 +194,7 @@ void Sema::registerGlobals(Module &M) {
           // Import all externs
           for (auto const &[name, ext] : target->Externs) {
             ExternMap[name] = ext;
-            CurrentScope->define(
-                name, {"extern", "", toka::Type::fromString("extern"), false,
-                       false, false, false, false, 0, false, "", nullptr});
+            CurrentScope->define(name, {toka::Type::fromString("extern")});
           }
           // Import all globals (constants)
           for (auto const &[name, v] : target->Globals) {
@@ -222,11 +216,8 @@ void Sema::registerGlobals(Module &M) {
             if (v->IsPointerNullable || v->IsValueNullable)
               fullType += "?";
 
-            CurrentScope->define(
-                item.Alias.empty() ? name : item.Alias,
-                {v->TypeName, morph, toka::Type::fromString(fullType),
-                 v->IsRebindable, v->IsValueMutable, v->IsPointerNullable,
-                 v->IsValueNullable, false, 0, false, "", nullptr});
+            CurrentScope->define(item.Alias.empty() ? name : item.Alias,
+                                 {toka::Type::fromString(fullType)});
           }
         } else {
           // Import specific
@@ -239,9 +230,7 @@ void Sema::registerGlobals(Module &M) {
           }
 
           if (target->Functions.count(item.Symbol)) {
-            CurrentScope->define(name, {"fn", "", toka::Type::fromString("fn"),
-                                        false, false, false, false, false, 0,
-                                        false, "", nullptr});
+            CurrentScope->define(name, {toka::Type::fromString("fn")});
             found = true;
           } else if (target->Shapes.count(item.Symbol)) {
             ShapeMap[name] = target->Shapes[item.Symbol];
@@ -254,9 +243,7 @@ void Sema::registerGlobals(Module &M) {
             found = true;
           } else if (target->Externs.count(item.Symbol)) {
             ExternMap[name] = target->Externs[item.Symbol];
-            CurrentScope->define(
-                name, {"extern", "", toka::Type::fromString("extern"), false,
-                       false, false, false, false, 0, false, "", nullptr});
+            CurrentScope->define(name, {toka::Type::fromString("extern")});
             found = true;
           } else if (target->Globals.count(item.Symbol)) {
             auto *v = target->Globals[item.Symbol];
@@ -278,10 +265,7 @@ void Sema::registerGlobals(Module &M) {
             if (v->IsPointerNullable || v->IsValueNullable)
               fullType += "?";
 
-            CurrentScope->define(
-                name, {v->TypeName, morph, toka::Type::fromString(fullType),
-                       v->IsRebindable, v->IsValueMutable, v->IsPointerNullable,
-                       v->IsValueNullable, false, 0, false, "", nullptr});
+            CurrentScope->define(name, {toka::Type::fromString(fullType)});
             found = true;
           }
 
@@ -376,15 +360,13 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
 
   case MatchArm::Pattern::Variable: {
     SymbolInfo Info;
-    Info.Type = T;
-    Info.IsValueMutable = Pat->IsMutable | SourceIsMutable;
-    if (Pat->IsReference) {
-      Info.Morphology = "&";
-    }
     // Type Migration Stage 1: Coexistence
     // Construct type string to parse object. Pattern bindings infer type T.
     // If Reference, it is &T.
-    std::string fullType = Info.Morphology + Info.Type;
+    std::string fullType = "";
+    if (Pat->IsReference)
+      fullType = "&";
+    fullType += T;
     // Patterns usually don't have rebind/nullable sigils unless explicit?
     // In match arms, we trust the inferred type T.
     // But wait, T comes from resolveType(TargetType).
@@ -580,28 +562,33 @@ void Sema::checkFunction(FunctionDecl *Fn) {
   // Register arguments
   for (auto &Arg : Fn->Args) {
     SymbolInfo Info;
-    Info.Type = Arg.Type;
-    Info.IsValueMutable = Arg.IsValueMutable || Arg.IsMutable;
-    Info.IsValueNullable = Arg.IsValueNullable || Arg.IsNullable;
-    Info.IsRebindable = Arg.IsRebindable;
-    Info.IsPointerNullable = Arg.IsPointerNullable;
-
-    if (Arg.IsReference)
-      Info.Morphology = "&";
-    else if (Arg.IsUnique)
-      Info.Morphology = "^";
-    else if (Arg.IsShared)
-      Info.Morphology = "~";
-    else if (Arg.HasPointer)
-      Info.Morphology = "*";
-
     // Construct Full Type String for Type Object
-    std::string fullType = Info.Morphology + Info.Type;
-    if (Info.IsRebindable)
+    std::string fullType = "";
+    if (Arg.IsReference)
+      fullType += "&";
+    else if (Arg.IsUnique)
+      fullType += "^";
+    else if (Arg.IsShared)
+      fullType += "~";
+    else if (Arg.HasPointer)
+      fullType += "*";
+
+    std::string baseType = Arg.Type;
+    // Strip redundant sigil if present in baseType and implied by flags
+    if (baseType.size() > 1) {
+      char c = baseType[0];
+      if ((Arg.IsReference && c == '&') || (Arg.IsUnique && c == '^') ||
+          (Arg.IsShared && c == '~') || (Arg.HasPointer && c == '*')) {
+        baseType = baseType.substr(1);
+      }
+    }
+
+    fullType += baseType;
+    if (Arg.IsRebindable)
       fullType += "!";
-    if (Info.IsValueMutable)
+    if (Arg.IsValueMutable || Arg.IsMutable)
       fullType += "#";
-    if (Info.IsPointerNullable || Info.IsValueNullable)
+    if (Arg.IsPointerNullable || Arg.IsValueNullable || Arg.IsNullable)
       fullType += "?";
 
     Info.TypeObj = toka::Type::fromString(fullType);
@@ -774,41 +761,36 @@ void Sema::checkStmt(Stmt *S) {
     }
 
     SymbolInfo Info;
-    Info.Type = Var->TypeName;
-    Info.IsValueMutable = Var->IsValueMutable || Var->IsMutable;
-    Info.IsValueNullable = Var->IsValueNullable || Var->IsNullable;
-    Info.IsRebindable = Var->IsRebindable;
-    Info.IsPointerNullable = Var->IsPointerNullable;
 
+    // Construct Full Type String for Type Object with Legacy Normalization
+    std::string morph = "";
     if (Var->HasPointer)
-      Info.Morphology = "*";
+      morph = "*";
     else if (Var->IsUnique)
-      Info.Morphology = "^";
+      morph = "^";
     else if (Var->IsShared)
-      Info.Morphology = "~";
+      morph = "~";
     else if (Var->IsReference)
-      Info.Morphology = "&";
-    else
-      Info.Morphology = "";
+      morph = "&";
 
-    // Legacy fallback: If IsMutable is set but IsValueMutable isn't
-    if (Var->IsMutable && !Info.IsValueMutable)
-      Info.IsValueMutable = true;
-    if (Var->IsNullable && !Info.IsValueNullable)
-      Info.IsValueNullable = true;
+    std::string baseType = Var->TypeName;
+    // Legacy behavior: If type implies morphology (e.g. ^Data) and flags imply
+    // morphology (IsUnique), we often treat the type string's sigil as the
+    // representation of that flag and strip it? Or if flags are set, we PREPEND
+    // morphology. The legacy code checked if baseType started with sigils.
 
-    // Type cleanup: If type is "^T", we often store "T" in Info.Type and "^"
-    // in Morphology
-    if (Info.Type.size() > 1 && (Info.Type[0] == '^' || Info.Type[0] == '~' ||
-                                 Info.Type[0] == '*' || Info.Type[0] == '&')) {
-      if (Info.Morphology.empty()) {
-        Info.Morphology = std::string(1, Info.Type[0]);
+    if (baseType.size() > 1 && (baseType[0] == '^' || baseType[0] == '~' ||
+                                baseType[0] == '*' || baseType[0] == '&')) {
+      if (morph.empty()) {
+        morph = std::string(1, baseType[0]);
       }
-      Info.Type = Info.Type.substr(1);
+      // We strip the sigil from base type if we are extracting it to morph, OR
+      // if morph is already set (redundancy)
+      baseType = baseType.substr(1);
     }
 
-    // Borrow tracking link
-    if (Info.Morphology == "&" && !m_LastBorrowSource.empty()) {
+    // Borrow tracking logic using 'morph' local var
+    if (morph == "&" && !m_LastBorrowSource.empty()) {
       Info.BorrowedFrom = m_LastBorrowSource;
       // Remove from temporary borrows since it's now persistent
       for (auto it = m_CurrentStmtBorrows.begin();
@@ -818,19 +800,36 @@ void Sema::checkStmt(Stmt *S) {
           break;
         }
       }
+    } else {
+      llvm::errs() << "DEBUG: checkVariableDecl NO_PERSIST Var=" << Var->Name
+                   << " Morph=" << morph << " LastSrc=" << m_LastBorrowSource
+                   << "\n";
     }
     m_LastBorrowSource = ""; // Clear for next var
 
-    // Construct Full Type String for Type Object
-    std::string fullType = Info.Morphology + Info.Type;
-    if (Info.IsRebindable)
-      fullType += "!";
-    if (Info.IsValueMutable)
-      fullType += "#";
-    if (Info.IsPointerNullable || Info.IsValueNullable)
-      fullType += "?";
+    // Construct Type Object manually to avoid string ambiguity
+    // especially for references to mutable types (e.g. &i32#) being misparsed
+    // as mutable references (&i32)#
+    auto innerObj = toka::Type::fromString(baseType);
 
-    Info.TypeObj = toka::Type::fromString(fullType);
+    if (morph == "*") {
+      Info.TypeObj = std::make_shared<toka::RawPointerType>(innerObj);
+    } else if (morph == "^") {
+      Info.TypeObj = std::make_shared<toka::UniquePointerType>(innerObj);
+    } else if (morph == "~") {
+      Info.TypeObj = std::make_shared<toka::SharedPointerType>(innerObj);
+    } else if (morph == "&") {
+      Info.TypeObj = std::make_shared<toka::ReferenceType>(innerObj);
+    } else {
+      Info.TypeObj = innerObj;
+    }
+
+    if (Var->IsRebindable || Var->IsValueMutable || Var->IsMutable) {
+      Info.TypeObj->IsWritable = true;
+    }
+    if (Var->IsPointerNullable || Var->IsValueNullable || Var->IsNullable) {
+      Info.TypeObj->IsNullable = true;
+    }
 
     CurrentScope->define(Var->Name, Info);
 
@@ -876,18 +875,12 @@ void Sema::checkStmt(Stmt *S) {
       size_t Limit = std::min(SD->Members.size(), Destruct->Variables.size());
       for (size_t i = 0; i < Limit; ++i) {
         SymbolInfo Info;
-        Info.Type = SD->Members[i].Type;
-        Info.IsValueMutable = Destruct->Variables[i].IsMutable;
-        Info.IsValueNullable = Destruct->Variables[i].IsNullable;
-        Info.Morphology = "";
-        Info.Morphology = "";
-
         // Simple type for destructuring vars (usually primitives or basic
         // shapes)
-        std::string fullType = Info.Type;
-        if (Info.IsValueMutable)
+        std::string fullType = SD->Members[i].Type;
+        if (Destruct->Variables[i].IsMutable)
           fullType += "#";
-        if (Info.IsValueNullable)
+        if (Destruct->Variables[i].IsNullable)
           fullType += "?";
         Info.TypeObj = toka::Type::fromString(fullType);
 
@@ -896,16 +889,10 @@ void Sema::checkStmt(Stmt *S) {
     } else if (TypeAliasMap.count(soulName)) {
       for (const auto &Var : Destruct->Variables) {
         SymbolInfo Info;
-        Info.Type = "i32"; // Fallback
-        Info.IsValueMutable = Var.IsMutable;
-        Info.IsValueNullable = Var.IsNullable;
-        Info.Morphology = "";
-        Info.Morphology = "";
-
-        std::string fullType = Info.Type;
-        if (Info.IsValueMutable)
+        std::string fullType = "i32"; // Fallback
+        if (Var.IsMutable)
           fullType += "#";
-        if (Info.IsValueNullable)
+        if (Var.IsNullable)
           fullType += "?";
         Info.TypeObj = toka::Type::fromString(fullType);
 
@@ -914,11 +901,6 @@ void Sema::checkStmt(Stmt *S) {
     } else {
       for (const auto &Var : Destruct->Variables) {
         SymbolInfo Info;
-        Info.Type = "unknown"; // Fallback
-        Info.IsValueMutable = Var.IsMutable;
-        Info.IsValueNullable = Var.IsNullable;
-        Info.Morphology = "";
-        Info.Morphology = "";
         Info.TypeObj = toka::Type::fromString("unknown");
         CurrentScope->define(Var.Name, Info);
         CurrentScope->define(Var.Name, Info);
@@ -978,146 +960,7 @@ template <typename T> static std::string synthesizePhysicalType(const T &Arg) {
 }
 
 std::string Sema::checkUnaryExprStr(UnaryExpr *Unary) {
-  std::string rhsInfo = checkExprStr(Unary->RHS.get());
-  if (rhsInfo == "unknown")
-    return "unknown";
-
-  auto rhsType = toka::Type::fromString(rhsInfo);
-
-  if (Unary->Op == TokenType::Bang) {
-    if (!rhsType->isBoolean()) {
-      error(Unary, "operand of '!' must be bool, got '" + rhsInfo + "'");
-    }
-    return "bool";
-  } else if (Unary->Op == TokenType::Minus) {
-    bool isNum = rhsType->isInteger() || rhsType->isFloatingPoint();
-    if (!isNum) {
-      error(Unary, "operand of '-' must be numeric, got '" + rhsInfo + "'");
-    }
-    return rhsInfo;
-  } else if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
-             Unary->Op == TokenType::Tilde ||
-             Unary->Op == TokenType::Ampersand) {
-
-    if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
-      SymbolInfo *Info = nullptr;
-      if (CurrentScope->findSymbol(Var->Name, Info)) {
-        if (Unary->Op == TokenType::Ampersand) {
-          bool wantMutable = Var->IsMutable;
-          if (wantMutable) {
-            if (!Info->IsValueMutable) {
-              error(Unary, "cannot mutably borrow immutable variable '" +
-                               Var->Name + "' (# required)");
-            }
-            if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
-              error(Unary, "cannot mutably borrow '" + Var->Name +
-                               "' because it is already borrowed");
-            }
-            Info->IsMutablyBorrowed = true;
-          } else {
-            if (Info->IsMutablyBorrowed) {
-              error(Unary, "cannot borrow '" + Var->Name +
-                               "' because it is mutably borrowed");
-            }
-            Info->ImmutableBorrowCount++;
-          }
-          m_LastBorrowSource = Var->Name;
-          m_CurrentStmtBorrows.push_back({Var->Name, wantMutable});
-
-          auto innerType = toka::Type::fromString(Info->Type);
-          bool innerWritable = Info->IsValueMutable || Var->IsMutable;
-          innerType =
-              innerType->withAttributes(innerWritable, innerType->IsNullable);
-          auto refType = std::make_shared<toka::ReferenceType>(innerType);
-          return refType->toString();
-
-        } else if (Unary->Op == TokenType::Caret) {
-          if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
-            error(Unary,
-                  "cannot move '" + Var->Name + "' while it is borrowed");
-          }
-          // Fix: Do not mark moved here.
-          return rhsInfo;
-        } else if (Unary->Op == TokenType::Tilde) {
-          if (!rhsInfo.empty() && rhsInfo[0] == '~') {
-            return rhsInfo; // Idempotent
-          }
-          auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
-          std::string res = sh->toString();
-          if (!rhsInfo.empty() && rhsInfo[0] == '~' && res.size() > 1 &&
-              res[1] == '~')
-            return rhsInfo;
-          return res;
-        } else if (Unary->Op == TokenType::Star) {
-          std::shared_ptr<toka::Type> inner;
-          if (rhsType->isPointer()) {
-            inner = rhsType->getPointeeType();
-            if (!inner)
-              inner = rhsType;
-          } else {
-            inner = rhsType;
-          }
-          auto rawPtr = std::make_shared<toka::RawPointerType>(inner);
-          return rawPtr->toString();
-        }
-      }
-    }
-
-    if (Unary->Op == TokenType::Star) {
-      std::shared_ptr<toka::Type> inner;
-      if (rhsType->isPointer()) {
-        inner = rhsType->getPointeeType();
-        if (!inner)
-          inner = rhsType;
-      } else {
-        inner = rhsType;
-      }
-      auto rawPtr = std::make_shared<toka::RawPointerType>(inner);
-      return rawPtr->toString();
-    }
-
-    if (Unary->Op == TokenType::Ampersand) {
-      auto ref = std::make_shared<toka::ReferenceType>(rhsType);
-      return ref->toString();
-    }
-    if (Unary->Op == TokenType::Caret) {
-      return rhsInfo;
-    }
-    if (Unary->Op == TokenType::Tilde) {
-      if (!rhsInfo.empty() && rhsInfo[0] == '~') {
-        return rhsInfo;
-      }
-      auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
-      std::string res = sh->toString();
-      if (!rhsInfo.empty() && rhsInfo[0] == '~' && res.size() > 1 &&
-          res[1] == '~') {
-        return rhsInfo;
-      }
-      return res;
-    }
-  }
-
-  if (Unary->Op == TokenType::PlusPlus || Unary->Op == TokenType::MinusMinus) {
-    if (!rhsType->isInteger()) {
-      error(Unary, "operand of increment/decrement must be integer, got '" +
-                       rhsInfo + "'");
-    }
-    if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
-      SymbolInfo *Info = nullptr;
-      if (CurrentScope->findSymbol(Var->Name, Info)) {
-        if (!Info->IsValueMutable) {
-          error(Unary, "cannot modify immutable variable '" + Var->Name +
-                           "' (# suffix required)");
-        }
-        if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
-          error(Unary,
-                "cannot modify '" + Var->Name + "' while it is borrowed");
-        }
-      }
-    }
-    return rhsInfo;
-  }
-  return rhsInfo;
+  return checkUnaryExpr(Unary)->toString();
 }
 
 std::string Sema::checkExprStr(Expr *E) {
@@ -1223,28 +1066,7 @@ std::string Sema::checkExprStr(Expr *E) {
       error(ve, "cannot access '" + ve->Name +
                     "' while it is mutably borrowed (Rule 406)");
     }
-    std::string baseType = Info.Type;
-    if (!baseType.empty() && baseType.back() == '?')
-      baseType.pop_back();
-
-    if (Info.Morphology == "&") {
-      // References auto-dereference in expressions
-      return baseType + (Info.IsValueNullable ? "?" : "");
-    }
-
-    std::string sigil = Info.Morphology;
-    // Position 1: Pointer Nullability (Appended to Sigil)
-    if (Info.IsPointerNullable && !sigil.empty()) {
-      sigil += "?";
-    }
-
-    std::string typeSuffix = "";
-    if (Info.IsValueNullable)
-      typeSuffix += "?";
-    if (Info.IsRebindable || Info.IsValueMutable)
-      typeSuffix += "#";
-
-    std::string fullType = sigil + baseType + typeSuffix;
+    std::string fullType = Info.TypeObj->toString();
     return fullType;
   } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
     return "nullptr";
@@ -1276,21 +1098,19 @@ std::string Sema::checkExprStr(Expr *E) {
           if (CurrentScope->findSymbol(varExpr->Name, infoPtr)) {
             narrowedVar = varExpr->Name;
             originalInfo = *infoPtr;
-            infoPtr->IsValueNullable = false;
-            infoPtr->IsPointerNullable = false;
-            if (!infoPtr->Type.empty() && infoPtr->Type[0] == '?')
-              infoPtr->Type = infoPtr->Type.substr(1);
-            if (!infoPtr->Type.empty() && infoPtr->Type.back() == '?')
-              infoPtr->Type.pop_back();
+            // Sync TypeObj: Narrow type to non-nullable
+            if (infoPtr->TypeObj) {
+              infoPtr->TypeObj = infoPtr->TypeObj->withAttributes(
+                  infoPtr->TypeObj->IsWritable, false);
+            }
 
             // Sync TypeObj
             if (infoPtr->TypeObj) {
               // Determine what nullability means for this type
               // IsPointerNullable vs IsValueNullable
               // For simplicity in Stage 3, we reconstruct or strip attributes
-              bool isPtrNull =
-                  infoPtr->IsPointerNullable;            // Should be false now
-              bool isValNull = infoPtr->IsValueNullable; // Should be false now
+              bool isPtrNull = false; // Should be false now
+              bool isValNull = false; // Should be false now
               // Reconstruct from source of truth properties?
               // Or just use withAttributes(writable, nullable=false)?
               // Nullable means *either* pointer or value nullability in Toka?
@@ -1426,15 +1246,9 @@ std::string Sema::checkExprStr(Expr *E) {
 
     enterScope();
     SymbolInfo Info;
-    Info.Type = elemType;
-    Info.IsValueMutable = fe->IsMutable;
-    Info.Morphology = fe->IsReference ? "&" : "";
-
-    // Coexistence: Populate TypeObj
-    std::string fullType = Info.Morphology + Info.Type;
-    // For loop vars usually don't have IsValueNullable/IsPointerNullable via
-    // syntax yet But might be mutable
-    if (Info.IsValueMutable)
+    // Construct Full Type String for Type Object
+    std::string fullType = (fe->IsReference ? "&" : "") + elemType;
+    if (fe->IsMutable)
       fullType += "#";
 
     Info.TypeObj = toka::Type::fromString(fullType);
@@ -1759,7 +1573,9 @@ std::string Sema::checkExprStr(Expr *E) {
     }
     return Init->ShapeName;
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
-    std::string ObjTypeFull = checkExprStr(Memb->Object.get());
+    auto objTypeObj = checkExpr(Memb->Object.get());
+    std::string ObjTypeFull = objTypeObj->toString();
+
     if (ObjTypeFull == "module") {
       // It's a module access
       if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
@@ -1777,11 +1593,11 @@ std::string Sema::checkExprStr(Expr *E) {
       }
     }
 
-    if (ObjTypeFull.find('?') != std::string::npos) {
+    if (objTypeObj->IsNullable) {
       error(Memb, "cannot access member of nullable '" + ObjTypeFull +
                       "' without 'is' check (Rule 408)");
     }
-    std::string ObjType = resolveType(ObjTypeFull);
+    std::string ObjType = resolveType(objTypeObj)->toString();
 
     // Auto-dereference if it's a pointer/ref (strips ^, &, *, ~)
     if (ObjType.size() > 1 && (ObjType[0] == '^' || ObjType[0] == '&' ||
@@ -1902,7 +1718,7 @@ std::string Sema::checkExprStr(Expr *E) {
     std::string lhsInfo = checkExprStr(Post->LHS.get());
     if (auto *Var = dynamic_cast<VariableExpr *>(Post->LHS.get())) {
       SymbolInfo Info;
-      if (CurrentScope->lookup(Var->Name, Info) && !Info.IsValueMutable) {
+      if (CurrentScope->lookup(Var->Name, Info) && !Info.IsMutable()) {
         error(Post, "cannot modify immutable variable '" + Var->Name +
                         "' (# suffix required)");
       }
@@ -2487,7 +2303,7 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
         if (Unary->Op == TokenType::Ampersand) {
           bool wantMutable = Var->IsMutable;
           if (wantMutable) {
-            if (!Info->IsValueMutable) {
+            if (!Info->IsMutable()) {
               error(Unary, "cannot mutably borrow immutable variable '" +
                                Var->Name + "' (# required)");
             }
@@ -2507,9 +2323,10 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           m_CurrentStmtBorrows.push_back({Var->Name, wantMutable});
 
           // Use TypeObj if available, else generic logic
-          auto innerType = Info->TypeObj ? Info->TypeObj
-                                         : toka::Type::fromString(Info->Type);
-          bool innerWritable = Info->IsValueMutable || Var->IsMutable;
+          auto innerType =
+              Info->TypeObj ? Info->TypeObj
+                            : toka::Type::fromString(Info->TypeObj->toString());
+          bool innerWritable = Info->IsMutable() || Var->IsMutable;
           innerType =
               innerType->withAttributes(innerWritable, innerType->IsNullable);
           auto refType = std::make_shared<toka::ReferenceType>(innerType);
@@ -2519,10 +2336,10 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
             error(Unary,
                   "cannot move '" + Var->Name + "' while it is borrowed");
           }
-          auto unq = std::make_shared<toka::UniquePointerType>(rhsType);
-          unq->IsNullable = Unary->HasNull;
-          unq->IsWritable = Unary->IsRebindable;
-          return unq;
+          // Move Semantics: Return value is the variable's value
+          // (UniquePointerType), not wrapped again. If we are moving a ^Data,
+          // the result expression type is ^Data.
+          return rhsType;
         } else if (Unary->Op == TokenType::Tilde) {
           if (rhsType->isSharedPtr()) {
             return rhsType; // Idempotent
@@ -2593,7 +2410,7 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
     if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
       SymbolInfo *Info = nullptr;
       if (CurrentScope->findSymbol(Var->Name, Info)) {
-        if (!Info->IsValueMutable) {
+        if (!Info->IsMutable()) {
           error(Unary, "cannot modify immutable variable '" + Var->Name +
                            "' (# suffix required)");
         }
@@ -2701,7 +2518,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         if (InfoPtr->IsMutablyBorrowed || InfoPtr->ImmutableBorrowCount > 0) {
           error(Bin, "cannot modify '" + Var->Name + "' while it is borrowed");
         }
-        if (InfoPtr->IsValueMutable || Var->IsMutable)
+        if (InfoPtr->IsMutable() || Var->IsMutable)
           isLHSWritable = true;
       }
     } else if (auto *Un = dynamic_cast<UnaryExpr *>(Traverse)) {
@@ -2757,7 +2574,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
   if (Bin->Op == "==" || Bin->Op == "!=" || Bin->Op == "<" || Bin->Op == ">" ||
       Bin->Op == "<=" || Bin->Op == ">=") {
-    if (!isTypeCompatible(lhsType, rhsType)) {
+    if (!isTypeCompatible(lhsType, rhsType) &&
+        !isTypeCompatible(rhsType, lhsType)) {
       error(Bin, "operands of '" + Bin->Op + "' must be same type ('" + LHS +
                      "' vs '" + RHS + "')");
     }

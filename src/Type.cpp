@@ -45,10 +45,14 @@ std::shared_ptr<Type> VoidType::withAttributes(bool w, bool n) const {
 
 std::string PrimitiveType::toString() const {
   std::string s = Name;
-  if (IsWritable)
-    s += "#";
-  if (IsNullable)
-    s += "?";
+  if (IsWritable && IsNullable)
+    s += "!";
+  else {
+    if (IsNullable)
+      s += "?";
+    if (IsWritable)
+      s += "#";
+  }
   return s;
 }
 
@@ -100,10 +104,14 @@ bool PointerType::isCompatibleWith(const Type &target) const {
 
 std::string RawPointerType::toString() const {
   std::string s = "*";
-  if (IsNullable)
-    s += "?";
-  if (IsWritable)
-    s += "#";
+  if (IsWritable && IsNullable) {
+    s += "!";
+  } else {
+    if (IsNullable)
+      s += "?";
+    if (IsWritable)
+      s += "#";
+  }
   return s + PointeeType->toString();
 }
 
@@ -123,10 +131,14 @@ std::shared_ptr<Type> RawPointerType::withAttributes(bool w, bool n) const {
 
 std::string UniquePointerType::toString() const {
   std::string s = "^";
-  if (IsNullable)
-    s += "?";
-  if (IsWritable)
-    s += "#";
+  if (IsWritable && IsNullable) {
+    s += "!";
+  } else {
+    if (IsNullable)
+      s += "?";
+    if (IsWritable)
+      s += "#";
+  }
   return s + PointeeType->toString();
 }
 
@@ -144,10 +156,14 @@ std::shared_ptr<Type> UniquePointerType::withAttributes(bool w, bool n) const {
 
 std::string SharedPointerType::toString() const {
   std::string s = "~";
-  if (IsNullable)
-    s += "?";
-  if (IsWritable)
-    s += "#";
+  if (IsWritable && IsNullable) {
+    s += "!";
+  } else {
+    if (IsNullable)
+      s += "?";
+    if (IsWritable)
+      s += "#";
+  }
   return s + PointeeType->toString();
 }
 
@@ -169,10 +185,14 @@ std::shared_ptr<Type> SharedPointerType::withAttributes(bool w, bool n) const {
 
 std::string ReferenceType::toString() const {
   std::string s = "&";
-  if (IsNullable)
-    s += "?";
-  if (IsWritable)
-    s += "#";
+  if (IsWritable && IsNullable) {
+    s += "!";
+  } else {
+    if (IsNullable)
+      s += "?";
+    if (IsWritable)
+      s += "#";
+  }
   return s + PointeeType->toString();
 }
 
@@ -193,10 +213,14 @@ std::shared_ptr<Type> ReferenceType::withAttributes(bool w, bool n) const {
 std::string ArrayType::toString() const {
   std::string s =
       "[" + ElementType->toString() + "; " + std::to_string(Size) + "]";
-  if (IsWritable)
-    s += "#";
-  if (IsNullable)
-    s += "?";
+  if (IsWritable && IsNullable) {
+    s += "!";
+  } else {
+    if (IsWritable)
+      s += "#";
+    if (IsNullable)
+      s += "?";
+  }
   return s;
 }
 
@@ -222,10 +246,14 @@ std::shared_ptr<Type> ArrayType::withAttributes(bool w, bool n) const {
 
 std::string ShapeType::toString() const {
   std::string s = Name;
-  if (IsWritable)
-    s += "#";
-  if (IsNullable)
-    s += "?";
+  if (IsWritable && IsNullable) {
+    s += "!";
+  } else {
+    if (IsWritable)
+      s += "#";
+    if (IsNullable)
+      s += "?";
+  }
   return s;
 }
 
@@ -260,10 +288,14 @@ std::string TupleType::toString() const {
     s += Elements[i]->toString();
   }
   s += ")";
-  if (IsWritable)
-    s += "#";
-  if (IsNullable)
-    s += "?";
+  if (IsWritable && IsNullable) {
+    s += "!";
+  } else {
+    if (IsWritable)
+      s += "#";
+    if (IsNullable)
+      s += "?";
+  }
   return s;
 }
 
