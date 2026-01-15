@@ -187,6 +187,8 @@ private:
   std::shared_ptr<toka::Type> checkExpr(Expr *E);  // New Object API
   std::shared_ptr<toka::Type>
   checkUnaryExpr(UnaryExpr *Unary); // New Object API
+  std::shared_ptr<toka::Type>
+  checkBinaryExpr(BinaryExpr *Bin); // New Object API
   void checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
                     bool SourceIsMutable);
 
