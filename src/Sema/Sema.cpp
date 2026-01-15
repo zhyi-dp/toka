@@ -381,6 +381,15 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
     if (Pat->IsReference) {
       Info.Morphology = "&";
     }
+    // Type Migration Stage 1: Coexistence
+    // Construct type string to parse object. Pattern bindings infer type T.
+    // If Reference, it is &T.
+    std::string fullType = Info.Morphology + Info.Type;
+    // Patterns usually don't have rebind/nullable sigils unless explicit?
+    // In match arms, we trust the inferred type T.
+    // But wait, T comes from resolveType(TargetType).
+    Info.TypeObj = toka::Type::fromString(fullType);
+
     CurrentScope->define(Pat->Name, Info);
     break;
   }
@@ -1701,6 +1710,15 @@ std::string Sema::checkExpr(Expr *E) {
     Info.Type = elemType;
     Info.IsValueMutable = fe->IsMutable;
     Info.Morphology = fe->IsReference ? "&" : "";
+
+    // Coexistence: Populate TypeObj
+    std::string fullType = Info.Morphology + Info.Type;
+    // For loop vars usually don't have IsValueNullable/IsPointerNullable via
+    // syntax yet But might be mutable
+    if (Info.IsValueMutable)
+      fullType += "#";
+
+    Info.TypeObj = toka::Type::fromString(fullType);
     CurrentScope->define(fe->VarName, Info);
 
     bool isReceiver = false;
@@ -2728,8 +2746,12 @@ std::string Sema::resolveType(const std::string &Type) {
     // For strong types, we only resolve if we want the UNDERLYING type
     // But for most semantic checks, we might want to keep the strong Name.
     // However, resolveType is usually used to find the physical layout.
+    // Verify object creation (Coexistence Phase)
+    toka::Type::fromString(TypeAliasMap[Type].Target);
     return resolveType(TypeAliasMap[Type].Target);
   }
+  // Coexistence Phase
+  toka::Type::fromString(Type);
   return Type;
 }
 
