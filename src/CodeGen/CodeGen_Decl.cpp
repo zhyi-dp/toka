@@ -366,6 +366,11 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
             soulTypeName[0] == '&' || soulTypeName[0] == '~')) {
       soulTypeName = soulTypeName.substr(1);
     }
+    while (!soulTypeName.empty() &&
+           (soulTypeName.back() == '#' || soulTypeName.back() == '?' ||
+            soulTypeName.back() == '!')) {
+      soulTypeName.pop_back();
+    }
     elemTy = resolveType(soulTypeName, false);
   } else if (initVal) {
     // 1. Prefer Inferred Type from PhysEntity (The "Soul" Type)

@@ -52,11 +52,11 @@ fn main() -> i32 {
     assert(p.x == 61, "p.x mismatch after addtox_useref")
 
     auto b# = true
-    if (b) {
+    if b {
         println("[{}]bool true works", logi#++)
     }
     b# = false
-    if (b) {
+    if b {
         println("[{}]bool false error", logi#++)
     } else {
         println("[{}]bool false works", logi#++)

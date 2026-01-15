@@ -183,6 +183,7 @@ private:
   void checkFunction(FunctionDecl *Fn);
   void checkStmt(Stmt *S);
   std::string checkExpr(Expr *E); // Returns type name
+  std::string checkUnaryExpr(UnaryExpr *Unary);
   void checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
                     bool SourceIsMutable);
 

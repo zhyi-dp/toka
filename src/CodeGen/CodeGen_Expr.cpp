@@ -10,6 +10,8 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   const BinaryExpr *bin = expr;
   if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" || bin->Op == "*=" ||
       bin->Op == "/=") {
+    llvm::errs() << "DEBUG: genBinaryExpr Assign LHS Type: "
+                 << typeid(*bin->LHS).name() << "\n";
     llvm::Value *ptr = nullptr;
     llvm::Type *destType = nullptr;
     TokaSymbol *symLHS = nullptr;
@@ -189,7 +191,44 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
     // Determine destType if not already found (for MemberExpr, ArrayIndexExpr,
     // etc.)
+    llvm::errs() << "DEBUG_V2: Checking destType. isNull="
+                 << (destType == nullptr) << "\n";
     if (!destType) {
+      if (auto *pe = dynamic_cast<const PostfixExpr *>(bin->LHS.get())) {
+        llvm::errs() << "DEBUG_V2: LHS is PostfixExpr. Op=" << (int)pe->Op
+                     << "\n";
+        if (pe->Op == TokenType::TokenWrite || pe->Op == TokenType::TokenNull) {
+          const Expr *base = pe->LHS.get();
+          while (auto *innerPe = dynamic_cast<const PostfixExpr *>(base))
+            base = innerPe->LHS.get();
+          if (auto *ve = dynamic_cast<const VariableExpr *>(base)) {
+            std::string baseName = ve->Name;
+            while (!baseName.empty() &&
+                   (baseName[0] == '*' || baseName[0] == '#' ||
+                    baseName[0] == '&'))
+              baseName = baseName.substr(1);
+            while (!baseName.empty() &&
+                   (baseName.back() == '#' || baseName.back() == '!' ||
+                    baseName.back() == '?'))
+              baseName.pop_back();
+
+            llvm::errs() << "DEBUG: PostfixExpr assignment check baseName='"
+                         << baseName << "'\n";
+            if (m_Symbols.count(baseName)) {
+              destType = m_Symbols[baseName].soulType;
+              std::string s;
+              llvm::raw_string_ostream os(s);
+              if (destType)
+                destType->print(os);
+              llvm::errs() << "DEBUG: Found symbol. SoulType: " << os.str()
+                           << "\n";
+            } else {
+              llvm::errs() << "DEBUG: Symbol not found: " << baseName << "\n";
+            }
+          }
+        }
+      }
+
       if (auto *memLHS = dynamic_cast<const MemberExpr *>(bin->LHS.get())) {
         llvm::Type *objType = nullptr;
         std::function<std::string(const Expr *)> getBaseName =
@@ -313,6 +352,19 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     }
 
     if (!typesMatch) {
+      if (destType) {
+        std::string s;
+        llvm::raw_string_ostream os(s);
+        destType->print(os);
+        llvm::errs() << "DEBUG: CodeGen DestType: " << os.str() << "\n";
+      } else {
+        llvm::errs() << "DEBUG: CodeGen DestType is NULL\n";
+      }
+      std::string s2;
+      llvm::raw_string_ostream os2(s2);
+      rhsVal->getType()->print(os2);
+      llvm::errs() << "DEBUG: CodeGen RHSType: " << os2.str() << "\n";
+
       error(bin, "Type mismatch in assignment");
       return nullptr;
     }
@@ -787,30 +839,31 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
         baseName.pop_back();
 
       // [Fix] Move Semantics for Unique Pointers
-      // If we are passing a Unique Pointer to a function that expects a Unique
-      // Pointer AND we have captured it (Pass-By-Reference/Address), we can
-      // simply nullify the source memory directly via 'val'. This block seems
-      // misplaced here, as it refers to `funcDecl`, `extDecl`, `i`,
-      // `isCaptured` which are typically found in `genCallExpr`. As per
-      // instructions, I must make the change faithfully and without making any
-      // unrelated edits. Since the instruction explicitly says "Update
-      // `genCallExpr`" and the provided content does not contain `genCallExpr`,
-      // I cannot apply this change. However, if the user *intended* for this to
-      // be inserted at this specific location in `genUnaryExpr` despite the
-      // instruction's function name, then the code would be syntactically
-      // incorrect due to undefined variables (`funcDecl`, `extDecl`, `i`,
-      // `isCaptured`). Given the constraint to return syntactically correct
-      // code, and the mismatch between instruction and context, I will *not*
-      // insert the problematic block here. I will proceed with the original
-      // interpretation of the `*` operator in `genUnaryExpr`. The instruction's
-      // code snippet is malformed at the end, containing "typically
-      // returns...". I will assume the user meant to insert the block *before*
-      // the return statement, and the "typically returns..." was an accidental
-      // copy.
+      // If we are passing a Unique Pointer to a function that expects a
+      // Unique Pointer AND we have captured it (Pass-By-Reference/Address),
+      // we can simply nullify the source memory directly via 'val'. This
+      // block seems misplaced here, as it refers to `funcDecl`, `extDecl`,
+      // `i`, `isCaptured` which are typically found in `genCallExpr`. As per
+      // instructions, I must make the change faithfully and without making
+      // any unrelated edits. Since the instruction explicitly says "Update
+      // `genCallExpr`" and the provided content does not contain
+      // `genCallExpr`, I cannot apply this change. However, if the user
+      // *intended* for this to be inserted at this specific location in
+      // `genUnaryExpr` despite the instruction's function name, then the code
+      // would be syntactically incorrect due to undefined variables
+      // (`funcDecl`, `extDecl`, `i`, `isCaptured`). Given the constraint to
+      // return syntactically correct code, and the mismatch between
+      // instruction and context, I will *not* insert the problematic block
+      // here. I will proceed with the original interpretation of the `*`
+      // operator in `genUnaryExpr`. The instruction's code snippet is
+      // malformed at the end, containing "typically returns...". I will
+      // assume the user meant to insert the block *before* the return
+      // statement, and the "typically returns..." was an accidental copy.
 
       if (m_ValueTypeNames.count(baseName)) {
-        // If variable is 'char', *var is effectively 'char' (or *char depending
-        // on semantics) println allows 'char' or '*char' to print as string
+        // If variable is 'char', *var is effectively 'char' (or *char
+        // depending on semantics) println allows 'char' or '*char' to print
+        // as string
         typeName = m_ValueTypeNames[baseName];
       }
     }
@@ -818,18 +871,19 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
     // provided the surrounding context from `genUnaryExpr` by mistake. As per
     // instructions, I must make the change faithfully and without making any
     // unrelated edits. Since the instruction explicitly says "Update
-    // `genCallExpr`" and the provided content does not contain `genCallExpr`, I
-    // cannot apply this change. However, if the user *intended* for this to be
-    // inserted at this specific location in `genUnaryExpr` despite the
+    // `genCallExpr`" and the provided content does not contain `genCallExpr`,
+    // I cannot apply this change. However, if the user *intended* for this to
+    // be inserted at this specific location in `genUnaryExpr` despite the
     // instruction's function name, then the code would be syntactically
     // incorrect due to undefined variables (`funcDecl`, `extDecl`, `i`,
-    // `isCaptured`). Given the constraint to return syntactically correct code,
-    // and the mismatch between instruction and context, I will *not* insert the
-    // problematic block here. I will proceed with the original interpretation
-    // of the `*` operator in `genUnaryExpr`. The instruction's code snippet is
-    // malformed at the end, containing "typically returns...". I will assume
-    // the user meant to insert the block *before* the return statement, and the
-    // "typically returns..." was an accidental copy.
+    // `isCaptured`). Given the constraint to return syntactically correct
+    // code, and the mismatch between instruction and context, I will *not*
+    // insert the problematic block here. I will proceed with the original
+    // interpretation of the `*` operator in `genUnaryExpr`. The instruction's
+    // code snippet is malformed at the end, containing "typically
+    // returns...". I will assume the user meant to insert the block *before*
+    // the return statement, and the "typically returns..." was an accidental
+    // copy.
 
     // *ptr typically returns the pointer address as R-value, but semantically
     // it's accessing the value
@@ -866,8 +920,9 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
 
         return val;
       } else {
-        // Fallback: If identity not found (e.g. global?), try standard genExpr
-        // This handles cases where 'v' might not be a simple local variable
+        // Fallback: If identity not found (e.g. global?), try standard
+        // genExpr This handles cases where 'v' might not be a simple local
+        // variable
         PhysEntity ent = genExpr(unary->RHS.get());
         return ent.load(m_Builder);
       }
@@ -1805,7 +1860,8 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
             // Fallback for pointers
             spec = "%p";
           } else if (ty->isStructTy()) {
-            // Attempt to unwrap struct (e.g. Enum { tag }, or StrongType { val
+            // Attempt to unwrap struct (e.g. Enum { tag }, or StrongType {
+            // val
             // })
             llvm::Value *unwrapped = pVal;
             llvm::Type *innerTy = ty;
@@ -2040,9 +2096,9 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         val = genExpr(call->Args[i].get()).load(m_Builder);
       } else {
         // [Fix] Explicit Identity Capture
-        // If we are capturing (Pass-By-Reference), we want the Identity Address
-        // (Alloca), not the Soul Address (Heap Ptr). genAddr often peels to
-        // Soul. We manually unwrap and seek Identity.
+        // If we are capturing (Pass-By-Reference), we want the Identity
+        // Address (Alloca), not the Soul Address (Heap Ptr). genAddr often
+        // peels to Soul. We manually unwrap and seek Identity.
         const Expr *rawArg = call->Args[i].get();
         // Unwrap decorators to find the variable
         while (true) {
