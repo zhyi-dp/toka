@@ -948,13 +948,9 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
     return genExpr(unary->RHS.get()).load(m_Builder);
   }
   if (unary->Op == TokenType::Tilde) {
-    if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-      llvm::Value *alloca = m_NamedValues[v->Name];
-      if (alloca) {
-        return m_Builder.CreateLoad(m_Symbols[v->Name].soulType, alloca,
-                                    v->Name + "_shared");
-      }
-    }
+    // [Fix] Removed legacy manual load. genVariableExpr now correctly handles
+    // Shared Pointer Handles ({ptr, ptr}) as the "Soul" of a Shared Variable.
+    // Delegating to genExpr allows that logic to work.
     return genExpr(unary->RHS.get());
   }
 
@@ -1070,6 +1066,17 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
     } else if (auto *gv = llvm::dyn_cast<llvm::GlobalVariable>(soulAddr)) {
       soulType = gv->getValueType();
     }
+  }
+
+  // [Fix] Shared Pointer Handle Type Correction
+  if (isShared && soulType) {
+    // If it is shared, the soulAddr is the address of the Handle {ptr, ref*}.
+    // But soulType from symbol is the Element Type.
+    // We must construct the Handle Type so the load is correct.
+    llvm::Type *ptrTy = llvm::PointerType::getUnqual(soulType);
+    llvm::Type *refTy =
+        llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+    soulType = llvm::StructType::get(m_Context, {ptrTy, refTy});
   }
 
   if (!soulType) {
@@ -2171,11 +2178,34 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
       return nullptr;
     }
 
-    // [Fix] Move Semantics Reverted
-    // User clarified: In-Place Capture != Move.
-    // Argument passing is borrowing. Caller retains ownership (unless
-    // explicitly moved). Callee should NOT free the argument. So we do NOT
-    // write null here.
+    // [Fix] Shared Pointer Argument Copy (Incref)
+    // When passing a Shared Pointer by Value (the Handle), we are creating a
+    // new copy in the Callee's scope. We must increment the reference count.
+    if (funcDecl && i < funcDecl->Args.size() && funcDecl->Args[i].IsShared) {
+      if (val->getType()->isStructTy() &&
+          val->getType()->getStructNumElements() == 2) {
+        llvm::Value *ref = m_Builder.CreateExtractValue(val, 1);
+        // Check if ref is null (for nullable shared pointers)
+        llvm::Value *refIsNotNull = m_Builder.CreateIsNotNull(ref, "sh_arg_nn");
+
+        llvm::Function *pFunc = m_Builder.GetInsertBlock()->getParent();
+        llvm::BasicBlock *incBB =
+            llvm::BasicBlock::Create(m_Context, "sh_arg_inc", pFunc);
+        llvm::BasicBlock *contBB =
+            llvm::BasicBlock::Create(m_Context, "sh_arg_cont", pFunc);
+
+        m_Builder.CreateCondBr(refIsNotNull, incBB, contBB);
+        m_Builder.SetInsertPoint(incBB);
+        llvm::Value *cnt =
+            m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), ref);
+        llvm::Value *inc = m_Builder.CreateAdd(
+            cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+        m_Builder.CreateStore(inc, ref);
+        m_Builder.CreateBr(contBB);
+
+        m_Builder.SetInsertPoint(contBB);
+      }
+    }
 
     // Fallback: If we generated a Value (e.g. Struct) but Function expects
     // Pointer (Implicit ByRef), wrap it now.

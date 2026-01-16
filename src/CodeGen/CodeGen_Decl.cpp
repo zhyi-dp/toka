@@ -189,6 +189,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     fillSymbolMetadata(
         sym, typeObj,
         pTy); // Pass pTy (base element type) not the captured pointer type
+    sym.typeName =
+        argDecl.Type; // [Fix] Set legacy type string for Dynamic Dispatch
 
     if (needsCapture) {
       sym.mode = AddressingMode::Pointer;
@@ -574,7 +576,9 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     } else if (var->IsShared) {
       // Shared Semantics: Incref or Promote
       if (initVal->getType()->isStructTy() &&
-          initVal->getType()->getStructNumElements() == 2) {
+          initVal->getType()->getStructNumElements() == 2 &&
+          initVal->getType()->getStructElementType(0)->isPointerTy() &&
+          initVal->getType()->getStructElementType(1)->isPointerTy()) {
         llvm::Value *ref = m_Builder.CreateExtractValue(initVal, 1);
         llvm::Value *c = m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context),
                                               ref, "ref_count");
@@ -1110,8 +1114,9 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
   std::string dynamicTypeName = "";
   if (auto *ve = dynamic_cast<const VariableExpr *>(expr->Object.get())) {
     std::string varName = stripMorphology(ve->Name);
-    if (m_ValueTypeNames.count(varName)) {
-      std::string vType = m_ValueTypeNames[varName];
+    // [Fix] Use Symbol Table typeName instead of legacy m_ValueTypeNames
+    if (m_Symbols.count(varName)) {
+      std::string vType = m_Symbols[varName].typeName;
       // vType is e.g. *Data or Data
       if (!vType.empty()) {
         if (vType[0] == '*') {
@@ -1369,6 +1374,8 @@ void CodeGen::fillSymbolMetadata(TokaSymbol &sym, const std::string &typeStr,
                                  bool isReference, bool isMutable,
                                  bool isNullable, llvm::Type *allocaElemTy) {
   sym.indirectionLevel = 0;
+  sym.typeName =
+      typeStr; // [Fix] Store original type string for legacy/dynamic logic
   std::string ts = typeStr;
 
   // 1. Peel recursive indirection prefixes

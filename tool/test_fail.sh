@@ -42,7 +42,7 @@ for test_file in "${files[@]}"; do
     # We EXPECT compilation to FAIL
     if $TOKAC "$test_file" > /dev/null 2> "$log_file"; then
         printf "Testing %-35s ... " "$test_name"
-        echo -e "${RED}FAIL (Unexpectedly Passed)${NC}"
+        echo -e "${RED}FAIL (Unexpectedly Passed)${NC} details in ./${log_file}${NC}"
         ((fail_count++))
     else
         # It failed, which is what we want.

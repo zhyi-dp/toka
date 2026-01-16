@@ -61,6 +61,7 @@ struct TokaSymbol {
   bool isMutable;         // # on entity (Writable data)
   bool isContinuous;      // Sequence marker (alloc [N])
   bool isNullable;        // ?/! marker
+  std::string typeName;   // Original type string (e.g. "dyn @Shape")
   std::shared_ptr<Type> soulTypeObj; // The new Type Object source of truth
 };
 

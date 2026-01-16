@@ -59,12 +59,12 @@ for test_file in "${files[@]}"; do
              printf "Testing %-35s ... " "$test_name"
              echo -e "${RED}FAIL (Runtime)${NC}"
              ((fail_count++))
-             echo -e "${RED}    Runtime error details in ${log_file}${NC}"
+             echo -e "${RED}    Runtime error details in ./${log_file}${NC}"
         fi
     else
         echo -e "${RED}FAIL (Compile)${NC}"
         ((fail_count++))
-        echo -e "${RED}    Compilation error details in ${log_file}${NC}"
+        echo -e "${RED}    Compilation error details in ./${log_file}${NC}"
     fi
 done
 
