@@ -1,5 +1,8 @@
 add_executable(tokac main.cpp Lexer/Lexer.cpp Parser/Parser.cpp 
 Sema/Sema.cpp
+Sema/Sema_Type.cpp
+Sema/Sema_Expr.cpp
+Sema/Sema_Stmt.cpp
 Type.cpp
 CodeGen/CodeGen.cpp 
 CodeGen/CodeGen_Expr.cpp 
