@@ -14,6 +14,7 @@
 #pragma once
 
 #include "toka/Token.h"
+#include "toka/Type.h" // Added for ResolvedType
 #include <llvm/IR/Value.h>
 #include <memory>
 #include <string>
@@ -37,7 +38,10 @@ public:
   }
 };
 
-class Expr : public ASTNode {};
+class Expr : public ASTNode {
+public:
+  std::shared_ptr<Type> ResolvedType;
+};
 class Stmt : public ASTNode {};
 
 // --- Expressions ---
@@ -581,6 +585,8 @@ public:
       : Name(name), Init(std::move(init)) {}
 
   std::string toString() const override { return "Val " + Name; }
+
+  std::shared_ptr<Type> ResolvedType;
 };
 
 // --- High-level Declarations ---
@@ -692,6 +698,8 @@ public:
     bool IsValueMutable = false;
     bool IsPointerNullable = false;
     bool IsValueNullable = false;
+
+    std::shared_ptr<toka::Type> ResolvedType;
   };
 
   bool IsPub = false;

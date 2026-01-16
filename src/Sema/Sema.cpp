@@ -851,6 +851,9 @@ void Sema::checkStmt(Stmt *S) {
       Info.TypeObj->IsNullable = true;
     }
 
+    // [New] Annotated AST: Populate ResolvedType
+    Var->ResolvedType = Info.TypeObj;
+
     CurrentScope->define(Var->Name, Info);
 
     // Move Logic: If initializing from a Unique Variable, move it.

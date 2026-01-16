@@ -380,7 +380,11 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   std::string inferredTypeName = "";
   if (var->Init) {
     m_CFStack.push_back({varName, nullptr, nullptr, nullptr});
+    std::cerr << "DEBUG: genVariableDecl: generating expr for " << varName
+              << "\n";
     PhysEntity initEnt = genExpr(var->Init.get());
+    std::cerr << "DEBUG: genVariableDecl: generated expr for " << varName
+              << "\n";
 
     // [Fix] Array-to-Pointer Decay Interception
     // Check if RHS is physically an array type that should decay to a pointer
@@ -421,100 +425,130 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   }
 
   llvm::Type *type = nullptr;
-  if (!var->TypeName.empty()) {
-    type = resolveType(var->TypeName, var->HasPointer || var->IsReference ||
-                                          var->IsUnique || var->IsShared);
-  } else if (initVal) {
-    type = initVal->getType();
+  llvm::Type *elemTy = nullptr;
+
+  // [New] Annotated AST: Use ResolvedType if available
+  // TODO: Fully enable for Shared Pointers. Currently fallback to legacy for
+  // Shared to prevent regression/crash during deep type resolution.
+  if (var->ResolvedType && !var->IsShared) {
+    type = getLLVMType(var->ResolvedType);
+
+    // Derive elemTy (Soul Type) for metadata and allocation
+    std::shared_ptr<Type> inner = var->ResolvedType;
+    while (inner->isPointer() || inner->isReference()) {
+      if (auto ptr = std::dynamic_pointer_cast<PointerType>(inner)) {
+        inner = ptr->PointeeType;
+      } else {
+        break;
+      }
+    }
+    if (inner->isArray()) {
+      elemTy = getLLVMType(inner->getArrayElementType());
+    } else {
+      elemTy = getLLVMType(inner);
+    }
   }
 
-  llvm::Type *elemTy = nullptr;
-  std::string soulTypeName = var->TypeName;
-  if (!soulTypeName.empty()) {
-    // Strip ALL morphology to find the core Soul dimension
-    while (!soulTypeName.empty() &&
-           (soulTypeName[0] == '^' || soulTypeName[0] == '*' ||
-            soulTypeName[0] == '&' || soulTypeName[0] == '~')) {
-      soulTypeName = soulTypeName.substr(1);
+  if (!type) {
+    if (!var->TypeName.empty()) {
+      type = resolveType(var->TypeName, var->HasPointer || var->IsReference ||
+                                            var->IsUnique || var->IsShared);
+    } else if (initVal) {
+      type = initVal->getType();
     }
-    while (!soulTypeName.empty() &&
-           (soulTypeName.back() == '#' || soulTypeName.back() == '?' ||
-            soulTypeName.back() == '!')) {
-      soulTypeName.pop_back();
-    }
-    elemTy = resolveType(soulTypeName, false);
-  } else if (initVal) {
-    // 1. Prefer Inferred Type from PhysEntity (The "Soul" Type)
-    if (!inferredTypeName.empty()) {
-      std::string tn = inferredTypeName;
-      // Strip morphology to find base element type
-      while (!tn.empty() &&
-             (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
-        tn = tn.substr(1);
-      elemTy = resolveType(tn, false);
-    }
+  }
 
-    // 2. Fallbacks using AST inspection (Legacy/Redundant if 1 works, but kept
-    // for safety)
-    if (!elemTy) {
-      if (auto *ve = dynamic_cast<const VariableExpr *>(var->Init.get())) {
-        if (m_Symbols.count(ve->Name))
-          elemTy = m_Symbols[ve->Name].soulType;
-      } else if (auto *ae =
-                     dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
-        if (auto *vae =
-                dynamic_cast<const VariableExpr *>(ae->Expression.get())) {
-          if (m_Symbols.count(vae->Name))
-            elemTy = m_Symbols[vae->Name].soulType;
-        }
-      } else if (auto *allocExpr =
-                     dynamic_cast<const AllocExpr *>(var->Init.get())) {
-        // auto *p = alloc Point(...) -> elemTy should be Point
-        elemTy = resolveType(allocExpr->TypeName, false);
-      } else if (auto *newExpr =
-                     dynamic_cast<const NewExpr *>(var->Init.get())) {
-        elemTy = resolveType(newExpr->Type, false);
-      } else if (auto *cast = dynamic_cast<const CastExpr *>(var->Init.get())) {
-        std::string tn = cast->TargetType;
+  std::string soulTypeName = var->TypeName;
+  if (!elemTy) {
+    if (!soulTypeName.empty()) {
+      // Strip ALL morphology to find the core Soul dimension
+      while (!soulTypeName.empty() &&
+             (soulTypeName[0] == '^' || soulTypeName[0] == '*' ||
+              soulTypeName[0] == '&' || soulTypeName[0] == '~')) {
+        soulTypeName = soulTypeName.substr(1);
+      }
+      while (!soulTypeName.empty() &&
+             (soulTypeName.back() == '#' || soulTypeName.back() == '?' ||
+              soulTypeName.back() == '!')) {
+        soulTypeName.pop_back();
+      }
+      elemTy = resolveType(soulTypeName, false);
+    } else if (initVal) {
+      // 1. Prefer Inferred Type from PhysEntity (The "Soul" Type)
+      if (!inferredTypeName.empty()) {
+        std::string tn = inferredTypeName;
+        // Strip morphology to find base element type
         while (!tn.empty() &&
                (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
           tn = tn.substr(1);
         elemTy = resolveType(tn, false);
-      } else if (auto *call = dynamic_cast<const CallExpr *>(var->Init.get())) {
-        std::string retTypeName;
-        if (m_Functions.count(call->Callee)) {
-          retTypeName = m_Functions[call->Callee]->ReturnType;
-        } else if (m_Externs.count(call->Callee)) {
-          retTypeName = m_Externs[call->Callee]->ReturnType;
-        }
+      }
 
-        if (!retTypeName.empty()) {
-          std::string tn = retTypeName;
+      // 2. Fallbacks using AST inspection (Legacy/Redundant if 1 works, but
+      // kept for safety)
+      if (!elemTy) {
+        if (auto *ve = dynamic_cast<const VariableExpr *>(var->Init.get())) {
+          if (m_Symbols.count(ve->Name))
+            elemTy = m_Symbols[ve->Name].soulType;
+        } else if (auto *ae =
+                       dynamic_cast<const AddressOfExpr *>(var->Init.get())) {
+          if (auto *vae =
+                  dynamic_cast<const VariableExpr *>(ae->Expression.get())) {
+            if (m_Symbols.count(vae->Name))
+              elemTy = m_Symbols[vae->Name].soulType;
+          }
+        } else if (auto *allocExpr =
+                       dynamic_cast<const AllocExpr *>(var->Init.get())) {
+          // auto *p = alloc Point(...) -> elemTy should be Point
+          elemTy = resolveType(allocExpr->TypeName, false);
+        } else if (auto *newExpr =
+                       dynamic_cast<const NewExpr *>(var->Init.get())) {
+          elemTy = resolveType(newExpr->Type, false);
+        } else if (auto *cast =
+                       dynamic_cast<const CastExpr *>(var->Init.get())) {
+          std::string tn = cast->TargetType;
           while (!tn.empty() &&
                  (tn[0] == '*' || tn[0] == '^' || tn[0] == '&' || tn[0] == '#'))
             tn = tn.substr(1);
           elemTy = resolveType(tn, false);
-        }
-      } else if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
-        // [Fix] Handle *var for type deduction
-        if (ue->Op == TokenType::Star) {
-          if (auto *ve = dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
-            if (m_Symbols.count(ve->Name))
-              elemTy = m_Symbols[ve->Name].soulType;
+        } else if (auto *call =
+                       dynamic_cast<const CallExpr *>(var->Init.get())) {
+          std::string retTypeName;
+          if (m_Functions.count(call->Callee)) {
+            retTypeName = m_Functions[call->Callee]->ReturnType;
+          } else if (m_Externs.count(call->Callee)) {
+            retTypeName = m_Externs[call->Callee]->ReturnType;
           }
+
+          if (!retTypeName.empty()) {
+            std::string tn = retTypeName;
+            while (!tn.empty() && (tn[0] == '*' || tn[0] == '^' ||
+                                   tn[0] == '&' || tn[0] == '#'))
+              tn = tn.substr(1);
+            elemTy = resolveType(tn, false);
+          }
+        } else if (auto *ue =
+                       dynamic_cast<const UnaryExpr *>(var->Init.get())) {
+          // [Fix] Handle *var for type deduction
+          if (ue->Op == TokenType::Star) {
+            if (auto *ve = dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
+              if (m_Symbols.count(ve->Name))
+                elemTy = m_Symbols[ve->Name].soulType;
+            }
+          }
+        } else if (initVal->getType()->isPointerTy()) {
+          // Fallback: use the value type itself as elem
+          elemTy = initVal->getType();
         }
-      } else if (initVal->getType()->isPointerTy()) {
-        // Fallback: use the value type itself as elem
-        elemTy = initVal->getType();
       }
     }
-  }
 
-  if (!elemTy) {
-    if (initVal)
-      elemTy = initVal->getType();
-    else
-      elemTy = llvm::Type::getInt32Ty(m_Context);
+    if (!elemTy) {
+      if (initVal)
+        elemTy = initVal->getType();
+      else
+        elemTy = llvm::Type::getInt32Ty(m_Context);
+    }
   }
 
   // Ensure m_ValueElementTypes is set early
@@ -553,7 +587,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   // CRITICAL: For Shared variables, ALWAYS use the handle struct { ptr, ptr
   // }, regardless of what resolveType returned. This ensures all Shared
   // variables have consistent memory layout with ref counting support.
-  if (var->IsShared) {
+  if (!type && var->IsShared) {
     llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
     llvm::Type *refTy =
         llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
