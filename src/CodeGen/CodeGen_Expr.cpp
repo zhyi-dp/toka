@@ -1020,10 +1020,6 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
 
 PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
   llvm::Value *soulAddr = nullptr;
-
-  // Check morphology to decide proper address (Soul vs Handle)
-  // For Shared variables, we want the Handle ({ptr, refptr}*) as the value
-  // so that assignments trigger RefCounting/Sharing, not Deep Copying.
   bool isShared = false;
   std::string varName = var->Name;
   std::string checkName = varName;
@@ -1032,12 +1028,23 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
          (checkName.back() == '?' || checkName.back() == '!'))
     checkName.pop_back();
 
-  if (m_Symbols.count(checkName) &&
-      m_Symbols[checkName].morphology == Morphology::Shared) {
-    soulAddr = getIdentityAddr(checkName);
-    isShared = true;
+  // [New] Annotated AST: Use ResolvedType for Morphology (Safe Hybrid)
+  if (var->ResolvedType) {
+    if (var->ResolvedType->isSharedPtr()) {
+      isShared = true;
+      soulAddr = getIdentityAddr(checkName);
+    } else {
+      soulAddr = getEntityAddr(var->Name);
+    }
   } else {
-    soulAddr = getEntityAddr(var->Name);
+    // Legacy Fallback
+    if (m_Symbols.count(checkName) &&
+        m_Symbols[checkName].morphology == Morphology::Shared) {
+      soulAddr = getIdentityAddr(checkName);
+      isShared = true;
+    } else {
+      soulAddr = getEntityAddr(var->Name);
+    }
   }
 
   if (!soulAddr) {
@@ -1058,6 +1065,9 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
   llvm::Type *soulType = nullptr;
   if (m_Symbols.count(baseName)) {
     soulType = m_Symbols[baseName].soulType;
+  } else if (var->ResolvedType) {
+    // [New] Use ResolvedType as fallback if not in symbols
+    soulType = getLLVMType(var->ResolvedType);
   } else {
     // Fallback for globals/externs
     if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(soulAddr)) {
@@ -2237,16 +2247,44 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         // 2. Identify Concrete Type Name
         std::string concreteName = "";
         const Expr *argExpr = call->Args[i].get();
-        if (auto *ve = dynamic_cast<const VariableExpr *>(argExpr)) {
-          if (m_Symbols.count(ve->Name)) {
-            llvm::Type *ct = m_Symbols[ve->Name].soulType;
-            if (m_TypeToName.count(ct))
-              concreteName = m_TypeToName[ct];
+
+        // [New] Annotated AST: Use ResolvedType
+        if (argExpr->ResolvedType) {
+          auto rt = argExpr->ResolvedType;
+          // Strip pointer/reference layers to get the core Shape/Value
+          // implementation (Traits are usually implemented on value types)
+          while (rt && (rt->isPointer() || rt->isReference() ||
+                        rt->isSmartPointer())) {
+            if (auto inner = rt->getPointeeType())
+              rt = inner;
+            else
+              break;
           }
-        } else if (auto *ne = dynamic_cast<const NewExpr *>(argExpr)) {
-          concreteName = ne->Type;
-        } else if (auto *ie = dynamic_cast<const InitStructExpr *>(argExpr)) {
-          concreteName = ie->ShapeName;
+          if (rt) {
+            concreteName = rt->toString();
+            // Strip suffixes (#, ?, !) from the resulting name to match VTable
+            // expectation
+            while (!concreteName.empty() &&
+                   (concreteName.back() == '#' || concreteName.back() == '?' ||
+                    concreteName.back() == '!')) {
+              concreteName.pop_back();
+            }
+          }
+        }
+
+        // Legacy Fallback / Refinement
+        if (concreteName.empty() || concreteName == "void") {
+          if (auto *ve = dynamic_cast<const VariableExpr *>(argExpr)) {
+            if (m_Symbols.count(ve->Name)) {
+              llvm::Type *ct = m_Symbols[ve->Name].soulType;
+              if (m_TypeToName.count(ct))
+                concreteName = m_TypeToName[ct];
+            }
+          } else if (auto *ne = dynamic_cast<const NewExpr *>(argExpr)) {
+            concreteName = ne->Type;
+          } else if (auto *ie = dynamic_cast<const InitStructExpr *>(argExpr)) {
+            concreteName = ie->ShapeName;
+          }
         }
 
         // 3. Construct Fat Pointer
