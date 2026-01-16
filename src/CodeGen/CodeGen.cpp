@@ -163,14 +163,15 @@ void CodeGen::resolveSignatures(const Module &ast) {
       return;
   }
 
-  for (const auto &func : ast.Functions) {
-    genFunction(func.get(), "", true);
+  // [Fix] Generate Impl declarations BEFORE functions
+  for (const auto &impl : ast.Impls) {
+    genImpl(impl.get(), true);
     if (hasErrors())
       return;
   }
 
-  for (const auto &impl : ast.Impls) {
-    genImpl(impl.get(), true);
+  for (const auto &func : ast.Functions) {
+    genFunction(func.get(), "", true);
     if (hasErrors())
       return;
   }
@@ -186,7 +187,7 @@ void CodeGen::generate(const Module &ast) {
       return;
   }
 
-  // Generate Impls (Body Phase)
+  // [Fix] Generate Impl bodies BEFORE function bodies so drop() exists
   for (const auto &impl : ast.Impls) {
     genImpl(impl.get(), false);
     if (hasErrors())

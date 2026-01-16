@@ -101,7 +101,14 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
       // [Fix] Enable Capture for Unique Pointers
       bool needsCapture = (isDirectValue && (isAggregate || arg.IsMutable ||
                                              arg.IsRebindable)) ||
-                          arg.IsUnique;
+                          arg.IsUnique || arg.IsShared;
+
+      // [ABI Fix] Shared Pointers must be passed by Single Pointer (Reference
+      // to Handle) to avoid ABI dissecting the struct {ptr, ptr} across
+      // registers.
+      if (arg.IsShared) {
+        needsCapture = true;
+      }
 
       if (needsCapture) {
         t = llvm::PointerType::getUnqual(t);
@@ -170,20 +177,31 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     bool isDirectValue = !typeObj->isPointer() && !typeObj->isReference();
     bool needsCapture = (isDirectValue && (isAggregate || argDecl.IsMutable ||
                                            argDecl.IsRebindable)) ||
-                        argDecl.IsUnique;
+                        argDecl.IsUnique || argDecl.IsShared;
 
     if (needsCapture) {
       // Argument passed by pointer
       allocaType = llvm::PointerType::getUnqual(allocaType);
     }
 
-    llvm::AllocaInst *alloca =
-        m_Builder.CreateAlloca(allocaType, nullptr, argName + ".addr");
-    m_Builder.CreateStore(&arg, alloca);
+    llvm::Value *finalStorage = nullptr;
+
+    if (argDecl.IsShared) {
+      // [ABI Fix] For Shared Pointers, the Argument IS the pointer to the
+      // handle. We do NOT alloca/store. We treat the argument as the identity
+      // address. This avoids copying 16-byte structs which breaks ABI on some
+      // platforms.
+      finalStorage = &arg;
+    } else {
+      llvm::AllocaInst *alloca =
+          m_Builder.CreateAlloca(allocaType, nullptr, argName + ".addr");
+      m_Builder.CreateStore(&arg, alloca);
+      finalStorage = alloca;
+    }
 
     // 4. Register in Symbol Table using Type Object
     TokaSymbol sym;
-    sym.allocaPtr = alloca;
+    sym.allocaPtr = finalStorage;
 
     // Refactored Metadata Filler
     fillSymbolMetadata(
@@ -208,7 +226,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     // m_ValueTypeNames[argName] = argDecl.Type;
     // m_ValueElementTypes[argName] = sym.soulType; // Now comes from
     // fillSymbolMetadata m_ValueTypes[argName] = allocaType;
-    m_NamedValues[argName] = alloca;
+    m_NamedValues[argName] = reinterpret_cast<llvm::AllocaInst *>(
+        finalStorage); // Warning: cast mostly for legacy support
     // m_ValueIsMutable[argName] = sym.isMutable; // LEGACY REMOVED
 
     if (!m_ScopeStack.empty()) {
@@ -216,7 +235,10 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
       // Arguments passed by In-Place Capture (Unique Pointers) are effectively
       // borrowed. The Callee must NOT free them. Ownership remains with Caller.
       // So we register them as IsUnique=false for cleanup purposes.
-      m_ScopeStack.back().push_back({argName, alloca, false, argDecl.IsShared});
+      // Shared Pointers passed by pointer are also technically borrowed (no new
+      // ref). But we might want normal semantics? If we don't inc-ref, we
+      // shouldn't dec-ref. For now, follow Unique pattern to be safe.
+      m_ScopeStack.back().push_back({argName, finalStorage, false, false});
     }
 
     idx++;
@@ -579,12 +601,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
           initVal->getType()->getStructNumElements() == 2 &&
           initVal->getType()->getStructElementType(0)->isPointerTy() &&
           initVal->getType()->getStructElementType(1)->isPointerTy()) {
-        llvm::Value *ref = m_Builder.CreateExtractValue(initVal, 1);
-        llvm::Value *c = m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context),
-                                              ref, "ref_count");
-        llvm::Value *inc = m_Builder.CreateAdd(
-            c, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-        m_Builder.CreateStore(inc, ref);
+        // [Refactor] IncRef logic is handled later with proper isCopy check
+        // (LValue vs RValue)
       } else {
         // Promote to Shared Handle (Ptr or Value)
         if (initVal->getType()->isPointerTy() &&
@@ -684,6 +702,48 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   // m_ValueIsShared[varName] = var->IsShared;
   // m_ValueIsReference[varName] = var->IsReference;
   // m_ValueIsMutable[varName] = var->IsMutable;
+
+  // [Fix] Shared Pointer Init RC Logic
+  // Distinguish Copy (LValue) vs Transfer (RValue)
+  if (var->IsShared && initVal) {
+    bool isCopy = false;
+    // Check if Init is LValue-like
+    if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
+      // e.g. auto ~x = ~y;  (~y is LValue copy)
+      isCopy = true;
+    } else if (dynamic_cast<const VariableExpr *>(var->Init.get())) {
+      isCopy = true;
+    } else if (dynamic_cast<const MemberExpr *>(var->Init.get())) {
+      isCopy = true;
+    } else if (dynamic_cast<const ArrayIndexExpr *>(var->Init.get())) {
+      isCopy = true;
+    }
+
+    // If initVal is just {ptr, ptr}, we need to extract refPtr to IncRef
+    if (isCopy && initVal->getType()->isStructTy()) {
+      llvm::Value *refPtr =
+          m_Builder.CreateExtractValue(initVal, 1, "init_refptr");
+      llvm::Value *refNN = m_Builder.CreateIsNotNull(refPtr, "init_ref_nn");
+
+      llvm::Function *F = m_Builder.GetInsertBlock()->getParent();
+      llvm::BasicBlock *doIncBB =
+          llvm::BasicBlock::Create(m_Context, "init_inc", F);
+      llvm::BasicBlock *contBB =
+          llvm::BasicBlock::Create(m_Context, "init_inc_cont", F);
+
+      m_Builder.CreateCondBr(refNN, doIncBB, contBB);
+      m_Builder.SetInsertPoint(doIncBB);
+
+      llvm::Value *cnt =
+          m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
+      llvm::Value *inc = m_Builder.CreateAdd(
+          cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+      m_Builder.CreateStore(inc, refPtr);
+
+      m_Builder.CreateBr(contBB);
+      m_Builder.SetInsertPoint(contBB);
+    }
+  }
 
   if (initVal) {
     if (initVal->getType() != type) {

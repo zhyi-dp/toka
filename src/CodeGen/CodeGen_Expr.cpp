@@ -23,8 +23,7 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   const BinaryExpr *bin = expr;
   if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" || bin->Op == "*=" ||
       bin->Op == "/=") {
-    llvm::errs() << "DEBUG: genBinaryExpr Assign LHS Type: "
-                 << typeid(*bin->LHS).name() << "\n";
+
     llvm::Value *ptr = nullptr;
     llvm::Type *destType = nullptr;
     TokaSymbol *symLHS = nullptr;
@@ -2120,12 +2119,14 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
     if (funcDecl && i < funcDecl->Args.size()) {
       const auto &arg = funcDecl->Args[i];
       // Force Capture for Unique Pointers to enable In-Place Move / Borrow
-      if (arg.IsUnique) {
+      // [ABI Fix] Force Capture for Shared Pointers to pass by Pointer
+      // (avoiding ABI split)
+      if (arg.IsUnique || arg.IsShared) {
         isCaptured = true;
       }
       // Only capture if it's a Value Type (Struct/Array) AND NOT a
-      // Pointer/Shared/Reference
-      else if (!arg.HasPointer && !arg.IsShared && !arg.IsReference) {
+      // Pointer/Shared/Reference (Shared is handled above now)
+      else if (!arg.HasPointer && !arg.IsReference) {
         llvm::Type *logicalTy = resolveType(arg.Type, false);
         if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
           isCaptured = true;
@@ -2164,8 +2165,24 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
 
         if (auto *ve = dynamic_cast<const VariableExpr *>(rawArg)) {
           val = getIdentityAddr(ve->Name);
-        } else {
+        }
+
+        if (!val) {
           val = genAddr(call->Args[i].get());
+        }
+
+        // [Fix] Handle RValues for Captured Arguments (Temp Materialization)
+        if (!val) {
+          PhysEntity pe = genExpr(call->Args[i].get());
+          // If genAddr failed, it's likely an RValue (return from call, etc.)
+          // We must create a temporary alloca to pass its address.
+          llvm::Value *rVal = pe.load(m_Builder);
+          if (rVal) {
+            llvm::AllocaInst *tmp =
+                m_Builder.CreateAlloca(rVal->getType(), nullptr, "arg_tmp");
+            m_Builder.CreateStore(rVal, tmp);
+            val = tmp;
+          }
         }
       }
     } else {
@@ -2178,33 +2195,14 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
       return nullptr;
     }
 
-    // [Fix] Shared Pointer Argument Copy (Incref)
-    // When passing a Shared Pointer by Value (the Handle), we are creating a
-    // new copy in the Callee's scope. We must increment the reference count.
+    // [ABI Fix] Shared Pointer Argument Copy (Incref) REMOVED
+    // We now pass Shared Pointers by "Single Pointer" (Address of Handle).
+    // This implies Borrowing semantics (no transfer of ownership, no new
+    // reference). The Callee will see the Caller's handle via pointer. Explicit
+    // Incref/Decref is NOT needed for this ABI strategy unless we implement
+    // explicit cloning.
     if (funcDecl && i < funcDecl->Args.size() && funcDecl->Args[i].IsShared) {
-      if (val->getType()->isStructTy() &&
-          val->getType()->getStructNumElements() == 2) {
-        llvm::Value *ref = m_Builder.CreateExtractValue(val, 1);
-        // Check if ref is null (for nullable shared pointers)
-        llvm::Value *refIsNotNull = m_Builder.CreateIsNotNull(ref, "sh_arg_nn");
-
-        llvm::Function *pFunc = m_Builder.GetInsertBlock()->getParent();
-        llvm::BasicBlock *incBB =
-            llvm::BasicBlock::Create(m_Context, "sh_arg_inc", pFunc);
-        llvm::BasicBlock *contBB =
-            llvm::BasicBlock::Create(m_Context, "sh_arg_cont", pFunc);
-
-        m_Builder.CreateCondBr(refIsNotNull, incBB, contBB);
-        m_Builder.SetInsertPoint(incBB);
-        llvm::Value *cnt =
-            m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), ref);
-        llvm::Value *inc = m_Builder.CreateAdd(
-            cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-        m_Builder.CreateStore(inc, ref);
-        m_Builder.CreateBr(contBB);
-
-        m_Builder.SetInsertPoint(contBB);
-      }
+      // No-op for Pass-By-Pointer
     }
 
     // Fallback: If we generated a Value (e.g. Struct) but Function expects
@@ -2286,26 +2284,6 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
           val = m_Builder.CreateBitCast(val, paramType);
         }
       }
-    }
-
-    // [Fix] IncRef for Shared Pointer Arguments
-    // Passing a shared pointer by value acts as a copy, so we must increment
-    // RC.
-    bool isSharedArg = false;
-    if (funcDecl && i < funcDecl->Args.size() && funcDecl->Args[i].IsShared) {
-      isSharedArg = true;
-    }
-
-    // Only increment if it's a valid Shared Pointer (Struct {ptr, ptr})
-    if (isSharedArg && val && val->getType()->isStructTy() &&
-        val->getType()->getStructNumElements() == 2) {
-      llvm::Value *refPtr =
-          m_Builder.CreateExtractValue(val, 1, "arg_inc_refptr");
-      llvm::Value *cnt = m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context),
-                                              refPtr, "arg_rc");
-      llvm::Value *inc = m_Builder.CreateAdd(
-          cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-      m_Builder.CreateStore(inc, refPtr);
     }
 
     argsV.push_back(val);

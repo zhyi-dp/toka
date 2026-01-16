@@ -330,25 +330,8 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
       TokaSymbol &sym = m_Symbols[baseName];
       if (sym.morphology == Morphology::Shared) {
         // Shared Pointer ~T is { T*, RC* }
-        // We need T* (Data Pointer) to access members.
-
-        // Check if objAddr is already unwrapped.
-        // If emitEntityAddr returned a LoadInst from the symbol's alloca,
-        // it effectively loaded the first element (Data*) of the wrapper.
-        bool alreadyUnwrapped = false;
-        if (auto *li = llvm::dyn_cast<llvm::LoadInst>(objAddr)) {
-          if (li->getPointerOperand() == sym.allocaPtr) {
-            alreadyUnwrapped = true;
-          }
-        }
-
-        if (!alreadyUnwrapped) {
-          // Unwrap: Load T* from { T*, RC* }
-          // objAddr is the address of the wrapper.
-          // Since Data* is at offset 0, we can just load from objAddr.
-          objAddr = m_Builder.CreateLoad(m_Builder.getPtrTy(), objAddr,
-                                         "sh_unwrap_load");
-        }
+        // getEntityAddr has ALREADY unwrapped this to T* (Data Pointer).
+        // So objAddr is T*. We do not need to unwrap again.
       }
     }
   }
