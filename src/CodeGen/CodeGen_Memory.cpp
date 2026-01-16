@@ -139,8 +139,8 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
       //              val='"
       //              << m_ValueTypeNames[varName] << "'\n";
 
-      if (m_ValueTypeNames.count(varName)) {
-        std::string vType = m_ValueTypeNames[varName];
+      if (m_Symbols.count(varName)) {
+        std::string vType = m_Symbols[varName].typeName;
         // vType is e.g. *Data or *[10]Data
         if (!vType.empty()) {
           if (vType[0] == '*') {

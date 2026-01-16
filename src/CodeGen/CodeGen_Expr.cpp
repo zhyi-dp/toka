@@ -826,8 +826,8 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
                 baseName.back() == '!'))
           baseName.pop_back();
 
-        if (m_ValueTypeNames.count(baseName)) {
-          std::string T = m_ValueTypeNames[baseName];
+        if (m_Symbols.count(baseName)) {
+          std::string T = m_Symbols[baseName].typeName;
           while (!T.empty() && (T[0] == '*' || T[0] == '^' || T[0] == '&' ||
                                 T[0] == '~' || T[0] == '[')) {
             if (T[0] == '[') {
@@ -878,11 +878,11 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
       // assume the user meant to insert the block *before* the return
       // statement, and the "typically returns..." was an accidental copy.
 
-      if (m_ValueTypeNames.count(baseName)) {
+      if (m_Symbols.count(baseName)) {
         // If variable is 'char', *var is effectively 'char' (or *char
         // depending on semantics) println allows 'char' or '*char' to print
         // as string
-        typeName = m_ValueTypeNames[baseName];
+        typeName = m_Symbols[baseName].typeName;
       }
     }
     // Assuming the user intended to insert this logic into `genCallExpr` but
@@ -1097,8 +1097,8 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
   }
 
   std::string typeName = "";
-  if (m_ValueTypeNames.count(baseName))
-    typeName = m_ValueTypeNames[baseName];
+  if (m_Symbols.count(baseName))
+    typeName = m_Symbols[baseName].typeName;
   else if (m_TypeToName.count(soulType))
     typeName = m_TypeToName[soulType];
 

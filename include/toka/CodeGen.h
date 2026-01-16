@@ -116,13 +116,7 @@ private:
   std::map<std::string, const ExternDecl *> m_Externs;
   std::map<std::string, TokaSymbol> m_Symbols;
   std::string m_CurrentSelfType;
-  std::map<std::string, std::string> m_ValueTypeNames;
   std::map<std::string, llvm::Value *> m_NamedValues;
-
-  // Legacy maps removed
-  // std::map<std::string, llvm::Type *> m_ValueTypes;
-  // std::map<std::string, llvm::Type *> m_ValueElementTypes;
-  // Legacy boolean maps removed
 
   // NOTE: These are NOT legacy. They are essential context tracking maps.
   // Although m_ValueElementTypes is redundant with m_Symbols for Variables, it

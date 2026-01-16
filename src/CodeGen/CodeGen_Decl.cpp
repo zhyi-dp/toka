@@ -238,13 +238,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
     m_Symbols[argName] = sym;
 
-    // Legacy maps for compatibility
-    // m_ValueTypeNames[argName] = argDecl.Type;
-    // m_ValueElementTypes[argName] = sym.soulType; // Now comes from
-    // fillSymbolMetadata m_ValueTypes[argName] = allocaType;
     m_NamedValues[argName] = reinterpret_cast<llvm::AllocaInst *>(
         finalStorage); // Warning: cast mostly for legacy support
-    // m_ValueIsMutable[argName] = sym.isMutable; // LEGACY REMOVED
 
     if (!m_ScopeStack.empty()) {
       // [Fix] Argument Lifecycle
@@ -854,9 +849,27 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
 
   // Automatic Drop Registration
   if (!m_ScopeStack.empty()) {
-    std::string typeName = m_ValueTypeNames[varName];
-    // If empty (auto with no Sema update?), try m_ValueElementTypes or
-    // inferred?
+    std::string typeName = var->TypeName;
+    if (var->ResolvedType) {
+      // Use resolved type name if available (handles 'auto')
+      // We need the raw name for lookup
+      if (auto st = std::dynamic_pointer_cast<ShapeType>(var->ResolvedType)) {
+        typeName = st->Name;
+      } else if (auto pt = std::dynamic_pointer_cast<SharedPointerType>(
+                     var->ResolvedType)) {
+        // For Shared, we want the inner type? No, drops are usually handled by
+        // ABI or manual calls? Standard drop logic below peels layers.
+        typeName = var->ResolvedType->toString(); // e.g. "~Data"
+      } else {
+        typeName = var->ResolvedType->toString();
+      }
+    }
+
+    // Fallback if empty (shouldn't happen with Annotated AST)
+    if (typeName.empty() || typeName == "auto") {
+      if (m_Symbols.count(varName))
+        typeName = m_Symbols[varName].typeName;
+    }
 
     std::string dropFunc = "";
     bool hasDrop = false;
@@ -961,15 +974,12 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     llvm::errs() << "DEBUG: genDestructuringDecl vName=" << vName
                  << " deducedType='" << deducedType << "'\n";
 
-    if (!deducedType.empty()) {
-      m_ValueTypeNames[vName] = deducedType;
-    }
-
     TokaSymbol sym;
     sym.allocaPtr = alloca;
     // For destructuring, metadata is often already flattened
     fillSymbolMetadata(sym, "", false, false, false, false, v.IsMutable,
                        v.IsNullable, ty);
+    sym.typeName = deducedType; // Set typeName in symbol
     sym.isRebindable = false;
     sym.isContinuous = ty->isArrayTy();
     m_Symbols[vName] = sym;
