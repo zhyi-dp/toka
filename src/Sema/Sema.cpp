@@ -988,6 +988,14 @@ std::string Sema::checkUnaryExprStr(UnaryExpr *Unary) {
 
 std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
   if (!E)
+    return nullptr;
+  auto T = checkExprImpl(E);
+  E->ResolvedType = T;
+  return T;
+}
+
+std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
+  if (!E)
     return toka::Type::fromString("void");
 
   if (auto *Num = dynamic_cast<NumberExpr *>(E)) {

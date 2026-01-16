@@ -201,7 +201,10 @@ private:
   void checkStmt(Stmt *S);
 
   std::string checkUnaryExprStr(UnaryExpr *Unary); // Legacy
-  std::shared_ptr<toka::Type> checkExpr(Expr *E);  // New Object API
+  std::shared_ptr<toka::Type>
+  checkExprImpl(Expr *E); // New Object API Implementation
+  std::shared_ptr<toka::Type>
+  checkExpr(Expr *E); // New Object API Wrapper (Annotates AST)
   std::shared_ptr<toka::Type>
   checkUnaryExpr(UnaryExpr *Unary); // New Object API
   std::shared_ptr<toka::Type>
