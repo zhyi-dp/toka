@@ -546,32 +546,6 @@ bool allPathsJump(Stmt *S) {
 }
 } // namespace
 
-// Helper to strip attributes and morphology from a type string for Map lookups
-static std::string getSoulName(const std::string &TypeStr) {
-  if (TypeStr.empty())
-    return "";
-  std::string s = TypeStr;
-  // 1. Strip suffixes
-  while (!s.empty()) {
-    char back = s.back();
-    if (back == '#' || back == '?' || back == '!')
-      s.pop_back();
-    else
-      break;
-  }
-  // 2. Strip prefixes
-  size_t start = 0;
-  while (start < s.size()) {
-    char c = s[start];
-    if (c == '*' || c == '^' || c == '~' || c == '&' || c == '#' || c == '?' ||
-        c == '!')
-      start++;
-    else
-      break;
-  }
-  return s.substr(start);
-}
-
 void Sema::checkFunction(FunctionDecl *Fn) {
   CurrentFunctionReturnType = Fn->ReturnType;
   enterScope(); // Function scope
@@ -900,7 +874,7 @@ void Sema::checkStmt(Stmt *S) {
                           initType->toString() + "'");
     }
 
-    std::string soulName = getSoulName(Destruct->TypeName);
+    std::string soulName = Type::stripMorphology(Destruct->TypeName);
     if (ShapeMap.count(soulName)) {
       ShapeDecl *SD = ShapeMap[soulName];
       size_t Limit = std::min(SD->Members.size(), Destruct->Variables.size());
@@ -1497,7 +1471,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       }
     }
 
-    std::string soulType = getSoulName(ObjType);
+    std::string soulType = Type::stripMorphology(ObjType);
     if (MethodMap.count(soulType) && MethodMap[soulType].count(Met->Method)) {
       if (MethodDecls.count(soulType) &&
           MethodDecls[soulType].count(Met->Method)) {
@@ -1534,7 +1508,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // Check if it's a reference to a struct
     if (ObjType.size() > 1 && ObjType[0] == '^') {
       std::string Pointee = ObjType.substr(1);
-      std::string pSoul = getSoulName(Pointee);
+      std::string pSoul = Type::stripMorphology(Pointee);
       if (MethodMap.count(pSoul) && MethodMap[pSoul].count(Met->Method)) {
         return toka::Type::fromString(MethodMap[pSoul][Met->Method]);
       }
@@ -2816,7 +2790,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   // 3. Resolve Static Methods / Enum Variants
   size_t pos = CallName.find("::");
   if (pos != std::string::npos) {
-    std::string ShapeName = getSoulName(CallName.substr(0, pos));
+    std::string ShapeName = Type::stripMorphology(CallName.substr(0, pos));
     std::string VariantName = CallName.substr(pos + 2);
 
     if (ShapeMap.count(ShapeName)) {
@@ -2896,7 +2870,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         }
       }
     }
-    std::string soulName = getSoulName(CallName);
+    std::string soulName = Type::stripMorphology(CallName);
     if (!Fn && !Ext && ShapeMap.count(soulName)) {
       Sh = ShapeMap[soulName];
     }

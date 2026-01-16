@@ -402,6 +402,36 @@ std::shared_ptr<Type> UnresolvedType::withAttributes(bool w, bool n) const {
 
 // --- Static Factory (The Parser) ---
 
+std::string Type::stripMorphology(const std::string &name) {
+  std::string s = name;
+  if (s.empty())
+    return "";
+
+  // 1. Strip Prefixes (*, ^, ~, &) and their modifiers
+  size_t start = 0;
+  while (start < s.size()) {
+    char c = s[start];
+    if (c == '*' || c == '^' || c == '~' || c == '&' || c == '#' || c == '?' ||
+        c == '!' || c == '$') {
+      start++;
+    } else {
+      break;
+    }
+  }
+  s = s.substr(start);
+
+  // 2. Strip Suffixes (#, ?, !)
+  while (!s.empty()) {
+    char c = s.back();
+    if (c == '#' || c == '?' || c == '!' || c == '$') {
+      s.pop_back();
+    } else {
+      break;
+    }
+  }
+  return s;
+}
+
 static std::string trim(const std::string &str) {
   size_t first = str.find_first_not_of(' ');
   if (std::string::npos == first)

@@ -53,7 +53,7 @@ llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
     if (auto *ve = dynamic_cast<const VariableExpr *>(inner)) {
       std::string baseName = ve->Name;
       // Scrub decorators
-      std::string cleanName = stripMorphology(baseName);
+      std::string cleanName = Type::stripMorphology(baseName);
 
       if (m_Symbols.count(cleanName)) {
         TokaSymbol &sym = m_Symbols[cleanName];

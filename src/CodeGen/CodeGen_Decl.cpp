@@ -22,32 +22,11 @@
 
 namespace toka {
 
-std::string CodeGen::stripMorphology(const std::string &name) {
-  std::string s = name;
-  if (!s.empty() &&
-      (s[0] == '&' || s[0] == '*' || s[0] == '^' || s[0] == '~')) {
-    s = s.substr(1); // is a pointer or reference
-
-    if (!s.empty() &&
-        (s[0] == '$' || s[0] == '#' || s[0] == '?' || s[0] == '!')) {
-      s = s.substr(1); // pointer or reference with flags
-    }
-  }
-  if (!s.empty() && (s.back() == '$' || s.back() == '#' || s.back() == '?' ||
-                     s.back() == '!')) {
-    s.pop_back(); // soul entity with flags
-  }
-  return s;
-}
-
 llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                                      const std::string &overrideName,
                                      bool declOnly) {
   std::string funcName = overrideName.empty() ? func->Name : overrideName;
-  llvm::errs() << "DEBUG: genFunction " << funcName
-               << " (AST Name: " << func->Name << ")\n";
   m_Functions[funcName] = func;
-  // m_ValueElementTypes.clear(); // LEGACY REMOVED
   m_Symbols.clear();
 
   llvm::Function *f = m_Module->getFunction(funcName);
@@ -153,7 +132,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     std::string argName = argDecl.Name;
 
     // 1. Strip morphology to get the base symbol name
-    argName = stripMorphology(argName);
+    argName = Type::stripMorphology(argName);
 
     arg.setName(argName);
 
@@ -380,7 +359,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 }
 
 llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
-  std::string varName = stripMorphology(var->Name);
+  std::string varName = Type::stripMorphology(var->Name);
   std::cerr << "DEBUG: genVariableDecl: " << varName
             << " (TypeName: " << var->TypeName << ")\n";
 
@@ -389,22 +368,16 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   std::string inferredTypeName = "";
   if (var->Init) {
     m_CFStack.push_back({varName, nullptr, nullptr, nullptr});
-    std::cerr << "DEBUG: genVariableDecl: generating expr for " << varName
-              << "\n";
     PhysEntity initEnt = genExpr(var->Init.get());
-    std::cerr << "DEBUG: genVariableDecl: generated expr for " << varName
-              << "\n";
 
-    std::cerr << "DEBUG: genVariableDecl: checking array decay\n";
     // [Fix] Array-to-Pointer Decay Interception
     // Check if RHS is physically an array type that should decay to a pointer
     if (var->HasPointer || var->IsReference) {
       if (var->Init) {
-        std::cerr << "DEBUG: genVariableDecl: checking init type for decay\n";
         if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
           if (ue->Op == TokenType::Star) {
             if (auto *ve = dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
-              std::string veName = stripMorphology(ve->Name);
+              std::string veName = Type::stripMorphology(ve->Name);
               if (m_Symbols.count(veName)) {
                 llvm::Type *t = m_Symbols[veName].soulType;
                 if (t && t->isArrayTy()) {
@@ -416,9 +389,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
         }
       }
     }
-    std::cerr << "DEBUG: genVariableDecl: done checking array decay. "
-                 "initEnt.value valid? "
-              << (initEnt.value != nullptr) << "\n";
 
     if (decayArrayType) {
 
@@ -429,18 +399,14 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       initVal = m_Builder.CreateInBoundsGEP(decayArrayType, arrPtr,
                                             {zero, zero}, "array.decay");
     } else {
-      std::cerr << "DEBUG: genVariableDecl: calling initEnt.load()\n";
       initVal = initEnt.load(m_Builder);
-      std::cerr << "DEBUG: genVariableDecl: initEnt.load() done\n";
     }
 
     inferredTypeName = initEnt.typeName;
     m_CFStack.pop_back();
     if (!initVal) {
-      std::cerr << "DEBUG: genVariableDecl: initVal is null\n";
       return nullptr;
     }
-    std::cerr << "DEBUG: genVariableDecl: initVal obtained\n";
   }
 
   llvm::Type *type = nullptr;
@@ -449,7 +415,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   // [New] Annotated AST: Use ResolvedType if available
   // Enabled for all types including Shared Pointers.
   if (var->ResolvedType) {
-    std::cerr << "DEBUG: genVariableDecl: using ResolvedType\n";
     type = getLLVMType(var->ResolvedType);
 
     // Derive elemTy (Soul Type) for metadata and allocation
@@ -638,7 +603,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       if (ve) {
         // Stripping logic for unique variable lookup could be added here if
         // needed, but m_NamedValues should have stripped keys now.
-        std::string veName = stripMorphology(ve->Name);
+        std::string veName = Type::stripMorphology(ve->Name);
         if (m_Symbols.count(veName) &&
             m_Symbols[veName].morphology == Morphology::Unique) {
           TokaSymbol &sSym = m_Symbols[veName];
@@ -938,7 +903,7 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     }
 
     const auto &v = dest->Variables[i];
-    std::string vName = stripMorphology(v.Name);
+    std::string vName = Type::stripMorphology(v.Name);
 
     llvm::Value *val = m_Builder.CreateExtractValue(initVal, i, vName);
     llvm::Type *ty = val->getType();
@@ -969,7 +934,7 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     }
 
     // Strip decorators if present
-    deducedType = stripMorphology(deducedType);
+    deducedType = Type::stripMorphology(deducedType);
 
     llvm::errs() << "DEBUG: genDestructuringDecl vName=" << vName
                  << " deducedType='" << deducedType << "'\n";
@@ -1267,7 +1232,7 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
   // --- Dynamic Dispatch (dyn @Trait) ---
   std::string dynamicTypeName = "";
   if (auto *ve = dynamic_cast<const VariableExpr *>(expr->Object.get())) {
-    std::string varName = stripMorphology(ve->Name);
+    std::string varName = Type::stripMorphology(ve->Name);
     // [Fix] Use Symbol Table typeName instead of legacy m_ValueTypeNames
     if (m_Symbols.count(varName)) {
       std::string vType = m_Symbols[varName].typeName;

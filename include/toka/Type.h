@@ -86,6 +86,10 @@ public:
 
   // Static Factory for String Parsing (The Bridge)
   static std::shared_ptr<Type> fromString(const std::string &typeStr);
+
+  // Helper: Strip morphology characters (*, ^, &, ~, #, ?, !) to get the "Soul"
+  // name
+  static std::string stripMorphology(const std::string &name);
 };
 
 // --- Basic Types ---

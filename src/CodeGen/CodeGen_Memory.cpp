@@ -131,7 +131,7 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
     }
 
     if (auto *ve = dynamic_cast<const VariableExpr *>(rawExpr)) {
-      std::string varName = stripMorphology(ve->Name);
+      std::string varName = Type::stripMorphology(ve->Name);
 
       // Debug Lookup
       // llvm::errs() << "DEBUG: genFreeStmt lookup varName='" << varName
