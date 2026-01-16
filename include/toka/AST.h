@@ -620,6 +620,9 @@ struct ShapeMember {
   // For Bare Union (as ...)
   std::vector<ShapeMember> SubMembers;
   ShapeKind SubKind = ShapeKind::Struct;
+
+  // Resolution Cache from Sema
+  std::shared_ptr<toka::Type> ResolvedType = nullptr;
 };
 
 class ShapeDecl : public ASTNode {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(Toka VERSION 0.1.0 LANGUAGES C CXX)
+project(Toka VERSION 0.4.0 LANGUAGES C CXX)
 
 # Version Control Info
 find_package(Git)

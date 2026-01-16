@@ -1097,19 +1097,29 @@ void CodeGen::genShape(const ShapeDecl *sh) {
   if (sh->Kind == ShapeKind::Struct || sh->Kind == ShapeKind::Tuple) {
     std::vector<std::string> fieldNames;
     for (const auto &member : sh->Members) {
-      body.push_back(
-          resolveType(member.Type, member.HasPointer || member.IsUnique ||
+      if (member.ResolvedType) {
+        body.push_back(getLLVMType(member.ResolvedType));
+      } else {
+        // Fallback (Should be unreachable if Sema Pass 2 worked)
+        std::cerr << "WARNING: Unresolved member type for " << member.Name
+                  << " in " << sh->Name
+                  << ". Using inefficient string fallback.\n";
+        body.push_back(resolveType(member.Type,
+                                   member.HasPointer || member.IsUnique ||
                                        member.IsShared || member.IsReference));
+      }
       fieldNames.push_back(member.Name);
     }
     st->setBody(body, sh->IsPacked);
     m_StructFieldNames[sh->Name] = fieldNames;
   } else if (sh->Kind == ShapeKind::Array) {
-    llvm::Type *elemTy = resolveType(sh->Members[0].Type, false);
+    llvm::Type *elemTy = nullptr;
+    if (sh->Members[0].ResolvedType) {
+      elemTy = getLLVMType(sh->Members[0].ResolvedType);
+    } else {
+      elemTy = resolveType(sh->Members[0].Type, false);
+    }
     llvm::Type *arrTy = llvm::ArrayType::get(elemTy, sh->ArraySize);
-    // For Array shapes, we wrap them in a struct for consistent GEP/naming if
-    // needed, but usually Toka treats them as ArrayType. Let's wrap in a
-    // struct so it's a named type.
     body.push_back(arrTy);
     st->setBody(body, sh->IsPacked);
   } else if (sh->Kind == ShapeKind::Union) {
@@ -1117,7 +1127,12 @@ void CodeGen::genShape(const ShapeDecl *sh) {
     uint64_t maxSize = 0;
     uint64_t maxAlign = 1;
     for (const auto &member : sh->Members) {
-      llvm::Type *t = resolveType(member.Type, false);
+      llvm::Type *t = nullptr;
+      if (member.ResolvedType) {
+        t = getLLVMType(member.ResolvedType);
+      } else {
+        t = resolveType(member.Type, false);
+      }
       if (!t)
         continue;
       maxSize =
@@ -1136,14 +1151,23 @@ void CodeGen::genShape(const ShapeDecl *sh) {
       if (!variant.SubMembers.empty()) {
         std::vector<llvm::Type *> fieldTypes;
         for (const auto &field : variant.SubMembers) {
-          fieldTypes.push_back(resolveType(field.Type, false));
+          if (field.ResolvedType) {
+            fieldTypes.push_back(getLLVMType(field.ResolvedType));
+          } else {
+            fieldTypes.push_back(resolveType(field.Type, false));
+          }
         }
         // Use packed layout to estimate consistent payload size
         llvm::StructType *st =
             llvm::StructType::get(m_Context, fieldTypes, true);
         variantSize = DL.getTypeAllocSize(st).getFixedValue();
       } else if (!variant.Type.empty()) {
-        llvm::Type *t = resolveType(variant.Type, false);
+        llvm::Type *t = nullptr;
+        if (variant.ResolvedType) {
+          t = getLLVMType(variant.ResolvedType);
+        } else {
+          t = resolveType(variant.Type, false);
+        }
         if (t)
           variantSize = DL.getTypeAllocSize(t).getFixedValue();
       }
