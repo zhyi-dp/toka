@@ -4,6 +4,8 @@ toka.md
 *.lli
 *.log
 *.err
+*.txt
+!CMakeLists.txt
 build/
 build-linux/
 bin/

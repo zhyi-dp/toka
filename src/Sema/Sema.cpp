@@ -608,7 +608,14 @@ void Sema::checkFunction(FunctionDecl *Fn) {
     if (Arg.IsPointerNullable || Arg.IsValueNullable || Arg.IsNullable)
       fullType += "?";
 
-    Info.TypeObj = toka::Type::fromString(fullType);
+    // [New] Annotated AST: Use resolveType (string version) to handle
+    // aliases/Self, then parse
+    std::string resolvedStr = resolveType(fullType);
+    Info.TypeObj = toka::Type::fromString(resolvedStr);
+
+    // Assign to AST Node for CodeGen
+    Arg.ResolvedType = Info.TypeObj;
+
     CurrentScope->define(Arg.Name, Info);
   }
 
@@ -746,7 +753,8 @@ void Sema::checkStmt(Stmt *S) {
             Inferred = Inferred.substr(1);
             // Also strip attributes from the inferred prefix
             if (!Inferred.empty() &&
-                (Inferred[0] == '?' || Inferred[0] == '!')) {
+                (Inferred[0] == '?' || Inferred[0] == '!' ||
+                 Inferred[0] == '#')) {
               Inferred = Inferred.substr(1);
             }
           }

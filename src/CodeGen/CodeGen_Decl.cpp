@@ -58,25 +58,32 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
       // Create Type Object from String (Temporary Bridge)
       // Ideally, FunctionDecl would store shared_ptr<Type>, but for now we
       // parse.
-      std::shared_ptr<Type> typeObj = Type::fromString(arg.Type);
+      // [New] Annotated AST: Use ResolvedType
+      std::shared_ptr<Type> typeObj;
+      if (arg.ResolvedType) {
+        typeObj = arg.ResolvedType;
+      } else {
+        // Fallback to legacy string parsing
+        typeObj = Type::fromString(arg.Type);
 
-      // Permission Decorators (AST overrides Type string if present)
-      if (arg.IsMutable)
-        typeObj = typeObj->withAttributes(true, typeObj->IsNullable);
-      if (arg.IsNullable || arg.IsPointerNullable)
-        typeObj = typeObj->withAttributes(typeObj->IsWritable, true);
+        // Permission Decorators (AST overrides Type string if present)
+        if (arg.IsMutable)
+          typeObj = typeObj->withAttributes(true, typeObj->IsNullable);
+        if (arg.IsNullable || arg.IsPointerNullable)
+          typeObj = typeObj->withAttributes(typeObj->IsWritable, true);
 
-      // [Fix] Apply AST-level Morphology wrappers (Pointer, Unique, Reference,
-      // Shared) The AST 'Type' string often doesn't contain *, ^, ~ if they
-      // were parsed as decorators
-      if (arg.IsReference) {
-        typeObj = std::make_shared<ReferenceType>(typeObj);
-      } else if (arg.IsUnique) {
-        typeObj = std::make_shared<UniquePointerType>(typeObj);
-      } else if (arg.IsShared) {
-        typeObj = std::make_shared<SharedPointerType>(typeObj);
-      } else if (arg.HasPointer) {
-        typeObj = std::make_shared<RawPointerType>(typeObj);
+        // [Fix] Apply AST-level Morphology wrappers (Pointer, Unique,
+        // Reference, Shared) The AST 'Type' string often doesn't contain *, ^,
+        // ~ if they were parsed as decorators
+        if (arg.IsReference) {
+          typeObj = std::make_shared<ReferenceType>(typeObj);
+        } else if (arg.IsUnique) {
+          typeObj = std::make_shared<UniquePointerType>(typeObj);
+        } else if (arg.IsShared) {
+          typeObj = std::make_shared<SharedPointerType>(typeObj);
+        } else if (arg.HasPointer) {
+          typeObj = std::make_shared<RawPointerType>(typeObj);
+        }
       }
 
       // Determine LLVM Type
@@ -108,7 +115,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
       // [ABI Fix] Shared Pointers must be passed by Single Pointer (Reference
       // to Handle) to avoid ABI dissecting the struct {ptr, ptr} across
       // registers.
-      if (arg.IsShared) {
+      if (typeObj->isSharedPtr() || arg.IsShared) {
         needsCapture = true;
       }
 
@@ -151,23 +158,30 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     arg.setName(argName);
 
     // 2. Resolve Type Object
-    std::shared_ptr<Type> typeObj = Type::fromString(argDecl.Type);
+    std::shared_ptr<Type> typeObj;
 
-    // Apply Function Arg overrides (e.g. "x: i32#")
+    // Lift scope for these flags so loop logic can use them later
     bool isMutable = argDecl.IsMutable || argDecl.IsValueMutable;
     bool isNullable = argDecl.IsNullable || argDecl.IsPointerNullable;
-    typeObj = typeObj->withAttributes(isMutable, isNullable);
 
-    // [Fix] Apply AST-level Morphology wrappers (Pointer, Unique, Reference,
-    // Shared)
-    if (argDecl.IsReference) {
-      typeObj = std::make_shared<ReferenceType>(typeObj);
-    } else if (argDecl.IsUnique) {
-      typeObj = std::make_shared<UniquePointerType>(typeObj);
-    } else if (argDecl.IsShared) {
-      typeObj = std::make_shared<SharedPointerType>(typeObj);
-    } else if (argDecl.HasPointer) {
-      typeObj = std::make_shared<RawPointerType>(typeObj);
+    if (argDecl.ResolvedType) {
+      typeObj = argDecl.ResolvedType;
+    } else {
+      typeObj = Type::fromString(argDecl.Type);
+
+      // Apply Function Arg overrides (e.g. "x: i32#")
+      typeObj = typeObj->withAttributes(isMutable, isNullable);
+
+      // [Fix] Apply AST-level Morphology wrappers
+      if (argDecl.IsReference) {
+        typeObj = std::make_shared<ReferenceType>(typeObj);
+      } else if (argDecl.IsUnique) {
+        typeObj = std::make_shared<UniquePointerType>(typeObj);
+      } else if (argDecl.IsShared) {
+        typeObj = std::make_shared<SharedPointerType>(typeObj);
+      } else if (argDecl.HasPointer) {
+        typeObj = std::make_shared<RawPointerType>(typeObj);
+      }
     }
 
     // 3. Get LLVM Type from Object
@@ -386,10 +400,12 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     std::cerr << "DEBUG: genVariableDecl: generated expr for " << varName
               << "\n";
 
+    std::cerr << "DEBUG: genVariableDecl: checking array decay\n";
     // [Fix] Array-to-Pointer Decay Interception
     // Check if RHS is physically an array type that should decay to a pointer
     if (var->HasPointer || var->IsReference) {
       if (var->Init) {
+        std::cerr << "DEBUG: genVariableDecl: checking init type for decay\n";
         if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
           if (ue->Op == TokenType::Star) {
             if (auto *ve = dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
@@ -405,6 +421,9 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
         }
       }
     }
+    std::cerr << "DEBUG: genVariableDecl: done checking array decay. "
+                 "initEnt.value valid? "
+              << (initEnt.value != nullptr) << "\n";
 
     if (decayArrayType) {
 
@@ -415,22 +434,27 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       initVal = m_Builder.CreateInBoundsGEP(decayArrayType, arrPtr,
                                             {zero, zero}, "array.decay");
     } else {
+      std::cerr << "DEBUG: genVariableDecl: calling initEnt.load()\n";
       initVal = initEnt.load(m_Builder);
+      std::cerr << "DEBUG: genVariableDecl: initEnt.load() done\n";
     }
 
     inferredTypeName = initEnt.typeName;
     m_CFStack.pop_back();
-    if (!initVal)
+    if (!initVal) {
+      std::cerr << "DEBUG: genVariableDecl: initVal is null\n";
       return nullptr;
+    }
+    std::cerr << "DEBUG: genVariableDecl: initVal obtained\n";
   }
 
   llvm::Type *type = nullptr;
   llvm::Type *elemTy = nullptr;
 
   // [New] Annotated AST: Use ResolvedType if available
-  // TODO: Fully enable for Shared Pointers. Currently fallback to legacy for
-  // Shared to prevent regression/crash during deep type resolution.
-  if (var->ResolvedType && !var->IsShared) {
+  // Enabled for all types including Shared Pointers.
+  if (var->ResolvedType) {
+    std::cerr << "DEBUG: genVariableDecl: using ResolvedType\n";
     type = getLLVMType(var->ResolvedType);
 
     // Derive elemTy (Soul Type) for metadata and allocation
