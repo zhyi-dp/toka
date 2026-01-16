@@ -2474,6 +2474,29 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   std::string LHS = lhsType->toString(); // For error messages
   std::string RHS = rhsType->toString();
 
+  // [Optimization] Literal Adaptation
+  // Allow mixed comparison like (i64 < 2) by auto-casting the literal to the
+  // explicit type.
+  Expr *lhsExpr = Bin->LHS.get();
+  Expr *rhsExpr = Bin->RHS.get();
+
+  // Strip parens if needed (simple check)
+  // For now direct NumberExpr check
+  auto *lhsNum = dynamic_cast<NumberExpr *>(lhsExpr);
+  auto *rhsNum = dynamic_cast<NumberExpr *>(rhsExpr);
+
+  if (lhsType->isInteger() && rhsNum && !lhsNum) {
+    // Left is Strong Integer, Right is Literal -> Adapt Right
+    Bin->RHS->ResolvedType = lhsType;
+    rhsType = lhsType;
+    RHS = rhsType->toString();
+  } else if (rhsType->isInteger() && lhsNum && !rhsNum) {
+    // Right is Strong Integer, Left is Literal -> Adapt Left
+    Bin->LHS->ResolvedType = rhsType;
+    lhsType = rhsType;
+    LHS = lhsType->toString();
+  }
+
   bool isRefAssign = false;
 
   // Assignment Logic
