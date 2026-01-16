@@ -11,7 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+#include "toka/AST.h"
 #include "toka/CodeGen.h"
+#include "toka/Type.h"
 #include <cctype>
 #include <iostream>
 #include <set>

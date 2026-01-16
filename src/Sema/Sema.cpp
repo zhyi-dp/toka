@@ -13,8 +13,11 @@
 // limitations under the License.
 #include "toka/Sema.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 

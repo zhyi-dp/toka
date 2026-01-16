@@ -19,9 +19,6 @@
 
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
-#include <memory>
-#include <string>
-#include <vector>
 
 namespace toka {
 
