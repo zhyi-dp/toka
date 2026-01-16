@@ -199,7 +199,7 @@ private:
   void registerGlobals(Module &M);
   void checkFunction(FunctionDecl *Fn);
   void checkStmt(Stmt *S);
-  std::string checkExprStr(Expr *E);               // Legacy
+
   std::string checkUnaryExprStr(UnaryExpr *Unary); // Legacy
   std::shared_ptr<toka::Type> checkExpr(Expr *E);  // New Object API
   std::shared_ptr<toka::Type>

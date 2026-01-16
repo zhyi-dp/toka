@@ -60,6 +60,10 @@ public:
     return typeKind == RawPtr || typeKind == UniquePtr ||
            typeKind == SharedPtr || typeKind == Reference;
   }
+  bool isRawPointer() const { return typeKind == RawPtr; }
+  bool isSmartPointer() const {
+    return typeKind == UniquePtr || typeKind == SharedPtr;
+  }
   bool isReference() const { return typeKind == Reference; }
   bool isUniquePtr() const { return typeKind == UniquePtr; }
   bool isSharedPtr() const { return typeKind == SharedPtr; }

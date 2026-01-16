@@ -33,8 +33,8 @@ bool Type::isCompatibleWith(const Type &target) const {
   if (typeKind != target.typeKind)
     return false;
   // Target Writable? Source must be Writable.
-  if (target.IsWritable && !IsWritable)
-    return false;
+  // Mutability check removed from base: T -> T# is allowed for values (copy).
+  // Strict mutability is enforced in Pointer/Reference types where it matters.
   // Target Non-Nullable? Source must be Non-Nullable.
   if (!target.IsNullable && IsNullable)
     return false;
@@ -112,6 +112,8 @@ bool PointerType::isCompatibleWith(const Type &target) const {
   const auto *otherPtr = dynamic_cast<const PointerType *>(&target);
   if (!otherPtr)
     return false;
+  if (otherPtr->PointeeType->IsWritable && !PointeeType->IsWritable)
+    return false;
   return PointeeType->isCompatibleWith(*otherPtr->PointeeType);
 }
 
@@ -133,6 +135,8 @@ bool RawPointerType::isCompatibleWith(const Type &target) const {
   if (!otherPtr)
     return false;
   if (target.IsWritable && !IsWritable)
+    return false;
+  if (otherPtr->PointeeType->IsWritable && !PointeeType->IsWritable)
     return false;
   // Loose: *?T flows to *T for Raw Pointers (Unsafe)
   return PointeeType->isCompatibleWith(*otherPtr->PointeeType);
@@ -158,8 +162,10 @@ std::string UniquePointerType::toString() const {
 bool UniquePointerType::isCompatibleWith(const Type &target) const {
   const auto *otherPtr = dynamic_cast<const UniquePointerType *>(&target);
   if (otherPtr)
-    return Type::isCompatibleWith(target) &&
-           PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+    if (otherPtr->PointeeType->IsWritable && !PointeeType->IsWritable)
+      return false;
+  return Type::isCompatibleWith(target) &&
+         PointeeType->isCompatibleWith(*otherPtr->PointeeType);
   return false;
 }
 
@@ -183,6 +189,8 @@ std::string SharedPointerType::toString() const {
 bool SharedPointerType::isCompatibleWith(const Type &target) const {
   const auto *otherPtr = dynamic_cast<const SharedPointerType *>(&target);
   if (otherPtr) {
+    if (otherPtr->PointeeType->IsWritable && !PointeeType->IsWritable)
+      return false;
     return Type::isCompatibleWith(target) &&
            PointeeType->isCompatibleWith(*otherPtr->PointeeType);
   }
@@ -212,8 +220,10 @@ std::string ReferenceType::toString() const {
 bool ReferenceType::isCompatibleWith(const Type &target) const {
   const auto *otherPtr = dynamic_cast<const ReferenceType *>(&target);
   if (otherPtr)
-    return Type::isCompatibleWith(target) &&
-           PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+    if (otherPtr->PointeeType->IsWritable && !PointeeType->IsWritable)
+      return false;
+  return Type::isCompatibleWith(target) &&
+         PointeeType->isCompatibleWith(*otherPtr->PointeeType);
   return false;
 }
 

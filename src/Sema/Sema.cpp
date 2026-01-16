@@ -151,8 +151,9 @@ void Sema::registerGlobals(Module &M) {
           v->TypeName = "str";
         } else {
           // Last resort: run full checkExpr (e.g. for AnonymousRecordExpr)
-          std::string inferred = checkExprStr(v->Init.get());
-          if (inferred != "unknown" && inferred != "void") {
+          std::shared_ptr<toka::Type> inferredType = checkExpr(v->Init.get());
+          std::string inferred = inferredType->toString();
+          if (!inferredType->isUnknown() && !inferredType->isVoid()) {
             v->TypeName = inferred;
           }
         }
@@ -684,7 +685,8 @@ void Sema::checkStmt(Stmt *S) {
     if (Ret->ReturnValue) {
       m_ControlFlowStack.push_back(
           {"", CurrentFunctionReturnType, false, true});
-      ExprType = checkExprStr(Ret->ReturnValue.get());
+      auto RetTypeObj = checkExpr(Ret->ReturnValue.get());
+      ExprType = RetTypeObj->toString();
       m_ControlFlowStack.pop_back();
     }
     clearStmtBorrows();
@@ -694,9 +696,10 @@ void Sema::checkStmt(Stmt *S) {
                      CurrentFunctionReturnType + "', got '" + ExprType + "'");
     }
   } else if (auto *Free = dynamic_cast<FreeStmt *>(S)) {
-    std::string ExprType = checkExprStr(Free->Expression.get());
-    if (ExprType.empty() || ExprType[0] != '*') {
-      if (ExprType.size() > 0 && (ExprType[0] == '^' || ExprType[0] == '~')) {
+    auto FreeTypeObj = checkExpr(Free->Expression.get());
+    if (!FreeTypeObj->isRawPointer()) {
+      std::string ExprType = FreeTypeObj->toString();
+      if (FreeTypeObj->isSmartPointer()) {
         error(Free, "manual 'free' is forbidden for smart pointers ('" +
                         ExprType + "'). Use automatic scoping instead.");
       } else {
@@ -707,14 +710,15 @@ void Sema::checkStmt(Stmt *S) {
   } else if (auto *ExprS = dynamic_cast<ExprStmt *>(S)) {
     // Standalone expressions are NOT receivers
     m_ControlFlowStack.push_back({"", "void", false, false});
-    checkExprStr(ExprS->Expression.get());
+    checkExpr(ExprS->Expression.get());
     m_ControlFlowStack.pop_back();
     clearStmtBorrows();
   } else if (auto *Var = dynamic_cast<VariableDecl *>(S)) {
     std::string InitType = "";
     if (Var->Init) {
       m_ControlFlowStack.push_back({Var->Name, "void", false, true});
-      InitType = checkExprStr(Var->Init.get());
+      auto InitTypeObj = checkExpr(Var->Init.get());
+      InitType = InitTypeObj->toString();
       m_ControlFlowStack.pop_back();
     }
 
@@ -979,30 +983,29 @@ std::string Sema::checkUnaryExprStr(UnaryExpr *Unary) {
   return checkUnaryExpr(Unary)->toString();
 }
 
-std::string Sema::checkExprStr(Expr *E) {
+std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
   if (!E)
-    return "void";
+    return toka::Type::fromString("void");
 
   if (auto *Num = dynamic_cast<NumberExpr *>(E)) {
     if (Num->Value > 9223372036854775807ULL)
-      return "u64";
+      return toka::Type::fromString("u64");
     if (Num->Value > 2147483647)
-      return "i64";
-    return "i32";
+      return toka::Type::fromString("i64");
+    return toka::Type::fromString("i32");
   } else if (auto *Flt = dynamic_cast<FloatExpr *>(E)) {
-    return "f64";
+    return toka::Type::fromString("f64");
   } else if (auto *Bool = dynamic_cast<BoolExpr *>(E)) {
-    return "bool";
+    return toka::Type::fromString("bool");
   } else if (auto *Addr = dynamic_cast<AddressOfExpr *>(E)) {
-    // strict: &T -> &T (Reference)
     // Toka Spec: &x creates a Reference.
-    // If x is T, &x is &T.
-    std::string inner = checkExprStr(Addr->Expression.get());
-    if (inner == "unknown")
-      return "unknown";
-    return "&" + inner;
+    auto innerObj = checkExpr(Addr->Expression.get());
+    if (innerObj->isUnknown())
+      return toka::Type::fromString("unknown");
+    auto refType = std::make_shared<toka::ReferenceType>(innerObj);
+    return refType;
   } else if (auto *Idx = dynamic_cast<ArrayIndexExpr *>(E)) {
-    return checkIndexExpr(Idx)->toString();
+    return checkIndexExpr(Idx);
   } else if (auto *Rec = dynamic_cast<AnonymousRecordExpr *>(E)) {
     // 1. Infer field types
     std::vector<ShapeMember> members;
@@ -1014,9 +1017,10 @@ std::string Sema::checkExprStr(Expr *E) {
       }
       seenFields.insert(f.first);
 
-      std::string fieldT = checkExprStr(f.second.get());
-      if (fieldT == "unknown")
-        return "unknown";
+      auto fieldTypeObj = checkExpr(f.second.get());
+      std::string fieldT = fieldTypeObj->toString();
+      if (fieldTypeObj->isUnknown())
+        return toka::Type::fromString("unknown");
 
       ShapeMember sm;
       sm.Name = f.first;
@@ -1041,39 +1045,30 @@ std::string Sema::checkExprStr(Expr *E) {
     // Store ownership
     SyntheticShapes.push_back(std::move(SyntheticShape));
 
-    return UniqueName;
+    return toka::Type::fromString(UniqueName);
   } else if (auto *Deref = dynamic_cast<DereferenceExpr *>(E)) {
-    std::string inner = checkExprStr(Deref->Expression.get());
-    if (inner == "unknown")
-      return "unknown";
+    auto innerObj = checkExpr(Deref->Expression.get());
+    if (innerObj->isUnknown())
+      return toka::Type::fromString("unknown");
 
-    // Dereference a pointer/reference/handle
-    if (inner.size() > 1 && (inner[0] == '^' || inner[0] == '&' ||
-                             inner[0] == '*' || inner[0] == '~')) {
-      std::string res = inner.substr(1);
-      while (!res.empty() && (res.back() == '!' || res.back() == '?'))
-        res.pop_back();
-      return res;
+    if (auto ptr = std::dynamic_pointer_cast<toka::PointerType>(innerObj)) {
+      return ptr->getPointeeType();
     }
-    // Spec: variable name is the object. dereferencing a non-pointer is
-    // error? Morpholopy: *ptr is Identity value (address). Wait,
-    // AddressOfExpr is &x. DereferenceExpr is *x. If x is ^i32. *x accesses
-    // the raw address? Or the value? CodeGen: dereference load from pointer.
-    // So *x returns the pointee type.
-    error(Deref, "cannot dereference non-pointer type '" + inner + "'");
-    return "unknown";
+    error(Deref,
+          "cannot dereference non-pointer type '" + innerObj->toString() + "'");
+    return toka::Type::fromString("unknown");
   } else if (auto *Unary = dynamic_cast<UnaryExpr *>(E)) {
-    return checkUnaryExprStr(Unary);
+    return checkUnaryExpr(Unary);
   } else if (auto *Str = dynamic_cast<StringExpr *>(E)) {
-    return "str";
+    return toka::Type::fromString("str");
   } else if (auto *ve = dynamic_cast<VariableExpr *>(E)) {
     SymbolInfo Info;
     if (!CurrentScope->lookup(ve->Name, Info)) {
       if (ShapeMap.count(ve->Name) || TypeAliasMap.count(ve->Name)) {
-        return ve->Name;
+        return toka::Type::fromString(ve->Name);
       }
       error(ve, "use of undeclared identifier '" + ve->Name + "'");
-      return "unknown";
+      return toka::Type::fromString("unknown");
     }
     if (Info.Moved) {
       error(ve, "use of moved value: '" + ve->Name + "'");
@@ -1082,17 +1077,17 @@ std::string Sema::checkExprStr(Expr *E) {
       error(ve, "cannot access '" + ve->Name +
                     "' while it is mutably borrowed (Rule 406)");
     }
-    std::string fullType = Info.TypeObj->toString();
-    return fullType;
+    return Info.TypeObj;
   } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
-    return "nullptr";
+    return toka::Type::fromString("nullptr");
   } else if (auto *None = dynamic_cast<NoneExpr *>(E)) {
-    return "none";
+    return toka::Type::fromString("none");
   } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) { // Legacy Dispatch
-    return checkBinaryExpr(Bin)->toString();
+    return checkBinaryExpr(Bin);
   } else if (auto *ie = dynamic_cast<IfExpr *>(E)) {
 
-    std::string condType = checkExprStr(ie->Condition.get());
+    auto condTypeObj = checkExpr(ie->Condition.get());
+    std::string condType = condTypeObj->toString();
 
     // Type Narrowing for 'is' check
     std::string narrowedVar;
@@ -1182,9 +1177,9 @@ std::string Sema::checkExprStr(Expr *E) {
       error(ie, "If branches have incompatible types: '" + thenType +
                     "' and '" + elseType + "'");
     }
-    return (thenType != "void") ? thenType : elseType;
+    return toka::Type::fromString((thenType != "void") ? thenType : elseType);
   } else if (auto *we = dynamic_cast<WhileExpr *>(E)) {
-    checkExprStr(we->Condition.get());
+    checkExpr(we->Condition.get());
     bool isReceiver = false;
     if (!m_ControlFlowStack.empty()) {
       isReceiver = m_ControlFlowStack.back().IsReceiver;
@@ -1229,7 +1224,7 @@ std::string Sema::checkExprStr(Expr *E) {
         !isTypeCompatible(bodyType, elseType)) {
       error(we, "While loop branches have incompatible types");
     }
-    return (bodyType != "void") ? bodyType : elseType;
+    return toka::Type::fromString((bodyType != "void") ? bodyType : elseType);
   } else if (auto *le = dynamic_cast<LoopExpr *>(E)) {
     bool isReceiver = false;
     if (!m_ControlFlowStack.empty()) {
@@ -1253,9 +1248,10 @@ std::string Sema::checkExprStr(Expr *E) {
     if (isReceiver && res == "void" && !allPathsJump(le->Body.get())) {
       error(le, "Yielding loop body must pass a value");
     }
-    return res;
+    return toka::Type::fromString(res);
   } else if (auto *fe = dynamic_cast<ForExpr *>(E)) {
-    std::string collType = checkExprStr(fe->Collection.get());
+    auto collTypeObj = checkExpr(fe->Collection.get());
+    std::string collType = collTypeObj->toString();
     std::string elemType = "i32"; // TODO: better inference
     if (collType.size() > 2 && collType.substr(0, 2) == "[]")
       elemType = collType.substr(2);
@@ -1315,7 +1311,7 @@ std::string Sema::checkExprStr(Expr *E) {
         !isTypeCompatible(bodyType, elseType)) {
       error(fe, "For loop branches have incompatible types");
     }
-    return (bodyType != "void") ? bodyType : elseType;
+    return toka::Type::fromString((bodyType != "void") ? bodyType : elseType);
   } else if (auto *pe = dynamic_cast<PassExpr *>(E)) {
     // 1. Detect if this is a prefix 'pass' (wrapping a complex expression)
     bool isPrefixMatch = dynamic_cast<MatchExpr *>(pe->Value.get());
@@ -1328,7 +1324,8 @@ std::string Sema::checkExprStr(Expr *E) {
     if (isPrefixMatch || isPrefixIf || isPrefixFor || isPrefixWhile ||
         isPrefixLoop) {
       m_ControlFlowStack.push_back({"", "void", false, true});
-      valType = checkExprStr(pe->Value.get());
+      auto valTypeObj = checkExpr(pe->Value.get());
+      valType = valTypeObj->toString();
       m_ControlFlowStack.pop_back();
 
       if (valType == "void") {
@@ -1336,7 +1333,8 @@ std::string Sema::checkExprStr(Expr *E) {
       }
     } else {
       // 2. Leaf 'pass' - must have a receiver
-      valType = checkExprStr(pe->Value.get());
+      auto valTypeObj = checkExpr(pe->Value.get());
+      valType = valTypeObj->toString();
     }
 
     bool foundReceiver = false;
@@ -1361,14 +1359,16 @@ std::string Sema::checkExprStr(Expr *E) {
                 "'pass' or assign it to a variable.");
     }
 
-    return (isPrefixMatch || isPrefixIf || isPrefixFor || isPrefixWhile ||
-            isPrefixLoop)
-               ? valType
-               : "void";
+    return toka::Type::fromString((isPrefixMatch || isPrefixIf || isPrefixFor ||
+                                   isPrefixWhile || isPrefixLoop)
+                                      ? valType
+                                      : "void");
   } else if (auto *be = dynamic_cast<BreakExpr *>(E)) {
     std::string valType = "void";
-    if (be->Value)
-      valType = checkExprStr(be->Value.get());
+    if (be->Value) {
+      auto valTypeObj = checkExpr(be->Value.get());
+      valType = valTypeObj->toString();
+    }
 
     ControlFlowInfo *target = nullptr;
     if (be->TargetLabel.empty()) {
@@ -1399,18 +1399,19 @@ std::string Sema::checkExprStr(Expr *E) {
           error(be, "Break value type mismatch");
       }
     }
-    return "void";
+    return toka::Type::fromString("void");
   } else if (auto *ce = dynamic_cast<ContinueExpr *>(E)) {
     // Continue target must be a loop
-    return "void";
+    return toka::Type::fromString("void");
   } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
-    return checkCallExpr(Call)->toString();
+    return checkCallExpr(Call);
   } else if (auto *New = dynamic_cast<NewExpr *>(E)) {
     // Return the Type being created.
     // Validating the Initializer matches the Type is good (e.g.
     // InitStructExpr)
     if (New->Initializer) {
-      std::string InitType = checkExprStr(New->Initializer.get());
+      auto InitTypeObj = checkExpr(New->Initializer.get());
+      std::string InitType = InitTypeObj->toString();
       if (!isTypeCompatible(New->Type, InitType) && InitType != "unknown") {
         // InitStruct returns "StructName".
         // checkExprStr(InitStruct) returns "StructName".
@@ -1421,13 +1422,14 @@ std::string Sema::checkExprStr(Expr *E) {
     }
     // 'new' usually returns a pointer or the type itself depending on
     // context. AST just says Type. The variable decl usually says ^Type.
-    return New->Type;
+    return toka::Type::fromString(New->Type);
   } else if (auto *UnsafeE = dynamic_cast<UnsafeExpr *>(E)) {
     bool oldUnsafe = m_InUnsafeContext;
     m_InUnsafeContext = true;
-    std::string type = checkExprStr(UnsafeE->Expression.get());
+    auto typeObj = checkExpr(UnsafeE->Expression.get());
+    std::string type = typeObj->toString();
     m_InUnsafeContext = oldUnsafe;
-    return type;
+    return typeObj;
   } else if (auto *AllocE = dynamic_cast<AllocExpr *>(E)) {
     if (!m_InUnsafeContext) {
       error(AllocE, "alloc operation requires unsafe context");
@@ -1437,15 +1439,16 @@ std::string Sema::checkExprStr(Expr *E) {
     std::string baseType = AllocE->TypeName;
     if (AllocE->IsArray) {
       if (AllocE->ArraySize) {
-        checkExprStr(AllocE->ArraySize.get());
+        checkExpr(AllocE->ArraySize.get());
       }
     }
     if (AllocE->Initializer) {
-      checkExprStr(AllocE->Initializer.get());
+      checkExpr(AllocE->Initializer.get());
     }
-    return "*" + baseType;
+    return toka::Type::fromString("*" + baseType);
   } else if (auto *Met = dynamic_cast<MethodCallExpr *>(E)) {
-    std::string ObjType = resolveType(checkExprStr(Met->Object.get()));
+    auto ObjTypeObj = checkExpr(Met->Object.get());
+    std::string ObjType = resolveType(ObjTypeObj->toString());
 
     // Check for Dynamic Trait Object
     if (ObjType.size() >= 4 && ObjType.substr(0, 3) == "dyn") {
@@ -1469,7 +1472,7 @@ std::string Sema::checkExprStr(Expr *E) {
                                "' is private to trait '" + traitName + "'");
               }
             }
-            return M->ReturnType;
+            return toka::Type::fromString(M->ReturnType);
           }
         }
       }
@@ -1501,12 +1504,12 @@ std::string Sema::checkExprStr(Expr *E) {
           }
         }
       }
-      return MethodMap[soulType][Met->Method];
+      return toka::Type::fromString(MethodMap[soulType][Met->Method]);
     }
     // Check with @encap suffix as fallback
     std::string encapType = soulType + "@encap";
     if (MethodMap.count(encapType) && MethodMap[encapType].count(Met->Method)) {
-      return MethodMap[encapType][Met->Method];
+      return toka::Type::fromString(MethodMap[encapType][Met->Method]);
     }
 
     // Check if it's a reference to a struct
@@ -1514,12 +1517,12 @@ std::string Sema::checkExprStr(Expr *E) {
       std::string Pointee = ObjType.substr(1);
       std::string pSoul = getSoulName(Pointee);
       if (MethodMap.count(pSoul) && MethodMap[pSoul].count(Met->Method)) {
-        return MethodMap[pSoul][Met->Method];
+        return toka::Type::fromString(MethodMap[pSoul][Met->Method]);
       }
     }
     error(Met,
           "method '" + Met->Method + "' not found on type '" + ObjType + "'");
-    return "unknown";
+    return toka::Type::fromString("unknown");
   } else if (auto *Init = dynamic_cast<InitStructExpr *>(E)) {
     // Validate fields against ShapeMap
     if (ShapeMap.count(Init->ShapeName)) {
@@ -1569,7 +1572,8 @@ std::string Sema::checkExprStr(Expr *E) {
           continue; // Continue to find more errors
         }
 
-        std::string exprType = checkExprStr(pair.second.get());
+        std::shared_ptr<toka::Type> exprTypeObj = checkExpr(pair.second.get());
+        std::string exprType = exprTypeObj->toString();
         if (!isTypeCompatible(expectedType, exprType)) {
           error(Init, "Field '" + pair.first + "' expects type '" +
                           expectedType + "', got '" + exprType + "'");
@@ -1587,7 +1591,7 @@ std::string Sema::checkExprStr(Expr *E) {
     } else {
       error(Init, "unknown struct '" + Init->ShapeName + "'");
     }
-    return Init->ShapeName;
+    return toka::Type::fromString(Init->ShapeName);
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
     auto objTypeObj = checkExpr(Memb->Object.get());
     std::string ObjTypeFull = objTypeObj->toString();
@@ -1600,10 +1604,11 @@ std::string Sema::checkExprStr(Expr *E) {
             modSpec.ReferencedModule) {
           ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
           if (target->Functions.count(Memb->Member)) {
-            return "fn";
+            return toka::Type::fromString("fn");
           }
           if (target->Globals.count(Memb->Member)) {
-            return resolveType(target->Globals[Memb->Member]->TypeName);
+            return toka::Type::fromString(
+                resolveType(target->Globals[Memb->Member]->TypeName));
           }
         }
       }
@@ -1684,9 +1689,10 @@ std::string Sema::checkExprStr(Expr *E) {
               }
 
               if (!accessible) {
-                error(Memb,
-                      "field '" + requestedMember + "' of struct '" + ObjType +
-                          "' is private and not accessible from this context");
+                error(Memb, "field '" + requestedMember + "' of struct '" +
+                                ObjType +
+                                "' is private and not accessible from this "
+                                "context");
               }
             }
           }
@@ -1704,15 +1710,15 @@ std::string Sema::checkExprStr(Expr *E) {
           if (requestedPrefix.empty()) {
             // obj.field -> Entity (Pointer itself if it's a pointer)
             if (SD->Kind == ShapeKind::Enum) {
-              return ObjType;
+              return toka::Type::fromString(ObjType);
             }
-            return fullType;
+            return toka::Type::fromString(fullType);
           } else if (requestedPrefix == "*") {
             // obj.*field -> Identity (Address stored in the pointer)
-            return fullType;
+            return toka::Type::fromString(fullType);
           }
 
-          return fullType;
+          return toka::Type::fromString(fullType);
         }
       }
       error(Memb, "struct '" + ObjType + "' has no member named '" +
@@ -1723,15 +1729,16 @@ std::string Sema::checkExprStr(Expr *E) {
       // it. For now, accept integer members on anything resembling a tuple.
       // And return "unknown" or "i32" fallback?
       // test.tk uses .0 which is i32, .1 which is string/i32.
-      // Let's return "unknown" to suppress error but allow it to pass checks
-      // if we are lenient.
-      return "unknown";
+      // Let's return "unknown" to suppress error but allow it to pass
+      // checks if we are lenient.
+      return toka::Type::fromString("unknown");
     } else if (ObjType != "unknown") {
       error(Memb, "member access on non-struct type '" + ObjType + "'");
     }
-    return "unknown";
+    return toka::Type::fromString("unknown");
   } else if (auto *Post = dynamic_cast<PostfixExpr *>(E)) {
-    std::string lhsInfo = checkExprStr(Post->LHS.get());
+    auto lhsObj = checkExpr(Post->LHS.get());
+    std::string lhsInfo = lhsObj->toString();
     if (auto *Var = dynamic_cast<VariableExpr *>(Post->LHS.get())) {
       SymbolInfo Info;
       if (CurrentScope->lookup(Var->Name, Info) && !Info.IsMutable()) {
@@ -1746,7 +1753,7 @@ std::string Sema::checkExprStr(Expr *E) {
       if (!lhsInfo.empty() && lhsInfo.back() != '?' && lhsInfo.back() != '!')
         lhsInfo += "?";
     }
-    return lhsInfo;
+    return toka::Type::fromString(lhsInfo);
   } else if (auto *Arr = dynamic_cast<ArrayIndexExpr *>(E)) {
     if (auto *Var = dynamic_cast<VariableExpr *>(Arr->Array.get())) {
       if (ShapeMap.count(Var->Name)) {
@@ -1762,42 +1769,48 @@ std::string Sema::checkExprStr(Expr *E) {
             ElemType = SD->Members[0].Type;
 
           for (auto &idx : Arr->Indices) {
-            std::string ArgType = checkExprStr(idx.get());
+            std::shared_ptr<toka::Type> ArgTypeObj = checkExpr(idx.get());
+            std::string ArgType = ArgTypeObj->toString();
             if (!isTypeCompatible(ElemType, ArgType)) {
               error(idx.get(), "Array element type mismatch: expected '" +
                                    ElemType + "', got '" + ArgType + "'");
             }
           }
-          return Var->Name;
+          return toka::Type::fromString(Var->Name);
         }
       }
     }
 
     // Normal Array Indexing
-    std::string arrType = checkExprStr(Arr->Array.get());
+    auto arrTypeObj = checkExpr(Arr->Array.get());
     if (Arr->Indices.size() != 1) {
       error(Arr, "Array indexing expects exactly 1 index");
     }
-    checkExprStr(Arr->Indices[0].get());
-    return "unknown"; // Placeholder for element type derivation
+    checkExpr(Arr->Indices[0].get());
+    return toka::Type::fromString(
+        "unknown"); // Placeholder for element type derivation
   } else if (auto *Tup = dynamic_cast<TupleExpr *>(E)) {
     std::string s = "(";
     for (size_t i = 0; i < Tup->Elements.size(); ++i) {
       if (i > 0)
         s += ", ";
-      s += checkExprStr(Tup->Elements[i].get());
+      auto elTypeObj = checkExpr(Tup->Elements[i].get());
+      s += elTypeObj->toString();
     }
     s += ")";
-    return s;
+    return toka::Type::fromString(s);
   } else if (auto *ArrLit = dynamic_cast<ArrayExpr *>(E)) {
     // Infer from first element
     if (!ArrLit->Elements.empty()) {
-      std::string ElemTy = checkExprStr(ArrLit->Elements[0].get());
-      return "[" + ElemTy + ";" + std::to_string(ArrLit->Elements.size()) + "]";
+      auto ElemTyObj = checkExpr(ArrLit->Elements[0].get());
+      std::string ElemTy = ElemTyObj->toString();
+      return toka::Type::fromString(
+          "[" + ElemTy + ";" + std::to_string(ArrLit->Elements.size()) + "]");
     }
-    return "[i32; 0]";
+    return toka::Type::fromString("[i32; 0]");
   } else if (auto *me = dynamic_cast<MatchExpr *>(E)) {
-    std::string targetType = checkExprStr(me->Target.get());
+    auto targetTypeObj = checkExpr(me->Target.get());
+    std::string targetType = targetTypeObj->toString();
     std::string resultType = "void";
 
     bool isReceiver = false;
@@ -1809,7 +1822,8 @@ std::string Sema::checkExprStr(Expr *E) {
       enterScope();
       checkPattern(arm->Pat.get(), targetType, false);
       if (arm->Guard) {
-        if (checkExprStr(arm->Guard.get()) != "bool")
+        auto guardTypeObj = checkExpr(arm->Guard.get());
+        if (!guardTypeObj->isBoolean())
           error(arm->Guard.get(), "guard must be bool");
       }
       m_ControlFlowStack.push_back({"", "void", false, isReceiver});
@@ -1850,13 +1864,13 @@ std::string Sema::checkExprStr(Expr *E) {
       }
     }
 
-    return resultType;
+    return toka::Type::fromString(resultType);
   } else if (auto *Cast = dynamic_cast<CastExpr *>(E)) {
-    checkExprStr(Cast->Expression.get());
-    return Cast->TargetType;
+    checkExpr(Cast->Expression.get());
+    return toka::Type::fromString(Cast->TargetType);
   }
 
-  return "unknown";
+  return toka::Type::fromString("unknown");
 }
 
 std::string Sema::resolveType(const std::string &Type) {
@@ -1929,7 +1943,8 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   if (!Target || !Source)
     return false;
 
-  // Unknown/Unresolved types are compatible with everything (Error Recovery)
+  // Unknown/Unresolved types are compatible with everything (Error
+  // Recovery)
   if (Target->isUnknown() || Source->isUnknown())
     return true;
 
@@ -2039,15 +2054,16 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
 
   // 2. Nullability Covariance: T is compatible with T?
   // (A non-null value can be assigned to a nullable slot)
-  // Check if Target is Nullable (Implicitly via name/attribute or Explicitly
+  // Check if Target is Nullable (Implicitly via name/attribute or
+  // Explicitly
   // ?)
   bool targetNullable = Target->IsNullable;
   // Should check specific pointer types too, but let's look at the objects.
 
   // 3. Implicit Dereference (Reference -> Value)
   // If Source is Reference (&T) and Target is Value (T), allow if T is
-  // compat. Note: Sema doesn't strictly track "is copyable" yet, so we allow
-  // it generically. CodeGen handles the load.
+  // compat. Note: Sema doesn't strictly track "is copyable" yet, so we
+  // allow it generically. CodeGen handles the load.
   if (auto refS = std::dynamic_pointer_cast<toka::ReferenceType>(S)) {
     // Check if Target is NOT a reference
     if (!std::dynamic_pointer_cast<toka::ReferenceType>(T)) {
@@ -2124,11 +2140,11 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
     }
   }
 
-  // NOTE: Trait coercion (dyn) is omitted for briefness/complexity, will rely
-  // upon resolveType logic or add later. The original string logic had it.
-  // For Coexistence, we might skip it if not used in current tests, OR add
-  // it. Original logic checked string "dyn". `Type::fromString` parses "dyn
-  // Shape" as ShapeType("dyn Shape")? No, `dyn @Shape`. `fromString`
+  // NOTE: Trait coercion (dyn) is omitted for briefness/complexity, will
+  // rely upon resolveType logic or add later. The original string logic had
+  // it. For Coexistence, we might skip it if not used in current tests, OR
+  // add it. Original logic checked string "dyn". `Type::fromString` parses
+  // "dyn Shape" as ShapeType("dyn Shape")? No, `dyn @Shape`. `fromString`
   // fallback: ShapeType("dyn @Shape"). So we can check name.
 
   // Use core compatibility (Source flows to Target)
@@ -2250,10 +2266,10 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
             props.HasDrop = true;
         }
 
-        // Also check if type T has 'drop' method itself (encap) even if not a
-        // Shape recursion? This is covered by "if T has drop method, then
-        // HasDrop=true". We check: does T have a "drop" method? Iterate Impls
-        // again?
+        // Also check if type T has 'drop' method itself (encap) even if not
+        // a Shape recursion? This is covered by "if T has drop method, then
+        // HasDrop=true". We check: does T have a "drop" method? Iterate
+        // Impls again?
         bool memberTypeHasExplicitDrop = false;
         for (auto &I : M.Impls) {
           if (I->TypeName == baseType) {
@@ -2275,20 +2291,6 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
 }
 
 // Stage 4: Object-Oriented Shims
-std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
-  if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) {
-    return checkBinaryExpr(Bin);
-  }
-  if (auto *Idx = dynamic_cast<ArrayIndexExpr *>(E)) {
-    return checkIndexExpr(Idx);
-  }
-  if (auto *Call = dynamic_cast<CallExpr *>(E)) {
-    return checkCallExpr(Call); // Stage 5c
-  }
-  std::string typeStr = checkExprStr(E);
-  return toka::Type::fromString(typeStr);
-}
-
 std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   auto rhsType = checkExpr(Unary->RHS.get());
   // Assuming checkExpr returns object now.
@@ -2353,8 +2355,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
                   "cannot move '" + Var->Name + "' while it is borrowed");
           }
           // Move Semantics: Return value is the variable's value
-          // (UniquePointerType), not wrapped again. If we are moving a ^Data,
-          // the result expression type is ^Data.
+          // (UniquePointerType), not wrapped again. If we are moving a
+          // ^Data, the result expression type is ^Data.
           return rhsType;
         } else if (Unary->Op == TokenType::Tilde) {
           if (rhsType->isSharedPtr()) {
@@ -2730,10 +2732,10 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       // Static Method
       if (MethodMap.count(ShapeName) &&
           MethodMap[ShapeName].count(VariantName)) {
-        // We don't have full signature for static methods in MethodMap (just
-        // return string) For Stage 5, we check args as expressions but CANNOT
-        // verify arity/types strictly yet unless we store Method Decl via
-        // visitShapeDecl. Existing legacy logic just returned
+        // We don't have full signature for static methods in MethodMap
+        // (just return string) For Stage 5, we check args as expressions
+        // but CANNOT verify arity/types strictly yet unless we store Method
+        // Decl via visitShapeDecl. Existing legacy logic just returned
         // MethodMap[ShapeName][VariantName].
         for (auto &Arg : Call->Args)
           checkExpr(Arg.get());
@@ -2746,8 +2748,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
           if (Memb.Name == VariantName) {
             // Enum Variant Constructor: Variant(Args...) -> ShapeName
             // We need Memb's type to verify arg?
-            // Members in Enum are Variants. If Variant has payload, its Type is
-            // the payload type? Checking args...
+            // Members in Enum are Variants. If Variant has payload, its
+            // Type is the payload type? Checking args...
             for (auto &Arg : Call->Args)
               checkExpr(Arg.get());
             return toka::Type::fromString(ShapeName);
@@ -2784,8 +2786,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
     // Usually Functions are Global. But maybe local closure in future?
     // For now, look in ModuleMap
     // Current Module Context?
-    // Legacy logic looked in GlobalFunctions and ExternMap directly if local
-    // lookup failed? Actually legacy checks GlobalFunctions list.
+    // Legacy logic looked in GlobalFunctions and ExternMap directly if
+    // local lookup failed? Actually legacy checks GlobalFunctions list.
 
     // Let's iterate GlobalFunctions
     for (auto *GF : GlobalFunctions) {
