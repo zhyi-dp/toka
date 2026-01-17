@@ -33,11 +33,13 @@ void parseSource(const std::string &filename,
   // Check recursion stack for circular dependency
   for (const auto &f : recursionStack) {
     if (f == filename) {
-      std::cerr << "Circular dependency detected: ";
+      std::string chain;
       for (const auto &s : recursionStack)
-        std::cerr << s << " -> ";
-      std::cerr << filename << "\n";
-      exit(1);
+        chain += s + " -> ";
+      chain += filename;
+      toka::DiagnosticEngine::report(toka::DiagLoc{}, toka::DiagID::ERR_FILE_IO,
+                                     "Circular dependency detected: " + chain);
+      return;
     }
   }
 
@@ -81,7 +83,8 @@ void parseSource(const std::string &filename,
   }
 
   if (!found) {
-    std::cerr << filename << ":0:0: error: could not open file\n";
+    toka::DiagnosticEngine::report(toka::DiagLoc{}, toka::DiagID::ERR_FILE_IO,
+                                   "Could not open file: " + filename);
     return;
   }
 
@@ -89,8 +92,9 @@ void parseSource(const std::string &filename,
 
   toka::SourceLocation startLoc = sm.loadFile(resolvedPath);
   if (startLoc.isInvalid()) {
-    std::cerr << "Failed to load file via SourceManager: " << resolvedPath
-              << "\n";
+    toka::DiagnosticEngine::report(toka::DiagLoc{}, toka::DiagID::ERR_FILE_IO,
+                                   "Failed to load file via SourceManager: " +
+                                       resolvedPath);
     return;
   }
   std::string code(sm.getBufferData(startLoc));

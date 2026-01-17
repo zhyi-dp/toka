@@ -67,7 +67,7 @@ std::unique_ptr<MatchArm::Pattern> Parser::parsePattern() {
     auto p = std::make_unique<MatchArm::Pattern>(MatchArm::Pattern::Variable);
     p->Name = name;
     p->IsReference = isRef;
-    p->IsMutable = nameTok.HasWrite;
+    p->IsValueMutable = nameTok.HasWrite;
     return p;
   }
 
@@ -423,8 +423,10 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
 
       auto var = std::make_unique<VariableExpr>(name.Text);
       var->setLocation(name, m_CurrentFile);
-      var->IsMutable = name.HasWrite;
-      var->IsNullable = name.HasNull;
+      // var->IsMutable = name.HasWrite; // Deprecated
+      // var->IsNullable = name.HasNull; // Deprecated
+      var->IsValueMutable = name.HasWrite;
+      var->IsValueNullable = name.HasNull;
       expr = std::move(var);
     }
   } else {

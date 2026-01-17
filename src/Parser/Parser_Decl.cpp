@@ -197,7 +197,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
         arg.HasPointer = false;
         // Capture mutability from token (e.g. self#)
         if (previous().HasWrite) {
-          arg.IsMutable = true;
+          // arg.IsMutable = true; // Deprecated
           arg.IsValueMutable = true;
         }
         args.push_back(arg);
@@ -247,8 +247,9 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
       arg.Type = argType;
       arg.HasPointer = hasPointer;
       arg.IsReference = isRef;
-      arg.IsMutable = argName.HasWrite;
-      arg.IsNullable = argName.HasNull;
+      arg.IsReference = isRef;
+      // arg.IsMutable = argName.HasWrite; // Deprecated
+      // arg.IsNullable = argName.HasNull; // Deprecated
 
       // New Permissions
       arg.IsUnique = isUnique;
@@ -324,8 +325,8 @@ std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
       arg.Name = argName.Text;
       arg.Type = argType;
       arg.HasPointer = hasPointer;
-      arg.IsMutable = argName.HasWrite;
-      arg.IsNullable = argName.HasNull;
+      arg.IsValueMutable = argName.HasWrite;
+      arg.IsValueNullable = argName.HasNull;
       args.push_back(std::move(arg));
     } while (match(TokenType::Comma));
   }

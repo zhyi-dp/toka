@@ -1,9 +1,9 @@
 #include "toka/Parser.h"
+#include <algorithm>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <algorithm>
 
 namespace toka {
 
@@ -92,8 +92,8 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
   node->IsReference = isRef;
   node->IsPub = isPub;
   node->IsConst = isConst;
-  node->IsMutable = name.HasWrite; // Value Mutable
-  node->IsNullable = name.HasNull; // Value Nullable
+  // node->IsMutable = name.HasWrite; // Deprecated
+  // node->IsNullable = name.HasNull; // Deprecated
   // Explicit properties mapping
   node->IsValueMutable = name.HasWrite;
   node->IsValueNullable = name.HasNull;
@@ -210,6 +210,5 @@ std::unique_ptr<Stmt> Parser::parseFreeStmt() {
   node->setLocation(tok, m_CurrentFile);
   return node;
 }
-
 
 } // namespace toka

@@ -303,10 +303,10 @@ void Sema::checkStmt(Stmt *S) {
       Info.TypeObj = innerObj;
     }
 
-    if (Var->IsRebindable || Var->IsValueMutable || Var->IsMutable) {
+    if (Var->IsRebindable || Var->IsValueMutable || Var->IsValueMutable) {
       Info.TypeObj->IsWritable = true;
     }
-    if (Var->IsPointerNullable || Var->IsValueNullable || Var->IsNullable) {
+    if (Var->IsPointerNullable || Var->IsValueNullable) {
       Info.TypeObj->IsNullable = true;
     }
 
@@ -361,9 +361,9 @@ void Sema::checkStmt(Stmt *S) {
         // Simple type for destructuring vars (usually primitives or basic
         // shapes)
         std::string fullType = SD->Members[i].Type;
-        if (Destruct->Variables[i].IsMutable)
+        if (Destruct->Variables[i].IsValueMutable)
           fullType += "#";
-        if (Destruct->Variables[i].IsNullable)
+        if (Destruct->Variables[i].IsValueNullable)
           fullType += "?";
         Info.TypeObj = toka::Type::fromString(fullType);
 
@@ -373,9 +373,9 @@ void Sema::checkStmt(Stmt *S) {
       for (const auto &Var : Destruct->Variables) {
         SymbolInfo Info;
         std::string fullType = "i32"; // Fallback
-        if (Var.IsMutable)
+        if (Var.IsValueMutable)
           fullType += "#";
-        if (Var.IsNullable)
+        if (Var.IsValueNullable)
           fullType += "?";
         Info.TypeObj = toka::Type::fromString(fullType);
 

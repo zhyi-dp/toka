@@ -47,9 +47,9 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
         typeObj = Type::fromString(arg.Type);
 
         // Permission Decorators (AST overrides Type string if present)
-        if (arg.IsMutable)
+        if (arg.IsValueMutable)
           typeObj = typeObj->withAttributes(true, typeObj->IsNullable);
-        if (arg.IsNullable || arg.IsPointerNullable)
+        if (arg.IsValueNullable || arg.IsPointerNullable)
           typeObj = typeObj->withAttributes(typeObj->IsWritable, true);
 
         // [Fix] Apply AST-level Morphology wrappers (Pointer, Unique,
@@ -88,9 +88,10 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
       // Checking Type.h: isPointer() covers Raw, Unique, Shared, Reference.
 
       // [Fix] Enable Capture for Unique Pointers
-      bool needsCapture = (isDirectValue && (isAggregate || arg.IsMutable ||
-                                             arg.IsRebindable)) ||
-                          arg.IsUnique || arg.IsShared;
+      bool needsCapture =
+          (isDirectValue &&
+           (isAggregate || arg.IsValueMutable || arg.IsRebindable)) ||
+          arg.IsUnique || arg.IsShared;
 
       // [ABI Fix] Shared Pointers must be passed by Single Pointer (Reference
       // to Handle) to avoid ABI dissecting the struct {ptr, ptr} across
@@ -141,8 +142,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     std::shared_ptr<Type> typeObj;
 
     // Lift scope for these flags so loop logic can use them later
-    bool isMutable = argDecl.IsMutable || argDecl.IsValueMutable;
-    bool isNullable = argDecl.IsNullable || argDecl.IsPointerNullable;
+    bool isMutable = argDecl.IsValueMutable;
+    bool isNullable = argDecl.IsValueNullable || argDecl.IsPointerNullable;
 
     if (argDecl.ResolvedType) {
       typeObj = argDecl.ResolvedType;
@@ -171,9 +172,10 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     // [Restored Logic] Implicit Capture (ABI) - Body
     bool isAggregate = allocaType->isStructTy() || allocaType->isArrayTy();
     bool isDirectValue = !typeObj->isPointer() && !typeObj->isReference();
-    bool needsCapture = (isDirectValue && (isAggregate || argDecl.IsMutable ||
-                                           argDecl.IsRebindable)) ||
-                        argDecl.IsUnique || argDecl.IsShared;
+    bool needsCapture =
+        (isDirectValue &&
+         (isAggregate || argDecl.IsValueMutable || argDecl.IsRebindable)) ||
+        argDecl.IsUnique || argDecl.IsShared;
 
     if (needsCapture) {
       // Argument passed by pointer
@@ -707,8 +709,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   TokaSymbol sym;
   sym.allocaPtr = alloca;
   fillSymbolMetadata(sym, var->TypeName, var->HasPointer, var->IsUnique,
-                     var->IsShared, var->IsReference, var->IsMutable,
-                     var->IsNullable || var->IsPointerNullable, elemTy);
+                     var->IsShared, var->IsReference, var->IsValueMutable,
+                     var->IsValueNullable || var->IsPointerNullable, elemTy);
   sym.isRebindable = var->IsRebindable;
   sym.isContinuous =
       (elemTy && elemTy->isArrayTy()) ||
@@ -722,7 +724,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   // m_ValueIsUnique[varName] = var->IsUnique;
   // m_ValueIsShared[varName] = var->IsShared;
   // m_ValueIsReference[varName] = var->IsReference;
-  // m_ValueIsMutable[varName] = var->IsMutable;
+  // m_ValueIsMutable[varName] = var->IsValueMutable;
 
   // [Fix] Shared Pointer Init RC Logic
   // Distinguish Copy (LValue) vs Transfer (RValue)
@@ -943,8 +945,8 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     TokaSymbol sym;
     sym.allocaPtr = alloca;
     // For destructuring, metadata is often already flattened
-    fillSymbolMetadata(sym, "", false, false, false, false, v.IsMutable,
-                       v.IsNullable, ty);
+    fillSymbolMetadata(sym, "", false, false, false, false, v.IsValueMutable,
+                       v.IsValueNullable, ty);
     sym.typeName = deducedType; // Set typeName in symbol
     sym.isRebindable = false;
     sym.isContinuous = ty->isArrayTy();
@@ -1019,8 +1021,8 @@ void CodeGen::genGlobal(const Stmt *stmt) {
     TokaSymbol sym;
     sym.allocaPtr = globalVar;
     fillSymbolMetadata(sym, var->TypeName, var->HasPointer, var->IsUnique,
-                       var->IsShared, var->IsReference, var->IsMutable,
-                       var->IsNullable || var->IsPointerNullable, type);
+                       var->IsShared, var->IsReference, var->IsValueMutable,
+                       var->IsValueNullable || var->IsPointerNullable, type);
     sym.isRebindable = var->IsRebindable;
     sym.isContinuous = type->isArrayTy();
     m_Symbols[var->Name] = sym;
@@ -1393,7 +1395,7 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
   bool selfIsMutable = false;
   if (fd && !fd->Args.empty()) {
     // Arg 0 is self
-    if (fd->Args[0].IsMutable)
+    if (fd->Args[0].IsValueMutable)
       selfIsMutable = true;
   }
   // Fallback: Check LLVM Arg Type
@@ -1440,7 +1442,7 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
     bool isMutable = false;
     // Arg i maps to fd->Args[i+1]
     if (fd && i + 1 < fd->Args.size()) {
-      isMutable = fd->Args[i + 1].IsMutable;
+      isMutable = fd->Args[i + 1].IsValueMutable;
     }
 
     llvm::Value *argVal = nullptr;

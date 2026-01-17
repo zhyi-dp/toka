@@ -1052,7 +1052,7 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
       SymbolInfo *Info = nullptr;
       if (CurrentScope->findSymbol(Var->Name, Info)) {
         if (Unary->Op == TokenType::Ampersand) {
-          bool wantMutable = Var->IsMutable;
+          bool wantMutable = Var->IsValueMutable;
           if (wantMutable) {
             if (!Info->IsMutable()) {
               error(Unary, "cannot mutably borrow immutable variable '" +
@@ -1077,7 +1077,7 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           auto innerType =
               Info->TypeObj ? Info->TypeObj
                             : toka::Type::fromString(Info->TypeObj->toString());
-          bool innerWritable = Info->IsMutable() || Var->IsMutable;
+          bool innerWritable = Info->IsMutable() || Var->IsValueMutable;
           innerType =
               innerType->withAttributes(innerWritable, innerType->IsNullable);
           auto refType = std::make_shared<toka::ReferenceType>(innerType);
@@ -1292,7 +1292,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         if (InfoPtr->IsMutablyBorrowed || InfoPtr->ImmutableBorrowCount > 0) {
           error(Bin, "cannot modify '" + Var->Name + "' while it is borrowed");
         }
-        if (InfoPtr->IsMutable() || Var->IsMutable)
+        if (InfoPtr->IsMutable() || Var->IsValueMutable)
           isLHSWritable = true;
       }
     } else if (auto *Un = dynamic_cast<UnaryExpr *>(Traverse)) {

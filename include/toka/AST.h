@@ -85,13 +85,13 @@ public:
   bool HasPointer = false;
   bool IsUnique = false;
   bool IsShared = false;
-  bool IsMutable = false;
-  bool IsNullable = false;
+  bool IsValueMutable = false;
+  bool IsValueNullable = false;
 
   VariableExpr(const std::string &name) : Name(name) {}
   std::string toString() const override {
     return std::string("Var(") + (HasPointer ? "^" : "") + Name +
-           (IsMutable ? "#" : "") + ")";
+           (IsValueMutable ? "#" : "") + ")";
   }
 };
 
@@ -365,7 +365,7 @@ public:
     std::string Name;        // For Variable/Decons (e.g., "Maybe::One")
     uint64_t LiteralVal = 0; // For Literal
     bool IsReference = false;
-    bool IsMutable = false;
+    bool IsValueMutable = false;
     std::vector<std::unique_ptr<Pattern>> SubPatterns; // For Decons
 
     Pattern(Kind k) : PatternKind(k) {}
@@ -374,7 +374,7 @@ public:
       case Literal:
         return std::to_string(LiteralVal);
       case Variable:
-        return (IsReference ? "&" : "") + Name + (IsMutable ? "#" : "");
+        return (IsReference ? "&" : "") + Name + (IsValueMutable ? "#" : "");
       case Decons: {
         std::string s = Name + "(";
         for (size_t i = 0; i < SubPatterns.size(); ++i) {
@@ -538,8 +538,8 @@ using MatchStmt = MatchExpr;
 
 struct DestructuredVar {
   std::string Name;
-  bool IsMutable = false;
-  bool IsNullable = false;
+  bool IsValueMutable = false;
+  bool IsValueNullable = false;
 };
 
 class DestructuringDecl : public Stmt {
@@ -572,10 +572,6 @@ public:
   bool IsValueMutable = false;    // Identifier Attribute # (p#)
   bool IsPointerNullable = false; // Pointer Attribute ? (^?p)
   bool IsValueNullable = false;   // Identifier Attribute ? (p?)
-
-  // Deprecated/Legacy
-  bool IsMutable = false;
-  bool IsNullable = false;
 
   VariableDecl(const std::string &name, std::unique_ptr<Expr> init)
       : Name(name), Init(std::move(init)) {}
@@ -689,10 +685,8 @@ public:
     bool IsUnique = false;
     bool IsShared = false;
     bool IsReference = false;
-    bool IsMutable = false;  // Deprecated
-    bool IsNullable = false; // Deprecated
 
-    // New Permissions
+    // Permissions
     bool IsRebindable = false;
     bool IsValueMutable = false;
     bool IsPointerNullable = false;
@@ -724,8 +718,6 @@ public:
     std::string Type;
     bool HasPointer = false;
     bool IsReference = false;
-    bool IsMutable = false;
-    bool IsNullable = false;
 
     // New Permissions match FunctionDecl
     bool IsUnique = false;

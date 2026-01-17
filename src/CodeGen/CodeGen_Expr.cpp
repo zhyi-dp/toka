@@ -1709,7 +1709,7 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
     sym.allocaPtr = alloca;
     // For pattern bindings, metadata is often already inferred by Sema
     fillSymbolMetadata(sym, "", false, false, false, pat->IsReference,
-                       pat->IsMutable, false, targetType);
+                       pat->IsValueMutable, false, targetType);
     sym.isRebindable = false;
     sym.isContinuous = targetType->isArrayTy();
     m_Symbols[pName] = sym;

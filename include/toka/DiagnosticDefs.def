@@ -64,3 +64,8 @@ DIAG(ERR_GENERIC_PARSE,      Error, "Parse error in generic parameter: {}")
 
 // --- Warnings ---
 DIAG(WARN_CODEGEN_UNRESOLVED, Warning, "Unresolved member type for '{}'; defaulting to i32")
+
+// --- System & CLI ---
+DIAG(ERR_FILE_IO,            Error, "File I/O Error: {}")
+DIAG(ERR_CLI_ARG,            Error, "Invalid command line argument: {}")
+

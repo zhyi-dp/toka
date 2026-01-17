@@ -506,9 +506,9 @@ void Sema::checkFunction(FunctionDecl *Fn) {
     fullType += baseType;
     if (Arg.IsRebindable)
       fullType += "!";
-    if (Arg.IsValueMutable || Arg.IsMutable)
+    if (Arg.IsValueMutable)
       fullType += "#";
-    if (Arg.IsPointerNullable || Arg.IsValueNullable || Arg.IsNullable)
+    if (Arg.IsPointerNullable || Arg.IsValueNullable)
       fullType += "?";
 
     // [New] Annotated AST: Use resolveType (string version) to handle
