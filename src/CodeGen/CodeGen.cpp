@@ -13,6 +13,7 @@
 // limitations under the License.
 #include "toka/CodeGen.h"
 #include "toka/DiagnosticEngine.h"
+#include "toka/SourceManager.h"
 #include <cctype>
 #include <iostream>
 #include <set>
@@ -215,12 +216,9 @@ void CodeGen::error(const ASTNode *node, const std::string &message) {
   // but for now let's just delegate reporting.
 
   if (node) {
-    DiagnosticEngine::report(
-        {node->FileName.empty() ? "<unknown>" : node->FileName, node->Line,
-         node->Column},
-        DiagID::ERR_GENERIC_CODEGEN, message);
+    DiagnosticEngine::report(node->Loc, DiagID::ERR_GENERIC_CODEGEN, message);
   } else {
-    DiagnosticEngine::report({"<unknown>", 0, 0}, DiagID::ERR_GENERIC_CODEGEN,
+    DiagnosticEngine::report(SourceLocation{}, DiagID::ERR_GENERIC_CODEGEN,
                              message);
   }
 }

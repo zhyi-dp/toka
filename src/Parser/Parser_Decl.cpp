@@ -157,7 +157,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
   auto decl = std::make_unique<ShapeDecl>(isPub, name.Text, kind,
                                           std::move(members), packed);
   decl->ArraySize = arraySize;
-  decl->FileName = m_CurrentFile;
+  // decl->FileName = m_CurrentFile;
   decl->setLocation(name, m_CurrentFile);
   return decl;
 }

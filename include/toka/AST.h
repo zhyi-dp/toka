@@ -24,18 +24,12 @@ namespace toka {
 
 class ASTNode {
 public:
-  int Line = 0;
-  int Column = 0;
-  std::string FileName;
   SourceLocation Loc;
 
   virtual ~ASTNode() = default;
   virtual std::string toString() const = 0;
 
   void setLocation(const Token &tok, const std::string &file = "") {
-    Line = tok.Line;
-    Column = tok.Column;
-    FileName = file;
     Loc = tok.Loc;
   }
 };
@@ -791,9 +785,8 @@ public:
   }
 };
 
-class Module {
+class Module : public ASTNode {
 public:
-  std::string FileName;
   std::vector<std::unique_ptr<ImportDecl>> Imports;
   std::vector<std::unique_ptr<TypeAliasDecl>> TypeAliases;
   std::vector<std::unique_ptr<ShapeDecl>> Shapes;
@@ -802,6 +795,8 @@ public:
   std::vector<std::unique_ptr<TraitDecl>> Traits;
   std::vector<std::unique_ptr<ExternDecl>> Externs;
   std::vector<std::unique_ptr<FunctionDecl>> Functions;
+
+  std::string toString() const override { return "Module"; }
 };
 
 } // namespace toka

@@ -71,8 +71,7 @@ void Parser::expectEndOfStatement() {
     }
     return;
   }
-  DiagnosticEngine::report({m_CurrentFile, peek().Line, peek().Column},
-                           DiagID::ERR_EXPECTED_SEMI);
+  DiagnosticEngine::report(peek().Loc, DiagID::ERR_EXPECTED_SEMI);
   std::exit(1);
 }
 
@@ -127,14 +126,20 @@ bool Parser::isEndOfStatement() {
 }
 
 void Parser::error(const Token &tok, const std::string &message) {
-  DiagnosticEngine::report({m_CurrentFile, tok.Line, tok.Column},
-                           DiagID::ERR_GENERIC_PARSE, message);
+  DiagnosticEngine::report(tok.Loc, DiagID::ERR_GENERIC_PARSE, message);
   std::exit(1);
 }
 
 std::unique_ptr<Module> Parser::parseModule() {
   auto module = std::make_unique<Module>();
-  module->FileName = m_CurrentFile;
+  // module->FileName = m_CurrentFile;
+  if (peek().Kind != TokenType::EndOfFile) {
+    module->Loc = peek().Loc;
+  } else {
+    // Empty file, usage might be tricky, but we should still have valid loc
+    // from EOF token
+    module->Loc = peek().Loc;
+  }
 
   while (peek().Kind != TokenType::EndOfFile) {
     std::cerr << "Parsing Top Level: " << peek().toString() << " at line "
@@ -155,15 +160,13 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->TypeAliases.push_back(parseTypeAliasDecl(isPub));
     } else if (check(TokenType::KwExtern)) {
       if (isPub) {
-        DiagnosticEngine::report({m_CurrentFile, peek().Line, peek().Column},
-                                 DiagID::ERR_EXTERN_PUB);
+        DiagnosticEngine::report(peek().Loc, DiagID::ERR_EXTERN_PUB);
         std::exit(1);
       }
       module->Externs.push_back(parseExternDecl());
     } else if (check(TokenType::KwImpl)) {
       if (isPub) {
-        DiagnosticEngine::report({m_CurrentFile, peek().Line, peek().Column},
-                                 DiagID::ERR_IMPL_PUB);
+        DiagnosticEngine::report(peek().Loc, DiagID::ERR_IMPL_PUB);
         std::exit(1);
       }
       module->Impls.push_back(parseImpl());
@@ -176,8 +179,7 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->Shapes.push_back(parseShape(isPub));
     } else {
       if (isPub) {
-        DiagnosticEngine::report({m_CurrentFile, peek().Line, peek().Column},
-                                 DiagID::ERR_EXPECTED_DECL);
+        DiagnosticEngine::report(peek().Loc, DiagID::ERR_EXPECTED_DECL);
         std::exit(1);
       }
       std::cerr << "Unexpected Top Level Token: " << peek().toString() << "\n";

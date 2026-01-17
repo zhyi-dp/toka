@@ -1,6 +1,7 @@
 #include "toka/AST.h"
 #include "toka/DiagnosticEngine.h"
 #include "toka/Sema.h"
+#include "toka/SourceManager.h"
 #include "toka/Type.h"
 #include <algorithm>
 #include <iostream>
@@ -565,10 +566,22 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           if (M->Name == Met->Method) {
             if (!M->IsPub) {
               bool sameModule = false;
-              if (CurrentModule && CurrentModule->FileName == TD->FileName) {
-                sameModule = true; // Simplified same-file check
+              if (CurrentModule) {
+                std::string modFile = DiagnosticEngine::SrcMgr
+                                          ->getFullSourceLoc(CurrentModule->Loc)
+                                          .FileName;
+                std::string tdDeclFile =
+                    DiagnosticEngine::SrcMgr->getFullSourceLoc(TD->Loc)
+                        .FileName;
+                if (modFile == tdDeclFile) {
+                  sameModule = true;
+                }
               }
-              if (Met->FileName != TD->FileName && !sameModule) {
+              std::string metCallFile =
+                  DiagnosticEngine::SrcMgr->getFullSourceLoc(Met->Loc).FileName;
+              std::string tdDeclFile =
+                  DiagnosticEngine::SrcMgr->getFullSourceLoc(TD->Loc).FileName;
+              if (metCallFile != tdDeclFile && !sameModule) {
                 error(Met, "method '" + Met->Method +
                                "' is private to trait '" + traitName + "'");
               }
@@ -590,18 +603,25 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           // FIXME: This logic should match checkCallExpr's relaxed check
           // (Same Module)
           bool sameModule = false;
-          if (CurrentModule && CurrentModule->FileName == FD->FileName) {
-            sameModule = true;
-          } else if (CurrentModule) {
-            // Weak check for same module via paths?
-            // For now, strict file check or explicitly public is enough for
-            // "private" If we are in std/string and calling String methods,
-            // likely ok.
+          if (CurrentModule) {
+            std::string modFile =
+                DiagnosticEngine::SrcMgr->getFullSourceLoc(CurrentModule->Loc)
+                    .FileName;
+            std::string fdFile =
+                DiagnosticEngine::SrcMgr->getFullSourceLoc(FD->Loc).FileName;
+            if (modFile == fdFile) {
+              sameModule = true;
+            }
           }
 
-          if (Met->FileName != FD->FileName && !sameModule) {
+          std::string metCallFile =
+              DiagnosticEngine::SrcMgr->getFullSourceLoc(Met->Loc).FileName;
+          std::string fdDeclFile =
+              DiagnosticEngine::SrcMgr->getFullSourceLoc(FD->Loc).FileName;
+
+          if (metCallFile != fdDeclFile && !sameModule) {
             error(Met, "method '" + Met->Method + "' is private to '" +
-                           FD->FileName + "'");
+                           fdDeclFile + "'");
           }
         }
       }
@@ -630,21 +650,37 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       ShapeDecl *SD = ShapeMap[Init->ShapeName];
 
       // Visibility Check:
-      if (!SD->IsPub && SD->FileName != Init->FileName) {
+      std::string sdFile =
+          DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc).FileName;
+      std::string initFile =
+          DiagnosticEngine::SrcMgr->getFullSourceLoc(Init->Loc).FileName;
+
+      if (!SD->IsPub && sdFile != initFile) {
         // Relaxed privacy check: allow calls within the same module,
         // regardless of file.
         bool sameModule = false;
         if (CurrentModule && !CurrentModule->Shapes.empty()) {
           for (const auto &shapeInModule : CurrentModule->Shapes) {
-            if (shapeInModule->FileName == SD->FileName) {
-              sameModule = true;
+            if (DiagnosticEngine::SrcMgr->getFullSourceLoc(shapeInModule->Loc)
+                    .FileName == sdFile) {
+              if (CurrentModule) {
+                std::string modFile = DiagnosticEngine::SrcMgr
+                                          ->getFullSourceLoc(CurrentModule->Loc)
+                                          .FileName;
+                std::string fdFile =
+                    DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc)
+                        .FileName; // Should be SD->Loc, not FD->Loc
+                if (modFile == fdFile) {
+                  sameModule = true;
+                }
+              }
               break;
             }
           }
         }
         if (!sameModule) {
           DiagnosticEngine::report(getLoc(Init), DiagID::ERR_PRIVATE_TYPE,
-                                   Init->ShapeName, SD->FileName);
+                                   Init->ShapeName, sdFile);
           HasError = true;
         }
       }
@@ -759,7 +795,12 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       for (const auto &Field : SD->Members) {
         if (Field.Name == requestedMember) {
           // Visibility Check: God-eye view (same file)
-          if (Memb->FileName != SD->FileName) {
+          std::string membFile =
+              DiagnosticEngine::SrcMgr->getFullSourceLoc(Memb->Loc).FileName;
+          std::string sdFile =
+              DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc).FileName;
+
+          if (membFile != sdFile) {
             // Check EncapMap
             if (EncapMap.count(ObjType)) {
               bool accessible = false;
@@ -788,8 +829,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                   } else if (entry.Level == EncapEntry::Crate) {
                     accessible = true;
                   } else if (entry.Level == EncapEntry::Path) {
-                    if (Memb->FileName.find(entry.TargetPath) !=
-                        std::string::npos) {
+                    if (membFile.find(entry.TargetPath) != std::string::npos) {
                       accessible = true;
                     }
                   }

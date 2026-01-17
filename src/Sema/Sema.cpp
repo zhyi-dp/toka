@@ -13,6 +13,7 @@
 // limitations under the License.
 #include "toka/Sema.h"
 #include "toka/DiagnosticEngine.h"
+#include "toka/SourceManager.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cctype>
@@ -96,8 +97,10 @@ void Sema::clearStmtBorrows() {
 void Sema::registerGlobals(Module &M) {
 
   // Initialize ModuleScope
-  ModuleScope &ms = ModuleMap[M.FileName];
-  ms.Name = M.FileName;
+  std::string fileName =
+      DiagnosticEngine::SrcMgr->getFullSourceLoc(M.Loc).FileName;
+  ModuleScope &ms = ModuleMap[fileName];
+  ms.Name = fileName;
   // Simple name extraction (e.g. std/io.tk -> io)
   size_t lastSlash = ms.Name.find_last_of('/');
   if (lastSlash != std::string::npos) {
