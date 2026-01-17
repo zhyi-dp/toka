@@ -7,6 +7,9 @@ DIAG(ERR_MODULE_NOT_FOUND,   Error, "Module '{}' not found")
 DIAG(ERR_SYMBOL_NOT_FOUND,   Error, "Symbol '{}' not found in module '{}'")
 DIAG(ERR_PRIVATE_TYPE,       Error, "Shape '{}' is private and cannot be accessed from module '{}'")
 
+// --- Sema: Checking ---
+DIAG(ERR_GENERIC_SEMA,       Error, "{}")
+
 // --- Sema: Type Checking & Operations ---
 DIAG(ERR_TYPE_MISMATCH,      Error, "Cannot convert type '{}' to '{}'")
 DIAG(ERR_INIT_TYPE_MISMATCH, Error, "Cannot initialize variable of type '{}' with value of type '{}'")

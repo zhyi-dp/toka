@@ -12,10 +12,7 @@
 
 namespace toka {
 
-static SourceLocation getLoc(ASTNode *Node) {
-  return {Node->FileName.empty() ? "<unknown>" : Node->FileName, Node->Line,
-          Node->Column};
-}
+static SourceLocation getLoc(ASTNode *Node) { return Node->Loc; }
 
 static bool isLValue(const Expr *expr) {
   if (dynamic_cast<const VariableExpr *>(expr))

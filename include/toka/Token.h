@@ -13,6 +13,7 @@
 // limitations under the License.
 #pragma once
 
+#include "toka/SourceLocation.h"
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -150,6 +151,7 @@ struct Token {
   std::string Text; // Or string_view if source is kept alive
   int Line;
   int Column;
+  SourceLocation Loc;
 
   // Attribute flags for identifiers (e.g. if identifier is "x#")
   bool HasWrite = false;

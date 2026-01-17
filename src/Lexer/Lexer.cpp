@@ -78,7 +78,8 @@ static std::unordered_map<std::string, TokenType> Keywords = {
     {"alloc", TokenType::KwAlloc},
     {"free", TokenType::KwFree}};
 
-Lexer::Lexer(const char *source) : m_Source(source), m_Current(source) {}
+Lexer::Lexer(const char *source, SourceLocation startLoc)
+    : m_Source(source), m_Current(source), m_StartLoc(startLoc) {}
 
 std::vector<Token> Lexer::tokenize() {
   std::vector<Token> tokens;
@@ -126,6 +127,7 @@ void Lexer::skipWhitespace() {
 
 Token Lexer::nextToken() {
   skipWhitespace();
+  const char *startPtr = m_Current;
 
   Token t;
   bool hadNewline = m_HasNewline;
@@ -138,6 +140,22 @@ Token Lexer::nextToken() {
     t = identifier();
   } else {
     t = punctuation();
+  }
+
+  // Calculate SourceLocation relative to start
+  ptrdiff_t offset = startPtr - m_Source;
+  if (m_StartLoc.isValid()) {
+    t.Loc = SourceLocation(m_StartLoc.getRawEncoding() + (uint32_t)offset);
+  } else {
+    // If StartLoc is invalid (e.g. testing strings), we use 0-based offset?
+    // Or just invalid Loc?
+    // Let's use 0-based offset so strict checks don't fail if they rely on ID
+    // uniqueness, but ID=0 is Invalid.
+    // If m_StartLoc is 0 (Invalid), adding offset makes it non-zero (Valid)?
+    // No, 0 + offset = offset. Only offset 0 is invalid.
+    // But usually SourceManager assigns base ID > 0.
+    // For now:
+    t.Loc = SourceLocation(m_StartLoc.getRawEncoding() + (uint32_t)offset);
   }
 
   t.HasNewlineBefore = hadNewline;

@@ -27,6 +27,7 @@ public:
   int Line = 0;
   int Column = 0;
   std::string FileName;
+  SourceLocation Loc;
 
   virtual ~ASTNode() = default;
   virtual std::string toString() const = 0;
@@ -35,6 +36,7 @@ public:
     Line = tok.Line;
     Column = tok.Column;
     FileName = file;
+    Loc = tok.Loc;
   }
 };
 

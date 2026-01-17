@@ -12,9 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "toka/CodeGen.h"
+#include "toka/DiagnosticEngine.h"
 #include "toka/Lexer.h"
 #include "toka/Parser.h"
 #include "toka/Sema.h"
+#include "toka/SourceLocation.h"
+#include "toka/SourceManager.h"
 #include "toka/Version.h"
 #include "llvm/Support/raw_ostream.h"
 #include <fstream>
@@ -25,7 +28,8 @@
 void parseSource(const std::string &filename,
                  std::vector<std::unique_ptr<toka::Module>> &astModules,
                  std::set<std::string> &visited,
-                 std::vector<std::string> &recursionStack) {
+                 std::vector<std::string> &recursionStack,
+                 toka::SourceManager &sm) {
   // Check recursion stack for circular dependency
   for (const auto &f : recursionStack) {
     if (f == filename) {
@@ -42,45 +46,59 @@ void parseSource(const std::string &filename,
   visited.insert(filename);
   recursionStack.push_back(filename);
 
-  std::ifstream file(filename);
-  if (!file.is_open()) {
-    // Check if filename is missing extension and try adding .tk
-    if (filename.find(".tk") == std::string::npos) {
-      std::string withExt = filename + ".tk";
-      file.open(withExt);
-    }
-  }
+  std::string resolvedPath = filename;
+  bool found = false;
 
-  if (!file.is_open()) {
-    // Try relative to lib/ or ../lib/
+  // 1. Try exact filename
+  if (std::ifstream(filename).good()) {
+    found = true;
+  }
+  // 2. Try adding .tk
+  else if (filename.find(".tk") == std::string::npos &&
+           std::ifstream(filename + ".tk").good()) {
+    resolvedPath = filename + ".tk";
+    found = true;
+  }
+  // 3. Try lib/ paths
+  else {
     std::string paths[] = {"lib/", "../lib/"};
-    bool found = false;
     for (const auto &p : paths) {
       std::string libPath = p + filename;
-      if (filename.find(".tk") == std::string::npos)
-        libPath += ".tk";
-      file.open(libPath);
-      if (file.is_open()) {
+      if (std::ifstream(libPath).good()) {
+        resolvedPath = libPath;
         found = true;
         break;
       }
-    }
-    if (!found) {
-      std::cerr << filename << ":0:0: error: could not open file\n";
-      return;
+      if (filename.find(".tk") == std::string::npos) {
+        libPath += ".tk";
+        if (std::ifstream(libPath).good()) {
+          resolvedPath = libPath;
+          found = true;
+          break;
+        }
+      }
     }
   }
 
-  std::stringstream buffer;
-  buffer << file.rdbuf();
-  std::string code = buffer.str();
+  if (!found) {
+    std::cerr << filename << ":0:0: error: could not open file\n";
+    return;
+  }
 
-  llvm::errs() << "Parsing " << filename << "...\n";
+  llvm::errs() << "Parsing " << resolvedPath << "...\n";
 
-  toka::Lexer lexer(code.c_str());
+  toka::SourceLocation startLoc = sm.loadFile(resolvedPath);
+  if (startLoc.isInvalid()) {
+    std::cerr << "Failed to load file via SourceManager: " << resolvedPath
+              << "\n";
+    return;
+  }
+  std::string code(sm.getBufferData(startLoc));
+
+  toka::Lexer lexer(code.c_str(), startLoc);
   auto tokens = lexer.tokenize();
 
-  toka::Parser parser(tokens, filename);
+  toka::Parser parser(tokens, resolvedPath);
   auto module = parser.parseModule();
 
   // Recursively parse imports
@@ -89,7 +107,7 @@ void parseSource(const std::string &filename,
       // TODO: Handle logic import symbol filtering if we add per-module symbol
       // tables. For now, we just parse the file to register its globals.
     }
-    parseSource(imp->PhysicalPath, astModules, visited, recursionStack);
+    parseSource(imp->PhysicalPath, astModules, visited, recursionStack, sm);
   }
 
   astModules.push_back(std::move(module));
@@ -110,12 +128,15 @@ int main(int argc, char **argv) {
     return 0;
   }
 
+  toka::SourceManager sm;
+  toka::DiagnosticEngine::init(sm);
+
   std::vector<std::unique_ptr<toka::Module>> astModules;
   std::set<std::string> visited;
 
   std::vector<std::string> recursionStack;
   for (int i = 1; i < argc; ++i) {
-    parseSource(argv[i], astModules, visited, recursionStack);
+    parseSource(argv[i], astModules, visited, recursionStack, sm);
   }
 
   if (astModules.empty())

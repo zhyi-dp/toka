@@ -1,4 +1,4 @@
-add_executable(tokac main.cpp Lexer/Lexer.cpp 
+add_executable(tokac main.cpp Basic/SourceManager.cpp Lexer/Lexer.cpp 
 DiagnosticEngine.cpp
 Parser/Parser.cpp 
 Parser/Parser_Decl.cpp

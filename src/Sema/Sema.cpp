@@ -51,15 +51,12 @@ bool Sema::checkModule(Module &M) {
   return !HasError;
 }
 
-SourceLocation getLoc(ASTNode *Node) {
-  return {Node->FileName.empty() ? "<unknown>" : Node->FileName, Node->Line,
-          Node->Column};
-}
+static SourceLocation getLoc(ASTNode *Node) { return Node->Loc; }
 
 void Sema::error(ASTNode *Node, const std::string &Msg) {
   HasError = true;
   // Fallback for not-yet-migrated errors
-  DiagnosticEngine::report(getLoc(Node), DiagID::ERR_GENERIC_PARSE, Msg);
+  DiagnosticEngine::report(getLoc(Node), DiagID::ERR_GENERIC_SEMA, Msg);
 }
 
 void Sema::enterScope() { CurrentScope = new Scope(CurrentScope); }

@@ -13,6 +13,7 @@
 // limitations under the License.
 #pragma once
 
+#include "toka/SourceLocation.h"
 #include "toka/Token.h"
 #include <string_view>
 #include <vector>
@@ -21,7 +22,7 @@ namespace toka {
 
 class Lexer {
 public:
-  Lexer(const char *source);
+  Lexer(const char *source, SourceLocation startLoc = SourceLocation());
 
   // Returns a vector of all tokens (simple approach for now)
   std::vector<Token> tokenize();
@@ -29,6 +30,7 @@ public:
 private:
   const char *m_Source;
   const char *m_Current;
+  SourceLocation m_StartLoc;
   int m_Line = 1;
   int m_Column = 1;
   bool m_HasNewline = false;

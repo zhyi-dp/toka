@@ -1,14 +1,16 @@
 // include/toka/DiagnosticEngine.h
 #pragma once
 
+#include "toka/SourceLocation.h"
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace toka {
+class SourceManager;
 
-struct SourceLocation {
+struct DiagLoc {
   std::string File;
   int Line;
   int Col;
@@ -26,16 +28,25 @@ enum class DiagID {
 class DiagnosticEngine {
 public:
   static int ErrorCount;
+  static SourceManager *SrcMgr;
+
+  static void init(SourceManager &SM) { SrcMgr = &SM; }
 
   static bool hasErrors() { return ErrorCount > 0; }
 
   // Variadic template for handling arguments
+  template <typename... Args>
+  static void report(DiagLoc loc, DiagID id, Args &&...args) {
+    reportImpl(loc, id, formatMessage(id, std::forward<Args>(args)...));
+  }
+
   template <typename... Args>
   static void report(SourceLocation loc, DiagID id, Args &&...args) {
     reportImpl(loc, id, formatMessage(id, std::forward<Args>(args)...));
   }
 
 private:
+  static void reportImpl(DiagLoc loc, DiagID id, const std::string &message);
   static void reportImpl(SourceLocation loc, DiagID id,
                          const std::string &message);
   static const char *getFormatString(DiagID id);

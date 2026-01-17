@@ -1,9 +1,10 @@
-// src/DiagnosticEngine.cpp
 #include "toka/DiagnosticEngine.h"
+#include "toka/SourceManager.h"
 #include <iostream>
 
 namespace toka {
 
+SourceManager *DiagnosticEngine::SrcMgr = nullptr;
 int DiagnosticEngine::ErrorCount = 0;
 
 const char *DiagnosticEngine::getFormatString(DiagID id) {
@@ -34,7 +35,7 @@ DiagLevel DiagnosticEngine::getLevel(DiagID id) {
   }
 }
 
-void DiagnosticEngine::reportImpl(SourceLocation loc, DiagID id,
+void DiagnosticEngine::reportImpl(DiagLoc loc, DiagID id,
                                   const std::string &message) {
   DiagLevel level = getLevel(id);
 
@@ -67,6 +68,20 @@ void DiagnosticEngine::reportImpl(SourceLocation loc, DiagID id,
     std::cerr
         << "\033[1;31mfatal:\033[0m too many errors emitted, stopping now.\n";
     exit(1);
+  }
+}
+
+void DiagnosticEngine::reportImpl(SourceLocation loc, DiagID id,
+                                  const std::string &message) {
+  if (SrcMgr) {
+    FullSourceLoc Full = SrcMgr->getFullSourceLoc(loc);
+    DiagLoc DL{Full.FileName, (int)Full.Line, (int)Full.Column};
+    reportImpl(DL, id, message);
+  } else {
+    DiagLoc DL{"<unknown>", 0, 0};
+    reportImpl(DL, id,
+               message + " [RawLoc: " + std::to_string(loc.getRawEncoding()) +
+                   "]");
   }
 }
 
