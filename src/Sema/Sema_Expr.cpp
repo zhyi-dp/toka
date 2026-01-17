@@ -1317,6 +1317,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           innerType =
               innerType->withAttributes(innerWritable, innerType->IsNullable);
           auto refType = std::make_shared<toka::ReferenceType>(innerType);
+          refType->IsNullable = Unary->HasNull;
+          refType->IsWritable = Unary->IsRebindable;
           return refType;
         } else if (Unary->Op == TokenType::Caret) {
           if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
@@ -1472,6 +1474,18 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
   bool isRefAssign = false;
 
+  // Rebinding Logic: Unwrap &ref on LHS
+  if (Bin->Op == "=") {
+    if (auto *UnLHS = dynamic_cast<UnaryExpr *>(Bin->LHS.get())) {
+      if (UnLHS->Op == TokenType::Ampersand) {
+        if (lhsType->isReference() && lhsType->getPointeeType() &&
+            lhsType->getPointeeType()->isReference()) {
+          lhsType = lhsType->getPointeeType();
+        }
+      }
+    }
+  }
+
   // Assignment Logic
   if (Bin->Op == "=") {
     // Move Logic
@@ -1556,7 +1570,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       }
     } else if (auto *Un = dynamic_cast<UnaryExpr *>(Traverse)) {
       if (Un->Op == TokenType::Star || Un->Op == TokenType::Caret ||
-          Un->Op == TokenType::Tilde) {
+          Un->Op == TokenType::Tilde || Un->Op == TokenType::Ampersand) {
         if (auto *Var = dynamic_cast<VariableExpr *>(Un->RHS.get())) {
           SymbolInfo *InfoPtr = nullptr;
           if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {

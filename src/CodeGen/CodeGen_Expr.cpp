@@ -850,7 +850,31 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
   // Identity and address-of: *p, &p
   if (unary->Op == TokenType::Ampersand) {
     if (auto *var = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-      return getEntityAddr(var->Name);
+      std::string cleanName = var->Name;
+      while (!cleanName.empty() &&
+             (cleanName.back() == '?' || cleanName.back() == '!'))
+        cleanName.pop_back();
+
+      if (m_Symbols.count(cleanName)) {
+        if (m_Symbols[cleanName].mode == AddressingMode::Reference) {
+          // Rebinding Support: &ref returns the Handle's Address (L-Value)
+          // So we can write to it: &ref = &other
+          llvm::Value *handleAddr = getEntityAddr(cleanName);
+          return PhysEntity(handleAddr, m_Symbols[cleanName].typeName,
+                            m_Builder.getPtrTy(), true);
+        }
+      }
+      // Standard Address-Of (R-Value)
+      return getEntityAddr(
+          var->Name); // Implicit conversion to R-Value PhysEntity?
+                      // Actually getEntityAddr returns Value*, likely need
+                      // explicit PhysEntity if we want to be strict, but
+                      // existing code returned it directly so implicit ctor
+                      // must exist or it returns Value* and PhysEntity isn't
+                      // used here? Wait, return type is PhysEntity. Existing
+                      // code: return getEntityAddr(var->Name); This implies
+                      // PhysEntity has a ctor(Value*). I will use explicit
+                      // PhysEntity for the L-Value case to be sure.
     }
     return genAddr(unary->RHS.get());
   }
