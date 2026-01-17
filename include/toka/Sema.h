@@ -215,7 +215,12 @@ private:
   void checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
                     bool SourceIsMutable);
 
+  // Control flow helpers
+  bool allPathsReturn(Stmt *S);
+  bool allPathsJump(Stmt *S);
+
   // Type system helpers
+  bool isLValue(const Expr *expr);
   std::string getCommonType(const std::string &T1, const std::string &T2);
 
   // Helpers
@@ -224,6 +229,36 @@ private:
   bool isTypeCompatible(const std::string &Target, const std::string &Source);
   bool isTypeCompatible(std::shared_ptr<toka::Type> Target,
                         std::shared_ptr<toka::Type> Source);
+
+  // Helper for type synthesis from AST nodes with morphology flags
+  template <typename T>
+  static std::string synthesizePhysicalType(const T &Arg) {
+    std::string Signature = "";
+
+    // 1. Morphologies
+    if (Arg.IsUnique) {
+      Signature += "^";
+    } else if (Arg.IsShared) {
+      Signature += "~";
+    } else if (Arg.IsReference) {
+      Signature += "&";
+    } else if (Arg.HasPointer) {
+      Signature += "*";
+    }
+
+    // 3. Soul Type
+    Signature += Arg.Type;
+
+    // 4. Value Attributes
+    if (Arg.IsPointerNullable || Arg.IsValueNullable) {
+      Signature += "?";
+    }
+    if (Arg.IsRebindable || Arg.IsValueMutable) {
+      Signature += "#";
+    }
+
+    return Signature;
+  }
 };
 
 } // namespace toka
