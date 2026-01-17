@@ -1,0 +1,52 @@
+import std/string::{String}
+import std/io::{println}
+
+fn main() -> i32 {
+    auto s = String::from("Hello Toka World!")
+    
+    // Test at
+    auto c = s.at(6)
+    println("at(6): {}", c as i32) // 'T' is 84
+    if c != 84:char { return 1 }
+    
+    // Test find_char
+    auto idx = s.find_char(84:char) // 'T'
+    println("find_char('T'): {}", idx)
+    if idx != 6 { return 2 }
+    
+    // Test starts_with
+    if !s.starts_with(String::from("Hello")) { 
+        println("starts_with failed")
+        return 3 
+    }
+    
+    // Test ends_with
+    if !s.ends_with(String::from("World!")) { 
+        println("ends_with failed")
+        return 4 
+    }
+    
+    // Test contains
+    if !s.contains(String::from("Toka")) { 
+        println("contains failed")
+        return 5 
+    }
+    
+    // Test to_upper
+    auto upper = s.to_upper()
+    println("to_upper: {}", upper.c_str())
+    if !upper.eq(String::from("HELLO TOKA WORLD!")) { return 6 }
+    
+    // Test to_lower
+    auto lower = s.to_lower()
+    println("to_lower: {}", lower.c_str())
+    if !lower.eq(String::from("hello toka world!")) { return 7 }
+    
+    // Test replace_char
+    auto replaced = s.replace_char(32:char, 45:char) // '-'
+    println("replace_char: {}", replaced.c_str())
+    if !replaced.eq(String::from("Hello-Toka-World!")) { return 8 }
+
+    println("String extension test passed!")
+    return 0
+}
