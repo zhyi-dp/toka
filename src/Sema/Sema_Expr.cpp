@@ -77,9 +77,193 @@ std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
   return T;
 }
 
+// -----------------------------------------------------------------------------
+// Type & Morphology Helpers
+// -----------------------------------------------------------------------------
+
+Sema::MorphKind Sema::getSyntacticMorphology(Expr *E) {
+  if (!E)
+    return MorphKind::None;
+
+  // Unary Ops: ^, *, ~, &
+  if (auto *U = dynamic_cast<UnaryExpr *>(E)) {
+    switch (U->Op) {
+    case TokenType::Star:
+      return MorphKind::Raw;
+    case TokenType::Caret:
+      return MorphKind::Unique;
+    case TokenType::Tilde:
+      return MorphKind::Shared;
+    case TokenType::Ampersand:
+      return MorphKind::Ref;
+    default:
+      return MorphKind::None;
+    }
+  }
+
+  // Cast: Check target type string
+  if (auto *C = dynamic_cast<CastExpr *>(E)) {
+    if (C->TargetType.empty())
+      return MorphKind::None;
+    char c = C->TargetType[0];
+    if (c == '*')
+      return MorphKind::Raw;
+    if (c == '^')
+      return MorphKind::Unique;
+    if (c == '~')
+      return MorphKind::Shared;
+    if (c == '&')
+      return MorphKind::Ref;
+    return MorphKind::None;
+  }
+
+  // Safe Constructors (Exceptions)
+  if (dynamic_cast<CallExpr *>(E) || dynamic_cast<MethodCallExpr *>(E) ||
+      dynamic_cast<NewExpr *>(E) || dynamic_cast<AllocExpr *>(E)) {
+    return MorphKind::Valid;
+  }
+
+  // Unsafe: Recurse
+  if (auto *U = dynamic_cast<UnsafeExpr *>(E)) {
+    return getSyntacticMorphology(U->Expression.get());
+  }
+
+  // Parentheses: Recurse
+  if (auto *T = dynamic_cast<TupleExpr *>(E)) {
+    if (T->Elements.size() == 1)
+      return getSyntacticMorphology(T->Elements[0].get());
+  }
+
+  return MorphKind::None;
+}
+
+bool Sema::checkStrictMorphology(ASTNode *Node, MorphKind Target,
+                                 MorphKind Source,
+                                 const std::string &TargetName) {
+  // 1. Exact Match
+  if (Target == Source)
+    return true;
+
+  // 2. Safe Constructors (Source is function call/new/etc)
+  if (Source == MorphKind::Valid)
+    return true;
+
+  // 3. None/None Match (Value types)
+  if (Target == MorphKind::None && Source == MorphKind::None)
+    return true;
+
+  // 4. Mismatch
+  std::string tgtStr = "value";
+  if (Target == MorphKind::Raw)
+    tgtStr = "*";
+  if (Target == MorphKind::Unique)
+    tgtStr = "^";
+  if (Target == MorphKind::Shared)
+    tgtStr = "~";
+  if (Target == MorphKind::Ref)
+    tgtStr = "&";
+
+  std::string srcStr = "value";
+  if (Source == MorphKind::Raw)
+    srcStr = "*";
+  if (Source == MorphKind::Unique)
+    srcStr = "^";
+  if (Source == MorphKind::Shared)
+    srcStr = "~";
+  if (Source == MorphKind::Ref)
+    srcStr = "&";
+
+  DiagnosticEngine::report(Node->Loc, DiagID::ERR_MORPHOLOGY_MISMATCH, tgtStr,
+                           srcStr);
+  return false;
+}
+
 std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
   if (!E)
     return toka::Type::fromString("void");
+
+  if (auto *S = dynamic_cast<InitStructExpr *>(E)) {
+    // Determine Shape Decl
+    ShapeDecl *shapeDecl = nullptr;
+    SymbolInfo Sym;
+
+    // First, verify the Type exists
+    if (!CurrentScope->lookup(S->ShapeName, Sym)) {
+      if (ShapeMap.count(S->ShapeName)) {
+        shapeDecl = ShapeMap[S->ShapeName];
+      } else {
+        // Check modules, but simplified here
+      }
+    } else {
+      // If it's in symbol table as a Type alias or something?
+      // Usually shapes are in ShapeMap.
+      if (ShapeMap.count(S->ShapeName))
+        shapeDecl = ShapeMap[S->ShapeName];
+    }
+
+    // Fallback if not found locally, might be imported?
+    // Existing check logic relies on checking Member names?
+    // Let's rely on ShapeMap for now.
+
+    if (shapeDecl) {
+      for (const auto &field : S->Members) {
+        // Field key is in field.first (Parsed with sigil, e.g. "*p")
+        std::string key = field.first;
+        std::string declName = key;
+        MorphKind keyMorph = MorphKind::None;
+        if (!key.empty()) {
+          char c = key[0];
+          if (c == '*') {
+            keyMorph = MorphKind::Raw;
+            declName = key.substr(1);
+          } else if (c == '^') {
+            keyMorph = MorphKind::Unique;
+            declName = key.substr(1);
+          } else if (c == '~') {
+            keyMorph = MorphKind::Shared;
+            declName = key.substr(1);
+          } else if (c == '&') {
+            keyMorph = MorphKind::Ref;
+            declName = key.substr(1);
+          }
+        }
+        // If explicit identifier has no sigil, keyMorph is None.
+
+        // Find member in ShapeDecl
+        std::string fieldTypeStr = "";
+        for (const auto &mem : shapeDecl->Members) {
+          if (mem.Name == declName) {
+            fieldTypeStr = mem.Type;
+            break;
+          }
+        }
+
+        if (!fieldTypeStr.empty()) {
+          MorphKind fieldMorph = MorphKind::None;
+          char c = fieldTypeStr[0];
+          if (c == '*')
+            fieldMorph = MorphKind::Raw;
+          else if (c == '^')
+            fieldMorph = MorphKind::Unique;
+          else if (c == '~')
+            fieldMorph = MorphKind::Shared;
+          else if (c == '&')
+            fieldMorph = MorphKind::Ref;
+
+          checkStrictMorphology(S, fieldMorph, keyMorph, declName);
+        }
+
+        // Recurse checks
+        checkExpr(field.second.get());
+        // We assume field type compatibility is checked elsewhere or we should
+        // check here? Usually InitStructExpr is checked in `checkNewExpr` or
+        // similar, but standalone? Wait, NewExpr handles InitStructExpr
+        // initialization type checking? "S->ShapeName" suggests this IS a
+        // constructor-like expr.
+      }
+    }
+    return toka::Type::fromString(S->ShapeName);
+  }
 
   if (auto *Num = dynamic_cast<NumberExpr *>(E)) {
     if (Num->Value > 9223372036854775807ULL)
@@ -521,9 +705,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         HasError = true;
       }
     }
-    // 'new' usually returns a pointer or the type itself depending on
-    // context. AST just says Type. The variable decl usually says ^Type.
-    return toka::Type::fromString(New->Type);
+    // 'new' usually returns a unique pointer: ^Type
+    return toka::Type::fromString("^" + New->Type);
   } else if (auto *UnsafeE = dynamic_cast<UnsafeExpr *>(E)) {
     bool oldUnsafe = m_InUnsafeContext;
     m_InUnsafeContext = true;
@@ -1087,10 +1270,11 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
             error(Unary,
                   "cannot move '" + Var->Name + "' while it is borrowed");
           }
-          // Move Semantics: Return value is the variable's value
-          // (UniquePointerType), not wrapped again. If we are moving a
-          // ^Data, the result expression type is ^Data.
-          return rhsType;
+          // Move Semantics: If already unique, stay unique (return Move).
+          // If not unique (e.g. primitive), create unique.
+          if (rhsType->isUniquePtr())
+            return rhsType;
+          return std::make_shared<toka::UniquePointerType>(rhsType);
         } else if (Unary->Op == TokenType::Tilde) {
           if (rhsType->isSharedPtr()) {
             return rhsType; // Idempotent
@@ -1327,6 +1511,45 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     }
 
     auto lhsCompatType = lhsType->withAttributes(false, lhsType->IsNullable);
+
+    // Strict Pointer Morphology Check
+    if (!isRefAssign) {
+      // Determine Target Morphology (LHS)
+      MorphKind targetMorph = MorphKind::None;
+      // We need to look at the LHS expression structure
+      // If LHS is *p or ^p etc.
+      targetMorph = getSyntacticMorphology(Bin->LHS.get());
+
+      // If LHS is a variable declaration, we don't handle it here (handled in
+      // checkVariableDecl). But this is assignment to existing variable. If LHS
+      // is 'p' (VariableExpr) and p is a pointer type, Morph is None (hidden).
+      // If p is pointer, targetMorph=None. SourceMorph check...
+      // User rule: "auto ^p = x" (Invalid). "auto p = ^x" (Invalid).
+      // "p = q" (Hidden = Hidden)?
+      // "Strict explicit morphology matching".
+      // If LHS has no sigil, but is a pointer type?
+      // "auto p = ^x". p is pointer. LHS sigil None. RHS sigil Unique.
+      // Mismatch. So checks apply.
+
+      // However, we need to know if LHS *is* a pointer type to enforce
+      // strictness. If LHS is i32, and RHS is i32. None == None. OK. If LHS is
+      // *i32 (via `*p` deref? No, `*p` assigns to `i32`). If `p` is `*i32`. `p
+      // = q`. LHS `p` has Morph::None. If strictness requires `*p` to be
+      // assigned? No, `*p` assigns to the *pointee*. We are assigning TO the
+      // pointer `p`. So `p = q` is "Value = Value" syntax. Does user want `*p =
+      // *q` for pointer assignment? No, that's partial update/deref assignment.
+      // `p = q` rebinds the pointer.
+      // If the rule is about *Declarations* majorly (`auto *p = ...`), maybe
+      // assignment `p=q` is exempt or `Valid`. The prompt says: "pointer
+      // morphology symbols... on both sides of an assignment... must explicitly
+      // match." Example: `auto *p = ^q` -> Invalid. `p = q` where p, q are
+      // pointers. Sigils are None. None == None. Matches. `p = ^q`. None !=
+      // Unique. Mismatch. Correct. So `getSyntacticMorphology` returning None
+      // for VariableExpr is correct.
+
+      MorphKind sourceMorph = getSyntacticMorphology(Bin->RHS.get());
+      checkStrictMorphology(Bin, targetMorph, sourceMorph, LHS);
+    }
 
     if (!isRefAssign && !isSmartNew &&
         !isTypeCompatible(lhsCompatType, rhsType) && LHS != "unknown" &&
@@ -1632,13 +1855,52 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         Expr *valExpr = arg.get();
         bool isNamed = false;
 
-        // Detect Named Arg: Field = Value
+        // Detect Named Arg: Field = Value or *Field = Value
         if (auto *bin = dynamic_cast<BinaryExpr *>(arg.get())) {
           if (bin->Op == "=") {
             if (auto *var = dynamic_cast<VariableExpr *>(bin->LHS.get())) {
               fieldName = var->Name;
               valExpr = bin->RHS.get();
               isNamed = true;
+            } else if (auto *un = dynamic_cast<UnaryExpr *>(bin->LHS.get())) {
+              // Handle *p = ..., ^p = ... etc.
+              if (auto *innerVar =
+                      dynamic_cast<VariableExpr *>(un->RHS.get())) {
+                fieldName = innerVar->Name;
+                valExpr = bin->RHS.get();
+                isNamed = true;
+
+                // Morphology Check for Key
+                MorphKind keyMorph = MorphKind::None;
+                if (un->Op == TokenType::Star)
+                  keyMorph = MorphKind::Raw;
+                else if (un->Op == TokenType::Caret)
+                  keyMorph = MorphKind::Unique;
+                else if (un->Op == TokenType::Tilde)
+                  keyMorph = MorphKind::Shared;
+                else if (un->Op == TokenType::Ampersand)
+                  keyMorph = MorphKind::Ref;
+
+                // Find field type in Sh
+                for (const auto &M : Sh->Members) {
+                  if (M.Name == fieldName) {
+                    MorphKind fieldMorph = MorphKind::None;
+                    if (!M.Type.empty()) {
+                      char c = M.Type[0];
+                      if (c == '*')
+                        fieldMorph = MorphKind::Raw;
+                      else if (c == '^')
+                        fieldMorph = MorphKind::Unique;
+                      else if (c == '~')
+                        fieldMorph = MorphKind::Shared;
+                      else if (c == '&')
+                        fieldMorph = MorphKind::Ref;
+                    }
+                    checkStrictMorphology(bin, fieldMorph, keyMorph, fieldName);
+                    break;
+                  }
+                }
+              }
             }
           }
         }
@@ -1710,6 +1972,26 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       break; // Should be caught by count check unless variadic
 
     auto paramType = ParamTypes[i];
+
+    // Morphology Check for Argument
+    MorphKind targetMorph = MorphKind::None;
+    std::string paramTypeStr = paramType->toString();
+    if (!paramTypeStr.empty()) {
+      char c = paramTypeStr[0];
+      if (c == '*')
+        targetMorph = MorphKind::Raw;
+      else if (c == '^')
+        targetMorph = MorphKind::Unique;
+      else if (c == '~')
+        targetMorph = MorphKind::Shared;
+      else if (c == '&')
+        targetMorph = MorphKind::Ref;
+    }
+
+    MorphKind sourceMorph = getSyntacticMorphology(Call->Args[i].get());
+    std::string ctx = "arg " + std::to_string(i + 1);
+    checkStrictMorphology(Call->Args[i].get(), targetMorph, sourceMorph, ctx);
+
     if (!argType->isCompatibleWith(*paramType)) {
       error(Call->Args[i].get(), "Type mismatch for argument " +
                                      std::to_string(i + 1) + ": expected " +

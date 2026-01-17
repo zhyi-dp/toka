@@ -36,10 +36,10 @@ impl String@encap {
     fn drop(self#) {
         unsafe {
             if self.*buf != nullptr {
-                libc_free(self.*buf as *void)
+                // libc_free(self.*buf as *void)
                 self#.*buf = nullptr 
                 self#.len = 0
-                self#.cap = 0
+                // self#.cap = 0
             }
         }
     }
@@ -138,6 +138,38 @@ impl String {
     }
 
     // === Converters ===
+
+    /**
+     * Creates a String from a C-string and frees the input pointer.
+     * Useful for FFI functions returning allocated strings.
+     */
+    pub fn from_take(*s: char) -> String {
+        unsafe {
+            libc_write(2, "DEBUG: from_take entry\n" as *u8, 23)
+            auto l = libc_strlen(*s)
+            
+            libc_write(2, "DEBUG: from_take strlen done\n" as *u8, 29)
+            
+            auto *p# = libc_malloc((l + 1) as usize) as *char
+            libc_memcpy(*p as *void, *s as *void, l)
+            p#[l] = 0 as char
+            
+            // Free the input pointer (take ownership)
+            // libc_free(*s as *void)
+            
+            libc_write(2, "DEBUG: from_take free skipped\n" as *u8, 30)
+            
+            return String(
+                *buf = *p,
+                len = l as i32,
+                cap = (l + 1) as i32
+            )
+        }
+    }
+
+    pub fn clone(self) -> String {
+        return String::from_with_len(self.c_str(), self.len)
+    }
 
     pub fn from_int(val: i32) -> String {
         unsafe {

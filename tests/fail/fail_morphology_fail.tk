@@ -1,0 +1,49 @@
+// tests/fail/test_morphology_fail.tk
+
+fn test_assign_mismatch() {
+    auto ^p = 10;
+    auto *r = 10;
+    
+    // EXPECT: Pointer morphology mismatch: expected explicit '*' (from LHS/Target), found '^' (from RHS/Source)
+    r# = ^p;
+
+    // EXPECT: Pointer morphology mismatch: expected explicit '^' (from LHS/Target), found '*' (from RHS/Source)
+    ^p! = *r;
+
+    // EXPECT: Pointer morphology mismatch: expected explicit '^' (from LHS/Target), found 'value' (from RHS/Source)
+    auto ^p2 = p; 
+}
+
+fn test_decl_mismatch() {
+    auto ^uniq = 10;
+    
+    // EXPECT: Pointer morphology mismatch: expected explicit '^' (from LHS/Target), found '*' (from RHS/Source)
+    auto ^p = *uniq;
+
+    // EXPECT: Pointer morphology mismatch: expected explicit '*' (from LHS/Target), found '^' (from RHS/Source)
+    auto *raw = ^uniq;
+}
+
+fn test_addr_mismatch() {
+    auto val = 10;
+    // EXPECT: Pointer morphology mismatch: expected explicit '*' (from LHS/Target), found '&' (from RHS/Source)
+    auto *p = &val;
+}
+
+fn ret_unique() -> ^i32 {
+    auto val = 10;
+    // EXPECT: Pointer morphology mismatch: expected explicit '^' (from LHS/Target), found '&' (from RHS/Source)
+    return &val;
+}
+
+fn take_unique(^p: i32) {}
+
+fn test_call() {
+    auto val = 10;
+    // EXPECT: Pointer morphology mismatch: expected explicit '^' (from LHS/Target), found '&' (from RHS/Source)
+    take_unique(&val);
+
+    auto ^u = 10;
+    // EXPECT: Pointer morphology mismatch: expected explicit '^' (from LHS/Target), found 'value' (from RHS/Source)
+    take_unique(u); 
+}

@@ -259,6 +259,23 @@ private:
 
     return Signature;
   }
+
+  // Pointer Morphology Strictness
+  enum class MorphKind {
+    None,    // No pointer (value type)
+    Valid,   // Matches generic valid state (e.g. constructor result)
+    Raw,     // *
+    Unique,  // ^
+    Shared,  // ~
+    Ref,     // &
+    Address, // & (Synonym for Reference in some contexts, but let's stick to
+             // Ref)
+    Any      // Wildcard
+  };
+
+  MorphKind getSyntacticMorphology(Expr *E);
+  bool checkStrictMorphology(ASTNode *Node, MorphKind Target, MorphKind Source,
+                             const std::string &TargetName);
 };
 
 } // namespace toka

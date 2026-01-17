@@ -129,6 +129,22 @@ void Sema::checkStmt(Stmt *S) {
       DiagnosticEngine::report(getLoc(Ret), DiagID::ERR_TYPE_MISMATCH, ExprType,
                                CurrentFunctionReturnType);
       HasError = true;
+    } else {
+      // Strict Morphology Check for Return
+      MorphKind targetMorph = MorphKind::None;
+      if (!CurrentFunctionReturnType.empty()) {
+        char c = CurrentFunctionReturnType[0];
+        if (c == '*')
+          targetMorph = MorphKind::Raw;
+        else if (c == '^')
+          targetMorph = MorphKind::Unique;
+        else if (c == '~')
+          targetMorph = MorphKind::Shared;
+        else if (c == '&')
+          targetMorph = MorphKind::Ref;
+      }
+      MorphKind sourceMorph = getSyntacticMorphology(Ret->ReturnValue.get());
+      checkStrictMorphology(Ret, targetMorph, sourceMorph, "return value");
     }
   } else if (auto *Free = dynamic_cast<FreeStmt *>(S)) {
     auto FreeTypeObj = checkExpr(Free->Expression.get());
@@ -234,6 +250,22 @@ void Sema::checkStmt(Stmt *S) {
                                  DeclFullTy, InitType);
         HasError = true;
       }
+    }
+
+    // Strict Morphology Check for Variable Declaration
+    if (Var->Init) {
+      MorphKind lhsMorph = MorphKind::None;
+      if (Var->IsUnique)
+        lhsMorph = MorphKind::Unique;
+      else if (Var->IsShared)
+        lhsMorph = MorphKind::Shared;
+      else if (Var->IsReference)
+        lhsMorph = MorphKind::Ref;
+      else if (Var->HasPointer)
+        lhsMorph = MorphKind::Raw;
+
+      MorphKind rhsMorph = getSyntacticMorphology(Var->Init.get());
+      checkStrictMorphology(Var, lhsMorph, rhsMorph, Var->Name);
     }
 
     SymbolInfo Info;

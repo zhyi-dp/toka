@@ -263,9 +263,19 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       advance(); // LBrace
       std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
       while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+        std::string prefix = "";
+        if (match(TokenType::Star))
+          prefix = "*";
+        else if (match(TokenType::Caret))
+          prefix = "^";
+        else if (match(TokenType::Tilde))
+          prefix = "~";
+        else if (match(TokenType::Ampersand))
+          prefix = "&";
+
         Token fieldName = consume(TokenType::Identifier, "Expected field name");
         consume(TokenType::Equal, "Expected '=' after field name");
-        fields.push_back({fieldName.Text, parseExpr()});
+        fields.push_back({prefix + fieldName.Text, parseExpr()});
         match(TokenType::Comma);
       }
       consume(TokenType::RBrace, "Expected '}'");
@@ -369,9 +379,19 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       advance();
       std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
       while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
+        std::string prefix = "";
+        if (match(TokenType::Star))
+          prefix = "*";
+        else if (match(TokenType::Caret))
+          prefix = "^";
+        else if (match(TokenType::Tilde))
+          prefix = "~";
+        else if (match(TokenType::Ampersand))
+          prefix = "&";
+
         Token fieldName = consume(TokenType::Identifier, "Expected field name");
         consume(TokenType::Equal, "Expected '=' after field name");
-        fields.push_back({fieldName.Text, parseExpr()});
+        fields.push_back({prefix + fieldName.Text, parseExpr()});
         match(TokenType::Comma);
       }
       consume(TokenType::RBrace, "Expected '}'");
@@ -541,9 +561,19 @@ std::unique_ptr<Expr> Parser::parseAllocExpr() {
     if (check(TokenType::Identifier) && checkAt(1, TokenType::Equal)) {
       std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
       while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+        std::string prefix = "";
+        if (match(TokenType::Star))
+          prefix = "*";
+        else if (match(TokenType::Caret))
+          prefix = "^";
+        else if (match(TokenType::Tilde))
+          prefix = "~";
+        else if (match(TokenType::Ampersand))
+          prefix = "&";
+
         Token fieldName = consume(TokenType::Identifier, "Expected field name");
         consume(TokenType::Equal, "Expected '=' after field name");
-        fields.push_back({fieldName.Text, parseExpr()});
+        fields.push_back({prefix + fieldName.Text, parseExpr()});
         match(TokenType::Comma);
       }
       init = std::make_unique<InitStructExpr>(typeName, std::move(fields));

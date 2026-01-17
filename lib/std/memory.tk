@@ -54,7 +54,7 @@ pub fn __toka_memcpy(*dest#: void, *src: void, len: usize) {
 
 pub fn __toka_time() -> i64 {
     unsafe {
-        return libc_time()
+        return libc_time(nullptr)
     }
 }
 
