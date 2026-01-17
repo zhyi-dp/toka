@@ -1,0 +1,11 @@
+import std/io
+import std/sys/macos as sys
+import std/string::{String}
+
+fn main() -> i32 {
+    unsafe {
+        auto *d = sys::opendir_impl(String::from("."))
+        sys::closedir_impl(*d)
+    }
+    return 0
+}

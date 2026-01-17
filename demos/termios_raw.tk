@@ -38,6 +38,7 @@ fn main() -> i32 {
             if nread > 0 {
                 // Raw Mode 下，回车通常是 13 (\r)
                 if c == 113 { // 'q'
+                    println("\r\nGot: q")
                     running# = false
                 } else {
                     // 格式化输出: 手动加上 \r 回到行首

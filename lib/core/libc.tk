@@ -93,3 +93,17 @@ extern fn libc_tcsetattr(fd: i32, optional_actions: i32, *termios_p: void) -> i3
 extern fn libc_cfmakeraw(*termios_p: void) -> void
 extern fn libc_getchar() -> i32
 extern fn libc_putchar(c: i32) -> i32
+
+// File System (POSIX)
+extern fn libc_opendir(*name: char) -> Addr // Returns DIR* as Addr
+extern fn libc_readdir(dir: Addr) -> Addr // Returns dirent* as Addr
+extern fn libc_closedir(dir: Addr) -> i32
+extern fn libc_mkdir(*path: char, mode: i32) -> i32
+extern fn libc_rmdir(*path: char) -> i32
+extern fn libc_stat(*path: char, buf: Addr) -> i32
+extern fn libc_lstat(*path: char, buf: Addr) -> i32
+extern fn libc_getcwd(*buf: char, size: usize) -> Addr // Returns *char as Addr
+extern fn libc_chdir(*path: char) -> i32
+extern fn libc_getenv(*name: char) -> Addr // Returns *char as Addr
+extern fn libc_setenv(*name: char, *value: char, overwrite: i32) -> i32
+extern fn libc_unsetenv(*name: char) -> i32

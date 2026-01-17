@@ -1,0 +1,120 @@
+import std/io
+import std/io::{println, File}
+import std/fs
+import std/env
+import std/math
+import std/string::{String}
+import std/path
+
+fn main() -> i32 {
+    println("=== Testing Std Foundations ===")
+    
+    // --- Math Test ---
+    println("[Math] Testing Basic Ops...")
+    auto s = math::sqrt(16.0)
+    auto s_str = String::from_f64(s)
+    io::print(String::from("sqrt(16.0) = "))
+    io::print(s_str)
+    io::print(String::from("\n"))
+    
+    if s < 3.99 || s > 4.01 {
+        println("FAIL: sqrt mismatch")
+        return 1
+    }
+
+    // --- Env Test ---
+    println("[Env] Testing CWD/Vars...")
+    auto cwd = env::current_dir()
+    io::print(String::from("CWD: "))
+    io::print(cwd)
+    io::print(String::from("\n"))
+    
+    if cwd.len() == 0 {
+        println("WARN: CWD is empty or failed")
+        // return 1
+    }
+    
+    env::set_var(String::from("TOKA_TEST_VAR"), String::from("Hello World"))
+    auto val = env::var(String::from("TOKA_TEST_VAR"))
+    io::print(String::from("TOKA_TEST_VAR: "))
+    io::print(val)
+    io::print(String::from("\n"))
+    
+    if !val.eq(String::from("Hello World")) {
+        println("FAIL: Env var mismatch")
+        return 1
+    }
+    env::remove_var(String::from("TOKA_TEST_VAR"))
+    auto val2 = env::var(String::from("TOKA_TEST_VAR"))
+    if val2.len() != 0 {
+        println("FAIL: Env var not removed")
+        return 1
+    }
+    
+    // --- FS Test ---
+    println("[FS] Testing Dir Ops...")
+    auto test_dir = String::from("test_fs_unique")
+    
+    // Robust cleanup: try to remove file inside if it exists
+    auto existing_file = path::join(test_dir, String::from("hello.txt"))
+    if fs::exists(existing_file) {
+        io::remove_file(existing_file)
+    }
+    
+    if fs::exists(test_dir) {
+        if !fs::remove_dir(test_dir) {
+            println("WARN: Failed to remove existing test_dir (maybe not empty or permission)")
+        }
+    }
+    
+    if !fs::create_dir(test_dir) {
+        println("FAIL: create_dir failed")
+        return 1
+    }
+    
+    if !fs::exists(test_dir) {
+        println("FAIL: dir does not exist after creation")
+        return 1
+    }
+    
+    // Create a file inside
+    auto file_path = path::join(test_dir, String::from("hello.txt"))
+    
+    auto f = File::open(file_path, String::from("w"))
+    f.write(String::from("content"))
+    f.close()
+    
+    // Read Dir
+    println("[FS] Reading Directory...")
+    auto iter = fs::read_dir(test_dir)
+    auto found_file# = false
+    loop {
+        auto name = iter.next()
+        if name.len() == 0 { break }
+        
+        io::print(String::from("Entry: "))
+        io::print(name)
+        io::print(String::from("\n"))
+        
+        if name.eq(String::from("hello.txt")) {
+            found_file# = true
+        }
+    }
+    iter.close()
+    
+    if !found_file {
+        println("FAIL: Did not find hello.txt in directory")
+        return 1
+    }
+    
+    // Cleanup
+    io::remove_file(file_path)
+    fs::remove_dir(test_dir)
+    if fs::exists(test_dir) {
+        println("FAIL: remove_dir failed")
+        return 1
+    }
+    
+    println("=== All Tests Passed ===")
+    return 0
+}

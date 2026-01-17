@@ -1,0 +1,97 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+import std/sys/macos as sys
+import std/string::{String}
+import core/types::{Addr, ADDR0}
+import std/io
+
+// Helpers to workaround potential scope visibility issue in impl blocks
+fn call_readdir(h: Addr) -> String {
+    return sys::readdir_impl(h as Addr)
+}
+
+fn call_closedir(h: Addr) {
+    sys::closedir_impl(h as Addr)
+}
+
+fn call_opendir(path: String) -> Addr {
+    return sys::opendir_impl(path)
+}
+
+fn call_mkdir(path: String) -> bool {
+    return sys::mkdir_impl(path)
+}
+
+fn call_rmdir(path: String) -> bool {
+    return sys::rmdir_impl(path)
+}
+
+pub shape ReadDir (
+    handle: Addr,
+    finished: bool
+)
+
+impl ReadDir {
+    pub fn next(self#) -> String {
+        unsafe {
+            if self.finished { return String::from("") }
+            
+            auto name = call_readdir(self.handle)
+            if name.len() == 0 {
+                self#.finished = true
+                call_closedir(self.handle)
+                return String::from("")
+            }
+            return name
+        }
+    }
+    
+    pub fn close(self#) {
+        unsafe {
+            if !self.finished {
+                call_closedir(self.handle)
+                self#.finished = true
+            }
+        }
+    }
+}
+
+pub fn read_dir(path: String) -> ReadDir {
+    unsafe {
+        auto h = call_opendir(path)
+        auto is_null = h == (0:Addr)
+        return ReadDir(
+            handle = h,
+            finished = is_null
+        )
+    }
+}
+
+pub fn create_dir(path: String) -> bool {
+    return call_mkdir(path)
+}
+
+pub fn remove_dir(path: String) -> bool {
+    return call_rmdir(path)
+}
+
+fn call_exists(path: String) -> bool {
+    return sys::path_exists(path)
+}
+
+pub fn exists(path: String) -> bool {
+    unsafe {
+        return call_exists(path)
+    }
+}

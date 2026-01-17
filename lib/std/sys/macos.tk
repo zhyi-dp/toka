@@ -11,21 +11,16 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import core/types::{char, usize, Addr}
+import core/types::{char, usize, Addr, ADDR0}
 import std/string::{String}
+import core/libc::*
 
 // macOS specific argument retrieval externs.
-// _NSGetArgc returns a pointer (*i32) to the integer count of arguments.
 extern fn _NSGetArgc() -> *i32
-
-// _NSGetArgv returns a pointer to the global 'argv' variable.
-// Because Toka does not support triple pointers (***char), we treat the
-// 'argv' variable as a memory slot containing an Addr (the array base).
 extern fn _NSGetArgv() -> *Addr 
 
 /**
  * Returns the number of command-line arguments.
- * macOS implementation using _NSGetArgc.
  */
 pub fn args_impl() -> i32 {
     unsafe {
@@ -36,7 +31,6 @@ pub fn args_impl() -> i32 {
 
 /**
  * Retrieves a specific command-line argument by index.
- * macOS implementation using _NSGetArgv and manual pointer arithmetic.
  */
 pub fn get_arg_impl(i: i32) -> String {
     unsafe {
@@ -51,5 +45,115 @@ pub fn get_arg_impl(i: i32) -> String {
         auto *final_ptr = str_addr as *char
         
         return String::from(*final_ptr)
+    }
+}
+
+// === File System ===
+
+// struct dirent layout on macOS (inode64):
+// u64 d_ino      (0-8)
+// u64 d_seekoff  (8-16)
+// u16 d_reclen   (16-18)
+// u16 d_namlen   (18-20)
+// u8  d_type     (20-21)
+// char d_name[]  (21-...)
+
+pub fn opendir_impl(path: String) -> Addr {
+    unsafe {
+        return libc_opendir(path.c_str())
+    }
+}
+
+pub fn readdir_impl(dir_handle: Addr) -> String {
+    unsafe {
+        auto entry = libc_readdir(dir_handle)
+        if entry == 0:Addr {
+            return String::from("") 
+        }
+        
+        // Calculate offset to d_name
+        // d_name is at offset 21
+        auto *name_ptr = (entry + 21:Addr) as *char
+        
+        return String::from(name_ptr)
+    }
+}
+
+pub fn closedir_impl(dir_handle: Addr) {
+    unsafe {
+        libc_closedir(dir_handle)
+    }
+}
+
+pub fn mkdir_impl(path: String) -> bool {
+    unsafe {
+        // 0755 = 493 in decimal
+        return libc_mkdir(path.c_str(), 493) == 0
+    }
+}
+
+pub fn rmdir_impl(path: String) -> bool {
+    unsafe {
+        return libc_rmdir(path.c_str()) == 0
+    }
+}
+
+pub fn path_exists(path: String) -> bool {
+    unsafe {
+        // struct stat is large, allocate 4096 bytes
+        auto buf_addr = libc_malloc(4096) as Addr
+        auto res = libc_stat(path.c_str(), buf_addr)
+        // libc_free(buf_addr as *void)
+        return res == 0
+    }
+}
+
+// === Environment ===
+
+pub fn getcwd_impl() -> String {
+    unsafe {
+        // PATH_MAX is usually 1024 or 4096. 4096 is safer.
+        auto *buf# = libc_malloc(4096) as *char
+        auto res = libc_getcwd(buf, 4096)
+        
+        if res == 0:Addr {
+            // libc_free(buf as *void) // Pass pointer, not deref
+            return String::from("")
+        }
+        
+        auto *s_ptr = res as *char
+        auto s = String::from(*s_ptr) 
+        // libc_free(buf as *void)
+        return s
+    }
+}
+
+pub fn chdir_impl(path: String) -> bool {
+    unsafe {
+        return libc_chdir(path.c_str()) == 0
+    }
+}
+
+pub fn getenv_impl(name: String) -> String {
+    unsafe {
+        auto val = libc_getenv(name.c_str())
+        if val == 0:Addr {
+            return String::from("")
+        }
+        auto *s_ptr = val as *char
+        return String::from(*s_ptr)
+    }
+}
+
+pub fn setenv_impl(name: String, value: String) -> bool {
+    unsafe {
+        // overwrite = 1
+        return libc_setenv(name.c_str(), value.c_str(), 1) == 0
+    }
+}
+
+pub fn unsetenv_impl(name: String) -> bool {
+    unsafe {
+        return libc_unsetenv(name.c_str()) == 0
     }
 }
