@@ -1,0 +1,55 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// lib/core/libc.tk
+// Centralized libc declarations. 
+// The 'libc_' prefix is automatically stripped by the compiler.
+
+import core/types::{char, usize}
+
+// Memory management
+extern fn libc_malloc(size: usize) -> *void
+extern fn libc_realloc(*ptr: void, size: usize) -> *void
+extern fn libc_free(*ptr: void) -> void
+extern fn libc_memcpy(*dest: void, *src: void, n: usize) -> *void
+extern fn libc_memset(*dest: void, val: i32, n: usize) -> *void
+
+// I/O (Low level)
+extern fn libc_read(fd: i32, *buf: u8, count: i64) -> i64
+extern fn libc_write(fd: i32, *buf: u8, count: i64) -> i64
+
+// I/O (FILE*)
+extern fn libc_fopen(*filename: char, *mode: char) -> *void
+extern fn libc_fclose(*stream: void) -> i32
+extern fn libc_fread(*ptr: void, size: usize, nmemb: usize, *stream: void) -> usize
+extern fn libc_fwrite(*ptr: void, size: usize, nmemb: usize, *stream: void) -> usize
+extern fn libc_fseek(*stream: void, offset: i64, whence: i32) -> i32
+extern fn libc_ftell(*stream: void) -> i64
+extern fn libc_rewind(*stream: void) -> void
+extern fn libc_fgetc(*stream: void) -> i32
+extern fn libc_feof(*stream: void) -> i32
+
+// Strings
+extern fn libc_strlen(*s: char) -> usize
+extern fn libc_sprintf(*dest: char, *format: char, ...) -> usize
+
+// System
+extern fn libc_abort() -> void
+extern fn libc_time() -> i64
+
+// Termios & Console
+extern fn libc_tcgetattr(fd: i32, *termios_p: void) -> i32
+extern fn libc_tcsetattr(fd: i32, optional_actions: i32, *termios_p: void) -> i32
+extern fn libc_cfmakeraw(*termios_p: void) -> void
+extern fn libc_getchar() -> i32
+extern fn libc_putchar(c: i32) -> i32

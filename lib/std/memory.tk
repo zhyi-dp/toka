@@ -20,15 +20,9 @@
 // the corresponding symbols in the linked C standard library.
 // =============================================================================
 
-import core/types::{usize, Addr, char}
+import core/types::{usize}
 import std/io::println
-
-extern fn libc_malloc(size: usize) -> *void
-extern fn libc_free(*ptr: void) -> void
-extern fn libc_memcpy(*dest: void, *src: void, n: usize) -> usize
-extern fn libc_memset(*dest: void, val: i32, n: usize) -> usize
-extern fn libc_abort() -> void
-extern fn libc_time() -> i64
+import core/libc::*
 
 // export Magic Hooks
 pub fn __toka_alloc(size: usize) -> *void {
