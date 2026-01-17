@@ -1,0 +1,61 @@
+// Termios structure for MacOS (72 bytes)
+// c_iflag: u64 (0)
+// c_oflag: u64 (8)
+// c_cflag: u64 (16)
+// c_lflag: u64 (24)
+// c_cc: [u8; 20] (32)
+// padding: 4 bytes (52->56)
+// c_ispeed: u64 (56)
+// c_ospeed: u64 (64)
+
+pub shape Termios (
+    c_iflag: u64,
+    c_oflag: u64,
+    c_cflag: u64,
+    c_lflag: u64,
+    c_cc: [u8; 20],
+    _pad: [u8; 4],
+    c_ispeed: u64,
+    c_ospeed: u64
+)
+
+// Constants
+// Note: These are specific to MacOS/Darwin.
+// Linux would differ (especially flags width and values).
+
+// Local Mode Flags (c_lflag)
+pub const ECHO = 0x00000008
+pub const ICANON = 0x00000100
+
+// Optional actions for tcsetattr
+pub const TCSANOW = 0
+pub const TCSADRAIN = 1
+pub const TCSAFLUSH = 2
+
+// Indices for c_cc
+pub const VMIN = 16
+pub const VTIME = 17
+
+extern fn tcgetattr(fd: i32, *termios_p: Termios) -> i32
+extern fn tcsetattr(fd: i32, optional_actions: i32, *termios_p: Termios) -> i32
+extern fn cfmakeraw(*termios_p: Termios) -> void
+
+/*
+pub fn tcgetattr(fd: i32, *termios_p: Termios) -> i32 {
+    unsafe {
+        return libc_tcgetattr(fd, *termios_p)
+    }
+}
+
+pub fn tcsetattr(fd: i32, optional_actions: i32, *termios_p: Termios) -> i32 {
+    unsafe {
+        return libc_tcsetattr(fd, optional_actions, *termios_p)
+    }
+}
+
+pub fn cfmakeraw(*termios_p: Termios) {
+    unsafe {
+        libc_cfmakeraw(termios_p)
+    }
+}
+*/

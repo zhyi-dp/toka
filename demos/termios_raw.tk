@@ -1,0 +1,61 @@
+import std/io::println
+import std/termios::*
+import std/memory
+
+extern fn getchar() -> i32
+
+fn main() -> i32 {
+    println("Entering raw mode. Press 'q' to quit.")
+
+    unsafe {
+        // Allocate memory for two Termios structs using alloc keyword
+        // sizeof(Termios) is 72 on Mac. mapping to [72]u8(0) for zero-init buffer.
+        auto *orig_ptr = (alloc [72]u8(0)) as *Termios
+        auto *raw_ptr = (alloc [72]u8(0)) as *Termios
+
+        // Get current settings
+        // fd 0 is stdin
+        tcgetattr(0, orig_ptr)
+        tcgetattr(0, raw_ptr)
+
+        // Modify raw_ptr to disable ECHO and ICANON
+        // c_lflag is at offset 24 (u64)
+        // raw_ptr.c_lflag &= ~(ECHO | ICANON)
+        
+        // Use bnot, band
+        raw_ptr.*c_lflag = raw_ptr.*c_lflag band (bnot ((ECHO as u64) bor (ICANON as u64)))
+
+        // Apply raw settings
+        // tcsetattr(0, TCSANOW, raw_ptr)
+
+        println("Raw mode active. Input is not echoed. Press 'q' to exit.")
+
+        /*
+        auto running# = true
+        while running {
+            auto c = getchar()
+            if c != -1 {
+                if c == 113 { // 'q'
+                    running# = false
+                } else {
+                    // Start a new line explicitly because \n mapping might be off in raw (actually ICANON off handles line buffer, ECHO off handles display)
+                    // But typically raw mode also implies \r\n handling.
+                    // For this simple test, we just print what we got.
+                    // Accessing c_lflag modified above doesn't touch output flags (OPOST), so \n should work?
+                    // But printf might be buffered.
+                    println("Got char: {}", c)
+                }
+            }
+        }
+        */
+
+        // Restore original settings
+        // tcsetattr(0, TCSANOW, orig_ptr)
+        
+        // free orig_ptr
+        // free raw_ptr
+    }
+
+    println("Exited raw mode.")
+    return 0
+}

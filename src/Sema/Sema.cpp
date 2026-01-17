@@ -26,6 +26,8 @@
 namespace toka {
 
 bool Sema::checkModule(Module &M) {
+  llvm::errs() << "DEBUG: checkModule Enters. Functions: " << M.Functions.size()
+               << "\n";
   enterScope();       // Module-level global scope
   CurrentModule = &M; // Set context
   // 1. Register all globals (Functions, Structs, etc.)
@@ -35,6 +37,7 @@ bool Sema::checkModule(Module &M) {
   checkShapeSovereignty();
 
   // 2b. Check function bodies (reordered)
+  llvm::errs() << "DEBUG: checkModule Checking Functions...\n";
   for (auto &Fn : M.Functions) {
     checkFunction(Fn.get());
   }
@@ -476,6 +479,7 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
 }
 
 void Sema::checkFunction(FunctionDecl *Fn) {
+  llvm::errs() << "DEBUG: Checking function: " << Fn->Name << "\n";
   CurrentFunctionReturnType = Fn->ReturnType;
   enterScope(); // Function scope
 

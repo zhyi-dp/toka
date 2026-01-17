@@ -1456,6 +1456,7 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
 // Stage 5c: Object-Oriented Call Expression Check
 std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   std::string CallName = Call->Callee;
+  llvm::errs() << "DEBUG: checkCallExpr Entry: " << CallName << "\n";
 
   // 1. Primitives (Constructors/Casts) e.g. i32(42)
   if (CallName == "i32" || CallName == "u32" || CallName == "i64" ||
@@ -1541,12 +1542,22 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
     SymbolInfo modSpec;
     if (CurrentScope->lookup(ModName, modSpec) && modSpec.ReferencedModule) {
       ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
+      llvm::errs() << "DEBUG: Looking up '" << FuncName << "' in module '"
+                   << target->Name << "'\n";
       if (target->Functions.count(FuncName))
         Fn = target->Functions[FuncName];
       else if (target->Externs.count(FuncName))
         Ext = target->Externs[FuncName];
       else if (target->Shapes.count(FuncName))
         Sh = target->Shapes[FuncName];
+
+      if (!Fn && !Ext && !Sh) {
+        llvm::errs() << "DEBUG: Symbol not found. Available functions:\n";
+        for (auto const &[n, f] : target->Functions)
+          llvm::errs() << "  Fn: " << n << "\n";
+        for (auto const &[n, f] : target->Externs)
+          llvm::errs() << "  Ext: " << n << "\n";
+      }
     } else {
       error(Call, "Module '" + ModName + "' not found or not imported");
       return toka::Type::fromString("unknown");

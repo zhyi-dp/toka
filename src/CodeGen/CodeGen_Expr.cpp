@@ -2022,11 +2022,13 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
     calleeName = call->ResolvedFn->Name;
   } else if (call->ResolvedExtern) {
     calleeName = call->ResolvedExtern->Name;
+    genExtern(call->ResolvedExtern);
   }
 
   if (calleeName.size() > 5 && calleeName.substr(0, 5) == "libc_") {
     calleeName = calleeName.substr(5);
   }
+
   llvm::Function *callee = m_Module->getFunction(calleeName);
   if (!callee && call->ResolvedFn) {
     genFunction(call->ResolvedFn, "", true);
