@@ -34,6 +34,7 @@ extern fn libc_write(fd: i32, *buf: u8, count: i64) -> i64
 // I/O (FILE*)
 extern fn libc_fopen(*filename: char, *mode: char) -> *void
 extern fn libc_fclose(*stream: void) -> i32
+extern fn libc_fdopen(fd: i32, *mode: char) -> *void
 extern fn libc_fflush(*stream: void) -> i32
 extern fn libc_remove(*filename: char) -> i32
 extern fn libc_rename(*old_path: char, *new_path: char) -> i32

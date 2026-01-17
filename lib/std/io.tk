@@ -116,4 +116,79 @@ impl File {
             return s
         }
     }
+
+    pub fn flush(self) {
+        unsafe {
+            if self.opened {
+                libc_fflush(self.*handle)
+            }
+        }
+    }
+
+    pub fn seek(self, offset: i64, whence: i32) -> i32 {
+        unsafe {
+            if !self.opened { return -1 }
+            return libc_fseek(self.*handle, offset, whence)
+        }
+    }
+
+    pub fn tell(self) -> i64 {
+        unsafe {
+            if !self.opened { return -1:i64 }
+            return libc_ftell(self.*handle)
+        }
+    }
+}
+
+// === Global I/O Functions ===
+
+pub fn stdin() -> File {
+    unsafe {
+        auto *p = libc_fdopen(0, "r" as *char)
+        return File(*handle = *p, opened = (*p != nullptr))
+    }
+}
+
+pub fn stdout() -> File {
+    unsafe {
+        auto *p = libc_fdopen(1, "w" as *char)
+        return File(*handle = *p, opened = (*p != nullptr))
+    }
+}
+
+pub fn stderr() -> File {
+    unsafe {
+        auto *p = libc_fdopen(2, "w" as *char)
+        return File(*handle = *p, opened = (*p != nullptr))
+    }
+}
+
+pub fn print(s: String) {
+    auto out = stdout()
+    out.write(s)
+}
+
+// === File Utilities ===
+
+pub fn exists(path: String) -> bool {
+    unsafe {
+        auto *p = libc_fopen(path.c_str(), "r" as *char)
+        if *p != nullptr {
+            libc_fclose(*p)
+            return true
+        }
+        return false
+    }
+}
+
+pub fn remove_file(path: String) -> bool {
+    unsafe {
+        return libc_remove(path.c_str()) == 0
+    }
+}
+
+pub fn rename_file(old_path: String, new_path: String) -> bool {
+    unsafe {
+        return libc_rename(old_path.c_str(), new_path.c_str()) == 0
+    }
 }
