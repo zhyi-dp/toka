@@ -39,23 +39,3 @@ pub const VTIME = 17
 extern fn tcgetattr(fd: i32, *termios_p: Termios) -> i32
 extern fn tcsetattr(fd: i32, optional_actions: i32, *termios_p: Termios) -> i32
 extern fn cfmakeraw(*termios_p: Termios) -> void
-
-/*
-pub fn tcgetattr(fd: i32, *termios_p: Termios) -> i32 {
-    unsafe {
-        return libc_tcgetattr(fd, *termios_p)
-    }
-}
-
-pub fn tcsetattr(fd: i32, optional_actions: i32, *termios_p: Termios) -> i32 {
-    unsafe {
-        return libc_tcsetattr(fd, optional_actions, *termios_p)
-    }
-}
-
-pub fn cfmakeraw(*termios_p: Termios) {
-    unsafe {
-        libc_cfmakeraw(termios_p)
-    }
-}
-*/
