@@ -192,8 +192,10 @@ public:
 class ShapeType : public Type {
 public:
   std::string Name;
-  // potentially hold pointer to ShapeDecl later
+  ShapeDecl *Decl = nullptr;
   ShapeType(const std::string &name) : Type(Shape), Name(name) {}
+  void resolve(ShapeDecl *decl);
+  bool isResolved() const { return Decl != nullptr; }
   std::string toString() const override;
   bool equals(const Type &other) const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;

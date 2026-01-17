@@ -618,6 +618,23 @@ void Sema::analyzeShapes(Module &M) {
       // 4. Create Type Object
       member.ResolvedType = toka::Type::fromString(resolvedName);
 
+      // [New] Populate ShapeDecl pointer in ShapeType
+      std::shared_ptr<toka::Type> inner = member.ResolvedType;
+      // Recursively unwrap
+      while (inner->isPointer() || inner->isArray()) {
+        if (auto p = std::dynamic_pointer_cast<toka::PointerType>(inner))
+          inner = p->PointeeType;
+        else if (auto a = std::dynamic_pointer_cast<toka::ArrayType>(inner))
+          inner = a->ElementType;
+        else
+          break;
+      }
+      if (auto *st = dynamic_cast<toka::ShapeType *>(inner.get())) {
+        if (ShapeMap.count(st->Name)) {
+          st->resolve(ShapeMap[st->Name]);
+        }
+      }
+
       // 5. Basic Validation (Optional but good)
       if (member.ResolvedType->isUnknown()) {
         // Maybe just log, or soft error?

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "toka/Type.h"
+#include "toka/AST.h"
 #include <memory>
 #include <sstream>
 #include <string>
@@ -300,7 +301,17 @@ bool ShapeType::isCompatibleWith(const Type &target) const {
 }
 
 std::shared_ptr<Type> ShapeType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+  auto clone = cloneWithAttrs(this, w, n);
+  if (Decl)
+    std::dynamic_pointer_cast<ShapeType>(clone)->resolve(Decl);
+  return clone;
+}
+
+void ShapeType::resolve(ShapeDecl *decl) {
+  Decl = decl;
+  if (decl) {
+    Name = decl->Name;
+  }
 }
 
 std::string TupleType::toString() const {
