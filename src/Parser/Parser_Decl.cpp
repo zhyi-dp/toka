@@ -1,14 +1,296 @@
-// Auto-refactored split
 #include "toka/Parser.h"
+#include <algorithm>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <algorithm>
-
 
 namespace toka {
 
+std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
+  match(TokenType::KwShape); // Optional
+  match(TokenType::KwPacked);
+  bool packed = previous().Kind == TokenType::KwPacked;
+  if (packed)
+    consume(TokenType::KwShape, "Expected 'shape' after 'packed'");
+
+  Token name = consume(TokenType::Identifier, "Expected shape name");
+  ShapeKind kind = ShapeKind::Struct;
+  std::vector<ShapeMember> members;
+  int64_t arraySize = 0;
+
+  match(TokenType::Equal);
+
+  if (match(TokenType::LBracket)) {
+    kind = ShapeKind::Array;
+    std::string elemTy = advance().Text;
+    consume(TokenType::Semicolon, "Expected ';'");
+    arraySize = std::stoull(consume(TokenType::Integer, "Expected size").Text,
+                            nullptr, 0);
+    consume(TokenType::RBracket, "Expected ']'");
+    ShapeMember m;
+    m.Name = "0";
+    m.Type = elemTy;
+    members.push_back(std::move(m));
+  } else if (match(TokenType::LParen)) {
+    bool isEnum = false;
+    int depth = 0;
+    for (int i = 0;; ++i) {
+      TokenType t = peekAt(i).Kind;
+      if (t == TokenType::EndOfFile || (t == TokenType::RParen && depth == 0))
+        break;
+      if (depth == 0 && (t == TokenType::Pipe || t == TokenType::Equal)) {
+        isEnum = true;
+        break;
+      }
+      if (t == TokenType::LParen)
+        depth++;
+      else if (t == TokenType::RParen)
+        depth--;
+    }
+
+    if (isEnum) {
+      kind = ShapeKind::Enum;
+      while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+        ShapeMember v;
+        v.Name = consume(TokenType::Identifier, "Expected variant").Text;
+        if (match(TokenType::LParen)) {
+          v.SubKind = ShapeKind::Tuple;
+          while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+            ShapeMember field;
+            field.Type = advance().Text;
+            v.SubMembers.push_back(std::move(field));
+            if (!check(TokenType::RParen))
+              match(TokenType::Comma);
+          }
+          consume(TokenType::RParen, "Expected ')'");
+        }
+        if (match(TokenType::Equal)) {
+          v.TagValue = std::stoull(
+              consume(TokenType::Integer, "Expected tag").Text, nullptr, 0);
+        }
+        members.push_back(std::move(v));
+        if (!check(TokenType::RParen))
+          match(TokenType::Pipe);
+      }
+    } else {
+      for (int i = 0;; ++i) {
+        if (peekAt(i).Kind == TokenType::EndOfFile ||
+            peekAt(i).Kind == TokenType::RParen)
+          break;
+        if (peekAt(i).Kind == TokenType::Colon) {
+          kind = ShapeKind::Struct;
+          break;
+        }
+        if (peekAt(i).Kind == TokenType::Comma) {
+          kind = ShapeKind::Tuple;
+          break;
+        }
+      }
+      int idx = 0;
+      while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+        ShapeMember m;
+        if (kind == ShapeKind::Struct) {
+          std::string prefixType = "";
+          if (match(TokenType::Star)) {
+            prefixType = "*";
+            if (previous().HasNull)
+              prefixType += "?";
+            else if (previous().IsSwappablePtr)
+              prefixType += "!";
+          } else if (match(TokenType::Caret)) {
+            prefixType = "^";
+            if (previous().HasNull)
+              prefixType += "?";
+            else if (previous().IsSwappablePtr)
+              prefixType += "!";
+          } else if (match(TokenType::Tilde)) {
+            prefixType = "~";
+            if (previous().HasNull)
+              prefixType += "?";
+            else if (previous().IsSwappablePtr)
+              prefixType += "!";
+          } else if (match(TokenType::Ampersand)) {
+            prefixType = "&";
+            if (previous().HasNull)
+              prefixType += "?";
+            else if (previous().IsSwappablePtr)
+              prefixType += "!";
+          }
+
+          m.Name = consume(TokenType::Identifier, "Expected field name").Text;
+          consume(TokenType::Colon, "Expected ':'");
+
+          m.Type = prefixType; // Start with prefix
+        } else {
+          m.Name = std::to_string(idx++);
+          m.Type = "";
+        }
+
+        if (kind == ShapeKind::Struct && m.Type.empty()) {
+          // If we didn't have a prefix, initiate empty
+          m.Type = "";
+        }
+        int bracketDepth = 0;
+        while (!check(TokenType::EndOfFile)) {
+          if (check(TokenType::LBracket))
+            bracketDepth++;
+          if (check(TokenType::RBracket))
+            bracketDepth--;
+
+          if (bracketDepth == 0 &&
+              (check(TokenType::Comma) || check(TokenType::RParen)))
+            break;
+
+          m.Type += advance().Text;
+        }
+        members.push_back(std::move(m));
+        if (!check(TokenType::RParen))
+          match(TokenType::Comma);
+      }
+    }
+    match(TokenType::RParen);
+  } else {
+    error(peek(), "Expected '(' or '[' after shape name");
+  }
+
+  auto decl = std::make_unique<ShapeDecl>(isPub, name.Text, kind,
+                                          std::move(members), packed);
+  decl->ArraySize = arraySize;
+  decl->FileName = m_CurrentFile;
+  decl->setLocation(name, m_CurrentFile);
+  return decl;
+}
+
+std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
+  if (match(TokenType::KwPub))
+    isPub = true;
+  consume(TokenType::KwFn, "Expected 'fn'");
+  Token name;
+  if (check(TokenType::KwMain)) {
+    name = advance();
+    name.Kind = TokenType::Identifier;
+  } else if (check(TokenType::KwNew)) {
+    name = advance();
+    name.Text = "new";
+    name.Kind = TokenType::Identifier;
+  } else if (check(TokenType::Identifier) || check(TokenType::KwFree) ||
+             check(TokenType::KwAlloc)) {
+    name = advance();
+  } else {
+    error(peek(), "Expected function name");
+    return nullptr;
+  }
+  consume(TokenType::LParen, "Expected '('");
+  std::vector<FunctionDecl::Arg> args;
+  bool isVariadic = false;
+  bool firstArg = true;
+  if (!check(TokenType::RParen)) {
+    do {
+      if (check(TokenType::DotDotDot))
+        break;
+
+      if (firstArg && match(TokenType::KwSelf)) {
+        FunctionDecl::Arg arg;
+        arg.Name = "self";
+        arg.Type = "Self";
+        arg.HasPointer = false;
+        // Capture mutability from token (e.g. self#)
+        if (previous().HasWrite) {
+          arg.IsMutable = true;
+          arg.IsValueMutable = true;
+        }
+        args.push_back(arg);
+        firstArg = false;
+        continue;
+      }
+      firstArg = false;
+
+      bool isRef = match(TokenType::Ampersand);
+      bool hasPointer = false;
+      bool isUnique = false;
+      bool isShared = false;
+
+      bool isRebindable = false;
+      bool isPtrNullable = false;
+
+      if (match(TokenType::Caret)) {
+        isUnique = true;
+        Token t = previous();
+        isRebindable = t.IsSwappablePtr;
+        isPtrNullable = t.HasNull;
+      } else if (check(TokenType::Star)) {
+        Token t = advance();
+        hasPointer = true;
+        isRebindable = t.IsSwappablePtr;
+        isPtrNullable = t.HasNull;
+        if (t.IsSwappablePtr)
+          isRef = true; // Legacy support? *# implies rebindable pointer,
+                        // usually by reference
+      } else if (match(TokenType::Tilde)) {
+        isShared = true;
+        Token t = previous();
+        isRebindable = t.IsSwappablePtr;
+        isPtrNullable = t.HasNull;
+      }
+      Token argName = consume(TokenType::Identifier, "Expected argument name");
+      std::string argType = "i64"; // fallback
+      if (match(TokenType::Colon)) {
+        argType = "";
+        while (!check(TokenType::Comma) && !check(TokenType::RParen) &&
+               !check(TokenType::EndOfFile)) {
+          argType += advance().Text;
+        }
+      }
+      FunctionDecl::Arg arg;
+      arg.Name = argName.Text;
+      arg.Type = argType;
+      arg.HasPointer = hasPointer;
+      arg.IsReference = isRef;
+      arg.IsMutable = argName.HasWrite;
+      arg.IsNullable = argName.HasNull;
+
+      // New Permissions
+      arg.IsUnique = isUnique;
+      arg.IsShared = isShared;
+      arg.IsRebindable = isRebindable; // Captured from token
+      arg.IsPointerNullable = isPtrNullable;
+      arg.IsValueMutable = argName.HasWrite;
+      arg.IsValueNullable = argName.HasNull;
+
+      std::cerr << "DEBUG: Parsed Arg " << arg.Name
+                << " IsRebindable=" << arg.IsRebindable << "\n";
+
+      args.push_back(std::move(arg));
+    } while (match(TokenType::Comma));
+  }
+  if (match(TokenType::DotDotDot)) {
+    isVariadic = true;
+  }
+  consume(TokenType::RParen, "Expected ')'");
+
+  // Return Type
+  std::string retType = "void"; // default
+  if (match(TokenType::Arrow)) {
+    retType = "";
+    while (!check(TokenType::LBrace) && !isEndOfStatement() &&
+           !check(TokenType::EndOfFile)) {
+      retType += advance().Text;
+    }
+  }
+
+  std::unique_ptr<BlockStmt> body = nullptr;
+  if (check(TokenType::LBrace)) {
+    body = parseBlock();
+  } else {
+    expectEndOfStatement();
+  }
+  auto decl = std::make_unique<FunctionDecl>(isPub, name.Text, args,
+                                             std::move(body), retType);
+  decl->IsVariadic = isVariadic;
+  decl->setLocation(name, m_CurrentFile);
+  return decl;
+}
 
 std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
   consume(TokenType::KwExtern, "Expected 'extern'");
@@ -187,15 +469,6 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
   return decl;
 }
 
-std::unique_ptr<Stmt> Parser::parseDeleteStmt() {
-  Token kw = consume(TokenType::KwDelete, "Expected 'del' or 'delete'");
-  auto expr = parseExpr();
-  expectEndOfStatement();
-  auto node = std::make_unique<DeleteStmt>(std::move(expr));
-  node->setLocation(kw, m_CurrentFile);
-  return node;
-}
-
 std::unique_ptr<ImplDecl> Parser::parseImpl() {
   consume(TokenType::KwImpl, "Expected 'impl'");
   Token firstIdent = consume(TokenType::Identifier, "Expected identifier");
@@ -330,94 +603,5 @@ std::unique_ptr<TraitDecl> Parser::parseTrait(bool isPub) {
   consume(TokenType::RBrace, "Expected '}'");
   return std::make_unique<TraitDecl>(isPub, name.Text, std::move(methods));
 }
-
-std::unique_ptr<Stmt> Parser::parseUnsafeStmt() {
-  Token tok = consume(TokenType::KwUnsafe, "Expected 'unsafe'");
-  if (check(TokenType::LBrace)) {
-    auto block = parseBlock();
-    auto node = std::make_unique<UnsafeStmt>(std::move(block));
-    node->setLocation(tok, m_CurrentFile);
-    return node;
-  }
-  if (check(TokenType::KwFree)) {
-    auto freeStmt = parseFreeStmt();
-    auto node = std::make_unique<UnsafeStmt>(std::move(freeStmt));
-    node->setLocation(tok, m_CurrentFile);
-    return node;
-  }
-  // 行级 unsafe: unsafe p#[0] = 1
-  auto stmt = parseStmt();
-  auto node = std::make_unique<UnsafeStmt>(std::move(stmt));
-  node->setLocation(tok, m_CurrentFile);
-  return node;
-}
-
-std::unique_ptr<Expr> Parser::parseUnsafeExpr() {
-  Token tok = previous(); // assume KwUnsafe matched
-  auto expr = parseExpr();
-  auto node = std::make_unique<UnsafeExpr>(std::move(expr));
-  node->setLocation(tok, m_CurrentFile);
-  return node;
-}
-
-std::unique_ptr<Stmt> Parser::parseFreeStmt() {
-  Token tok = consume(TokenType::KwFree, "Expected 'free'");
-  std::unique_ptr<Expr> count = nullptr;
-  if (match(TokenType::LBracket)) {
-    count = parseExpr();
-    consume(TokenType::RBracket, "Expected ']'");
-  }
-  auto expr = parseExpr();
-  expectEndOfStatement();
-  auto node = std::make_unique<FreeStmt>(std::move(expr), std::move(count));
-  node->setLocation(tok, m_CurrentFile);
-  return node;
-}
-
-std::unique_ptr<Expr> Parser::parseAllocExpr() {
-  Token tok = previous(); // assume KwAlloc matched
-  bool isArray = false;
-  std::unique_ptr<Expr> arraySize = nullptr;
-
-  if (match(TokenType::LBracket)) {
-    isArray = true;
-    arraySize = parseExpr();
-    consume(TokenType::RBracket, "Expected ']'");
-  }
-
-  Token typeTok =
-      consume(TokenType::Identifier, "Expected type name after 'alloc'");
-  std::string typeName = typeTok.Text;
-
-  std::unique_ptr<Expr> init = nullptr;
-  if (match(TokenType::LParen)) {
-    // Check if it's named field initialization: Hero(id = 1, hp = 2)
-    if (check(TokenType::Identifier) && checkAt(1, TokenType::Equal)) {
-      std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
-      while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
-        Token fieldName = consume(TokenType::Identifier, "Expected field name");
-        consume(TokenType::Equal, "Expected '=' after field name");
-        fields.push_back({fieldName.Text, parseExpr()});
-        match(TokenType::Comma);
-      }
-      init = std::make_unique<InitStructExpr>(typeName, std::move(fields));
-    } else if (!check(TokenType::RParen)) {
-      // Positional args
-      std::vector<std::unique_ptr<Expr>> args;
-      do {
-        args.push_back(parseExpr());
-      } while (match(TokenType::Comma));
-      init = std::make_unique<CallExpr>(typeName, std::move(args));
-    }
-    consume(TokenType::RParen, "Expected ')'");
-  }
-
-  auto node = std::make_unique<AllocExpr>(typeName, std::move(init), isArray,
-                                          std::move(arraySize));
-  node->setLocation(tok, m_CurrentFile);
-  return node;
-}
-
-
 
 } // namespace toka
