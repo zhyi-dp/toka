@@ -173,7 +173,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       match(TokenType::PlusPlus) || match(TokenType::MinusMinus) ||
       match(TokenType::Caret) || match(TokenType::Tilde) ||
       match(TokenType::Star) || match(TokenType::Ampersand) ||
-      match(TokenType::At)) {
+      match(TokenType::At) || match(TokenType::KwBnot)) {
     Token tok = previous();
     TokenType op = tok.Kind;
     auto sub = parsePrimary();

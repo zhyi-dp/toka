@@ -1173,6 +1173,12 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
     }
     return rhsType;
   }
+  if (Unary->Op == TokenType::KwBnot) {
+    if (!rhsType->isInteger()) {
+      error(Unary, "operand of 'bnot' must be integer, got '" + rhsInfo + "'");
+    }
+    return rhsType;
+  }
   return rhsType;
 }
 
@@ -1374,6 +1380,14 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     if (!isValid) {
       error(Bin,
             "operands of '" + Bin->Op + "' must be numeric, got '" + LHS + "'");
+    }
+    return lhsType->withAttributes(false, lhsType->IsNullable);
+  }
+
+  if (Bin->Op == "band" || Bin->Op == "bor" || Bin->Op == "bxor" ||
+      Bin->Op == "bshl" || Bin->Op == "bshr") {
+    if (!lhsType->isInteger() || !rhsType->isInteger()) {
+      error(Bin, "operands of '" + Bin->Op + "' must be integers");
     }
     return lhsType->withAttributes(false, lhsType->IsNullable);
   }

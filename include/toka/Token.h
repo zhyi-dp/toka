@@ -66,6 +66,12 @@ enum class TokenType {
   KwPass,
   KwTo,
   KwOr,
+  KwBand,
+  KwBor,
+  KwBxor,
+  KwBnot,
+  KwBshl,
+  KwBshr,
 
   KwTask,
   KwSuspend,
@@ -219,6 +225,14 @@ inline int getPrecedence(TokenType T) {
     return 4;
   case TokenType::Or:
     return 3;
+  case TokenType::KwBshl:
+  case TokenType::KwBshr:
+    return 20; // High precedence (multiplication level)
+  case TokenType::KwBand:
+    return 10; // Medium precedence (additive level)
+  case TokenType::KwBor:
+  case TokenType::KwBxor:
+    return 5; // Low precedence (comparison level)
   default:
     return -1;
   }

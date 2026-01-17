@@ -75,6 +75,7 @@ public:
 
   virtual bool isBoolean() const { return false; }
   virtual bool isInteger() const { return false; }
+  virtual bool isSignedInteger() const { return false; }
   virtual bool isFloatingPoint() const { return false; }
 
   virtual std::shared_ptr<Type> getPointeeType() const { return nullptr; }
@@ -115,6 +116,10 @@ public:
     return Name == "i32" || Name == "i64" || Name == "u32" || Name == "u64" ||
            Name == "i8" || Name == "u8" || Name == "i16" || Name == "u16" ||
            Name == "usize" || Name == "char";
+  }
+  bool isSignedInteger() const override {
+    return Name == "i32" || Name == "i64" || Name == "i8" || Name == "i16" ||
+           Name == "isize";
   }
   bool isFloatingPoint() const override {
     return Name == "f32" || Name == "f64";

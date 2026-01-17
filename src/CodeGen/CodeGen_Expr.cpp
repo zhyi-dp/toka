@@ -771,6 +771,43 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     // Should have been handled above
     return nullptr;
   }
+  if (bin->Op == "band")
+    return m_Builder.CreateAnd(lhs, rhs, "andtmp");
+  if (bin->Op == "bor")
+    return m_Builder.CreateOr(lhs, rhs, "ortmp");
+  if (bin->Op == "bxor")
+    return m_Builder.CreateXor(lhs, rhs, "xortmp");
+  if (bin->Op == "bshl")
+    return m_Builder.CreateShl(lhs, rhs, "shltmp");
+  if (bin->Op == "bshr") {
+    // Check signedness of LHS
+    if (lhs->getType()->isIntegerTy()) {
+      // If type implies signedness (in Toka Types, not LLVM types which are
+      // opaque) We need to look up source type. But genBinaryExpr has limited
+      // Type info unless passed or resolved. Since Toka relies on Sema for
+      // types, CodeGen often relies on 'isSigned' property if stored? LLVM
+      // integer types don't carry sign. Does CodeGen store resolved types in
+      // AST? Yes, Bin->LHS->ResolvedType.
+      bool isSigned = false;
+      if (bin->LHS->ResolvedType) {
+        isSigned = bin->LHS->ResolvedType->isSignedInteger();
+        // Or check if it starts with 'i' vs 'u'.
+        // AST ResolvedType is standard way.
+      } else {
+        // Fallback: Default to arithmetic right shift for safety? Or logical?
+        // C uses arith for signed, logical for unsigned.
+        // If we don't know, AShr is usually safer for general math, LShr for
+        // bitwise. Toka "bshr" is explicitly Bitwise. However, user said
+        // "i8...i64 -> ashr", "u8...u64 -> lshr". We MUST check type. Let's
+        // assume ResolvedType is populated by Sema. Checking ResolvedType.
+      }
+      if (isSigned)
+        return m_Builder.CreateAShr(lhs, rhs, "ashrtmp");
+      else
+        return m_Builder.CreateLShr(lhs, rhs, "lshrtmp");
+    }
+    return m_Builder.CreateLShr(lhs, rhs, "lshrtmp"); // Default
+  }
   return nullptr;
 }
 
@@ -800,6 +837,14 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
                                    "predec_new");
     m_Builder.CreateStore(newVal, addr);
     return newVal;
+  }
+
+  if (unary->Op == TokenType::KwBnot) {
+    PhysEntity rhs_ent = genExpr(unary->RHS.get()).load(m_Builder);
+    llvm::Value *rhs = rhs_ent.load(m_Builder);
+    if (!rhs)
+      return nullptr;
+    return m_Builder.CreateNot(rhs, "nottmp");
   }
 
   // Identity and address-of: *p, &p
