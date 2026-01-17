@@ -359,7 +359,70 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return toka::Type::fromString("nullptr");
   } else if (auto *None = dynamic_cast<NoneExpr *>(E)) {
     return toka::Type::fromString("none");
-  } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) { // Legacy Dispatch
+  } else if (auto *Cast = dynamic_cast<CastExpr *>(E)) {
+    auto srcType = checkExpr(Cast->Expression.get());
+    auto targetType = toka::Type::fromString(Cast->TargetType);
+
+    // Rule: Numeric Casts (Always allowed for standard numeric types)
+    bool srcIsNumeric = srcType->isInteger() || srcType->isFloatingPoint();
+    bool targetIsNumeric =
+        targetType->isInteger() || targetType->isFloatingPoint();
+
+    // Rule: Pointer Morphologies or Addr
+    bool srcIsAddr = (srcType->toString() == "Addr" ||
+                      resolveType("Addr") == srcType->toString());
+    bool targetIsAddr =
+        (Cast->TargetType == "Addr" || resolveType("Addr") == Cast->TargetType);
+
+    bool srcIsRaw = srcType->isRawPointer();
+    bool targetIsRaw = targetType->isRawPointer();
+
+    if (srcIsNumeric && targetIsNumeric) {
+      // Normal numeric cast, allow.
+    } else if (targetType->isSmartPointer() && !srcType->isSmartPointer()) {
+      // Rule: Smart Pointer Creation Restriction
+      DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_SMART_PTR_FROM_STACK,
+                               Cast->TargetType[0]);
+      HasError = true;
+    } else if (targetIsAddr) {
+      // Rule: Addr can be cast from Addr, Raw Pointer, or Numeric
+      if (!(srcIsAddr || srcIsRaw || srcIsNumeric)) {
+        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
+                                 srcType->toString(), Cast->TargetType);
+        HasError = true;
+      }
+    } else if (srcIsAddr) {
+      // Rule: Addr can be cast to Addr, Raw Pointer, or Numeric
+      if (!(targetIsAddr || targetIsRaw || targetIsNumeric)) {
+        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
+                                 srcType->toString(), Cast->TargetType);
+        HasError = true;
+      }
+    } else if (targetIsRaw) {
+      // Rule: Raw Pointer can be cast from Addr or another Raw Pointer
+      if (!(srcIsAddr || srcIsRaw)) {
+        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
+                                 srcType->toString(), Cast->TargetType);
+        HasError = true;
+      }
+    } else if (srcIsRaw) {
+      // Rule: Raw Pointer can be cast to Addr or another Raw Pointer
+      if (!(targetIsAddr || targetIsRaw)) {
+        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
+                                 srcType->toString(), Cast->TargetType);
+        HasError = true;
+      }
+    } else if (!srcType->equals(*targetType)) {
+      // Fallback for other things? E.g. compatible aliases
+      if (!isTypeCompatible(targetType, srcType)) {
+        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
+                                 srcType->toString(), Cast->TargetType);
+        HasError = true;
+      }
+    }
+
+    return targetType;
+  } else if (auto *Bin = dynamic_cast<BinaryExpr *>(E)) {
     return checkBinaryExpr(Bin);
   } else if (auto *ie = dynamic_cast<IfExpr *>(E)) {
 
@@ -1188,14 +1251,11 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         error(me, "match on encapsulated type '" + targetType +
                       "' requires a default '_' branch (Rule 412)");
       }
+      return toka::Type::fromString(resultType);
     }
 
     return toka::Type::fromString(resultType);
-  } else if (auto *Cast = dynamic_cast<CastExpr *>(E)) {
-    checkExpr(Cast->Expression.get());
-    return toka::Type::fromString(Cast->TargetType);
   }
-
   return toka::Type::fromString("unknown");
 }
 
@@ -1263,15 +1323,21 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
             error(Unary,
                   "cannot move '" + Var->Name + "' while it is borrowed");
           }
-          // Move Semantics: If already unique, stay unique (return Move).
-          // If not unique (e.g. primitive), create unique.
+          // Move Semantics: Only allowed if already same smart pointer
+          // morphology.
           if (rhsType->isUniquePtr())
             return rhsType;
+          DiagnosticEngine::report(getLoc(Unary),
+                                   DiagID::ERR_SMART_PTR_FROM_STACK, "^");
+          HasError = true;
           return std::make_shared<toka::UniquePointerType>(rhsType);
         } else if (Unary->Op == TokenType::Tilde) {
           if (rhsType->isSharedPtr()) {
             return rhsType; // Idempotent
           }
+          DiagnosticEngine::report(getLoc(Unary),
+                                   DiagID::ERR_SMART_PTR_FROM_STACK, "~");
+          HasError = true;
           auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
           sh->IsNullable = Unary->HasNull;
           sh->IsWritable = Unary->IsRebindable;
@@ -1317,12 +1383,22 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
       return ref;
     }
     if (Unary->Op == TokenType::Caret) {
+      if (rhsType->isUniquePtr())
+        return rhsType;
+      DiagnosticEngine::report(getLoc(Unary), DiagID::ERR_SMART_PTR_FROM_STACK,
+                               "^");
+      HasError = true;
       auto unq = std::make_shared<toka::UniquePointerType>(rhsType);
       unq->IsNullable = Unary->HasNull;
       unq->IsWritable = Unary->IsRebindable;
       return unq;
     }
     if (Unary->Op == TokenType::Tilde) {
+      if (rhsType->isSharedPtr())
+        return rhsType;
+      DiagnosticEngine::report(getLoc(Unary), DiagID::ERR_SMART_PTR_FROM_STACK,
+                               "~");
+      HasError = true;
       auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
       sh->IsNullable = Unary->HasNull;
       sh->IsWritable = Unary->IsRebindable;
@@ -1514,9 +1590,9 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       targetMorph = getSyntacticMorphology(Bin->LHS.get());
 
       // If LHS is a variable declaration, we don't handle it here (handled in
-      // checkVariableDecl). But this is assignment to existing variable. If LHS
-      // is 'p' (VariableExpr) and p is a pointer type, Morph is None (hidden).
-      // If p is pointer, targetMorph=None. SourceMorph check...
+      // checkVariableDecl). But this is assignment to existing variable. If
+      // LHS is 'p' (VariableExpr) and p is a pointer type, Morph is None
+      // (hidden). If p is pointer, targetMorph=None. SourceMorph check...
       // User rule: "auto ^p = x" (Invalid). "auto p = ^x" (Invalid).
       // "p = q" (Hidden = Hidden)?
       // "Strict explicit morphology matching".
@@ -1525,20 +1601,20 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       // Mismatch. So checks apply.
 
       // However, we need to know if LHS *is* a pointer type to enforce
-      // strictness. If LHS is i32, and RHS is i32. None == None. OK. If LHS is
-      // *i32 (via `*p` deref? No, `*p` assigns to `i32`). If `p` is `*i32`. `p
-      // = q`. LHS `p` has Morph::None. If strictness requires `*p` to be
-      // assigned? No, `*p` assigns to the *pointee*. We are assigning TO the
-      // pointer `p`. So `p = q` is "Value = Value" syntax. Does user want `*p =
-      // *q` for pointer assignment? No, that's partial update/deref assignment.
-      // `p = q` rebinds the pointer.
-      // If the rule is about *Declarations* majorly (`auto *p = ...`), maybe
-      // assignment `p=q` is exempt or `Valid`. The prompt says: "pointer
-      // morphology symbols... on both sides of an assignment... must explicitly
-      // match." Example: `auto *p = ^q` -> Invalid. `p = q` where p, q are
-      // pointers. Sigils are None. None == None. Matches. `p = ^q`. None !=
-      // Unique. Mismatch. Correct. So `getSyntacticMorphology` returning None
-      // for VariableExpr is correct.
+      // strictness. If LHS is i32, and RHS is i32. None == None. OK. If LHS
+      // is *i32 (via `*p` deref? No, `*p` assigns to `i32`). If `p` is
+      // `*i32`. `p = q`. LHS `p` has Morph::None. If strictness requires `*p`
+      // to be assigned? No, `*p` assigns to the *pointee*. We are assigning
+      // TO the pointer `p`. So `p = q` is "Value = Value" syntax. Does user
+      // want `*p = *q` for pointer assignment? No, that's partial
+      // update/deref assignment. `p = q` rebinds the pointer. If the rule is
+      // about *Declarations* majorly (`auto *p = ...`), maybe assignment
+      // `p=q` is exempt or `Valid`. The prompt says: "pointer morphology
+      // symbols... on both sides of an assignment... must explicitly match."
+      // Example: `auto *p = ^q` -> Invalid. `p = q` where p, q are pointers.
+      // Sigils are None. None == None. Matches. `p = ^q`. None != Unique.
+      // Mismatch. Correct. So `getSyntacticMorphology` returning None for
+      // VariableExpr is correct.
 
       MorphKind sourceMorph = getSyntacticMorphology(Bin->RHS.get());
       checkStrictMorphology(Bin, targetMorph, sourceMorph, LHS);

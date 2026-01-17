@@ -1,0 +1,23 @@
+// tests/fail/fail_smart_ptr_from_stack.tk
+
+fn main() {
+    auto a = 32
+    
+    // 1. Illegal unique pointer from stack variable
+    // EXPECT: Smart pointer sigil '^' cannot be applied to stack variable; use 'new' or assign from existing smart pointer
+    auto ^p1 = ^a
+    
+    // 2. Illegal shared pointer from stack variable
+    // EXPECT: Smart pointer sigil '~' cannot be applied to stack variable; use 'new' or assign from existing smart pointer
+    auto ~p2 = ~a
+    
+    // 3. Illegal raw pointer cast from non-Addr
+    // EXPECT: Invalid cast: cannot convert 'i32' to '*i32' via 'as'; only 'Addr' and '*' conversions are supported
+    auto *p3 = a as *i32
+    
+    // 4. Illegal smart pointer cast
+    // EXPECT: Smart pointer sigil '^' cannot be applied to stack variable; use 'new' or assign from existing smart pointer
+    auto ^p4 = (a as Addr) as ^i32
+
+    return
+}

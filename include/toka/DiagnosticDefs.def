@@ -41,6 +41,8 @@ DIAG(ERR_UNSAFE_RAW_PTR,     Error, "Shape '{}' manages raw pointers but does no
 DIAG(ERR_UNSAFE_RESOURCE,    Error, "Shape '{}' contains managed resources but does not implement 'drop'")
 DIAG(ERR_NULL_ACCESS,        Error, "Accessing member of nullable type '{}' requires explicit 'is' check")
 DIAG(ERR_MORPHOLOGY_MISMATCH, Error, "Pointer morphology mismatch: expected explicit '{}' (from LHS/Target), found '{}' (from RHS/Source)")
+DIAG(ERR_SMART_PTR_FROM_STACK, Error, "Smart pointer sigil '{}' cannot be applied to stack variable; use 'new' or assign from existing smart pointer")
+DIAG(ERR_CAST_MISMATCH,       Error, "Invalid cast: cannot convert '{}' to '{}' via 'as'; only 'Addr' and '*' conversions are supported")
 
 // --- Sema: Memory Safety ---
 DIAG(ERR_UNSAFE_ALLOC_CTX,   Error, "Operation 'alloc' is only allowed in unsafe context")
