@@ -1,6 +1,7 @@
 import std/io::println
 import std/termios::*
 import std/memory
+import std/io::*
 
 extern fn getchar() -> i32
 
@@ -15,8 +16,8 @@ fn main() -> i32 {
 
         // Get current settings
         // fd 0 is stdin
-        tcgetattr(0, orig_ptr)
-        tcgetattr(0, raw_ptr)
+        tcgetattr(0, *orig_ptr)
+        tcgetattr(0, *raw_ptr)
 
         // Modify raw_ptr to disable ECHO and ICANON
         // c_lflag is at offset 24 (u64)
@@ -30,30 +31,33 @@ fn main() -> i32 {
 
         println("Raw mode active. Input is not echoed. Press 'q' to exit.")
 
-        /*
+        auto c: u8 = 0  // 准备一个小缓冲区
+    
         auto running# = true
         while running {
-            auto c = getchar()
-            if c != -1 {
+            auto nread = libc_read(0, *c, 1)
+            if nread > 0 {
+                // Raw Mode 下，回车通常是 13 (\r)
                 if c == 113 { // 'q'
-                    running# = false
+                    running = false
                 } else {
-                    // Start a new line explicitly because \n mapping might be off in raw (actually ICANON off handles line buffer, ECHO off handles display)
-                    // But typically raw mode also implies \r\n handling.
-                    // For this simple test, we just print what we got.
-                    // Accessing c_lflag modified above doesn't touch output flags (OPOST), so \n should work?
-                    // But printf might be buffered.
-                    println("Got char: {}", c)
+                    // 格式化输出: 手动加上 \r 回到行首
+                    if c < 32 {
+                        // 13 is Enter, 27 is ESC
+                        println("\r\nGot Control Key: {}", c)
+                    } else {
+                        println("\r\nGot char: {} ({})", c, c)
+                    }
                 }
             }
         }
-        */
+        
 
         // Restore original settings
         // tcsetattr(0, TCSANOW, orig_ptr)
         
-        // free orig_ptr
-        // free raw_ptr
+        free [72]*orig_ptr
+        free [72]*raw_ptr
     }
 
     println("Exited raw mode.")
