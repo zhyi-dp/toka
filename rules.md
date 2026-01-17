@@ -11,3 +11,4 @@
 - 每次完成阶段性的工作并且 pass 测试全部通过之前，请提交一次 commit，然后给出中文总结，并等待新的指示
 - git commit -m 信息不能包含可能被 bash/zsh 等截断内容的符号
 - 如果遇到编译器代码出现大括号不匹配的问题，可以使用 tool/check_braces.py 工具辅助定位
+- toka编译器的编译错误信息必须出自DiagnosticDefs.def，若有新的错误信息类型，请维护DiagnosticDefs.def先

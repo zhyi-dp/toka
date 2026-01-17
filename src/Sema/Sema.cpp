@@ -119,18 +119,27 @@ void Sema::registerGlobals(Module &M) {
     ms.Functions[Fn->Name] = Fn.get();
     GlobalFunctions.push_back(
         Fn.get()); // Still keep global map for flat-checks
+    // [NEW] Define locally in scope for explicit lookup
+    CurrentScope->define(Fn->Name, {toka::Type::fromString("fn")});
   }
   for (auto &Ext : M.Externs) {
     ms.Externs[Ext->Name] = Ext.get();
     ExternMap[Ext->Name] = Ext.get();
+    // [NEW] Define locally in scope
+    CurrentScope->define(Ext->Name, {toka::Type::fromString("extern")});
   }
   for (auto &St : M.Shapes) {
     ms.Shapes[St->Name] = St.get();
     ShapeMap[St->Name] = St.get();
+    // [NEW] Shapes usually resolved via ShapeMap, but define in scope for
+    // consistency if needed.
+    CurrentScope->define(St->Name, {toka::Type::fromString(St->Name)});
   }
   for (auto &Alias : M.TypeAliases) {
     ms.TypeAliases[Alias->Name] = {Alias->TargetType, Alias->IsStrong};
     TypeAliasMap[Alias->Name] = {Alias->TargetType, Alias->IsStrong};
+    // [NEW] Define locally in scope
+    CurrentScope->define(Alias->Name, {toka::Type::fromString(Alias->Name)});
   }
   for (auto &Trait : M.Traits) {
     ms.Traits[Trait->Name] = Trait.get();
@@ -142,6 +151,8 @@ void Sema::registerGlobals(Module &M) {
       MethodMap[traitKey][Method->Name] = Method->ReturnType;
       MethodDecls[traitKey][Method->Name] = Method.get();
     }
+    // [NEW] Define locally in scope
+    CurrentScope->define(Trait->Name, {toka::Type::fromString(Trait->Name)});
   }
   for (auto &G : M.Globals) {
     if (auto *v = dynamic_cast<VariableDecl *>(G.get())) {
@@ -166,6 +177,9 @@ void Sema::registerGlobals(Module &M) {
           }
         }
       }
+      // [NEW] Define local global in scope
+      std::string fullT = synthesizePhysicalType(*v);
+      CurrentScope->define(v->Name, {toka::Type::fromString(fullT)});
     }
   }
 

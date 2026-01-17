@@ -1,0 +1,8 @@
+// tests/fail/fail_import_leak_b.tk
+// No import of test_import_leak_a
+
+fn main() {
+    // EXPECT: Use of undeclared identifier 'leaked_func'
+    leaked_func()
+    return
+}

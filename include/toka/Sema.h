@@ -246,8 +246,8 @@ private:
       Signature += "*";
     }
 
-    // 3. Soul Type
-    Signature += Arg.Type;
+    // 3. Soul Type (Extracted via overloads for C++17 compatibility)
+    Signature += getTypeName(Arg);
 
     // 4. Value Attributes
     if (Arg.IsPointerNullable || Arg.IsValueNullable) {
@@ -276,6 +276,11 @@ private:
   MorphKind getSyntacticMorphology(Expr *E);
   bool checkStrictMorphology(ASTNode *Node, MorphKind Target, MorphKind Source,
                              const std::string &TargetName);
+
+private:
+  static std::string getTypeName(const FunctionDecl::Arg &A) { return A.Type; }
+  static std::string getTypeName(const ExternDecl::Arg &A) { return A.Type; }
+  static std::string getTypeName(const VariableDecl &V) { return V.TypeName; }
 };
 
 } // namespace toka

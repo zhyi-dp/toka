@@ -189,14 +189,10 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     // First, verify the Type exists
     if (!CurrentScope->lookup(S->ShapeName, Sym)) {
-      if (ShapeMap.count(S->ShapeName)) {
-        shapeDecl = ShapeMap[S->ShapeName];
-      } else {
-        // Check modules, but simplified here
-      }
+      DiagnosticEngine::report(getLoc(S), DiagID::ERR_UNDECLARED, S->ShapeName);
+      HasError = true;
     } else {
-      // If it's in symbol table as a Type alias or something?
-      // Usually shapes are in ShapeMap.
+      // Check ShapeMap for the resolved name
       if (ShapeMap.count(S->ShapeName))
         shapeDecl = ShapeMap[S->ShapeName];
     }
@@ -346,9 +342,6 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
   } else if (auto *ve = dynamic_cast<VariableExpr *>(E)) {
     SymbolInfo Info;
     if (!CurrentScope->lookup(ve->Name, Info)) {
-      if (ShapeMap.count(ve->Name) || TypeAliasMap.count(ve->Name)) {
-        return toka::Type::fromString(ve->Name);
-      }
       DiagnosticEngine::report(getLoc(ve), DiagID::ERR_UNDECLARED, ve->Name);
       HasError = true;
       return toka::Type::fromString("unknown");
@@ -1786,39 +1779,36 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       return toka::Type::fromString("unknown");
     }
   } else {
-    // Local Scope Lookup (Shadowing Global)
-    // Usually Functions are Global. But maybe local closure in future?
-    // For now, look in ModuleMap
-    // Current Module Context?
-    // Legacy logic looked in GlobalFunctions and ExternMap directly if
-    // local lookup failed? Actually legacy checks GlobalFunctions list.
-
-    // Let's iterate GlobalFunctions
-    for (auto *GF : GlobalFunctions) {
-      if (GF->Name == CallName) {
-        Fn = GF;
-        break;
-      }
-    }
-    if (!Fn) {
-      // Check ExternMap
-      for (auto &pair : ExternMap) {
-        if (pair.second->Name == CallName) {
-          Ext = pair.second;
+    // Local Scope Lookup (Local, Imported, or Shadowed)
+    SymbolInfo sym;
+    if (CurrentScope->lookup(CallName, sym)) {
+      // Find implementation based on lookup
+      for (auto *GF : GlobalFunctions) {
+        if (GF->Name == CallName) {
+          Fn = GF;
           break;
         }
       }
-    }
-    std::string soulName = Type::stripMorphology(CallName);
-    if (!Fn && !Ext && ShapeMap.count(soulName)) {
-      Sh = ShapeMap[soulName];
+      if (!Fn) {
+        for (auto &pair : ExternMap) {
+          if (pair.second->Name == CallName) {
+            Ext = pair.second;
+            break;
+          }
+        }
+      }
+      std::string soulName = Type::stripMorphology(CallName);
+      if (!Fn && !Ext && ShapeMap.count(soulName)) {
+        Sh = ShapeMap[soulName];
+      }
     }
   }
 
   if (!Fn && !Ext && !Sh) {
-    if (CallName != "str" && CallName != "unknown") // checkExprStr fallbacks
-      error(Call,
-            "use of undeclared function or type (NEW) '" + CallName + "'");
+    if (CallName != "str" && CallName != "unknown") {
+      DiagnosticEngine::report(getLoc(Call), DiagID::ERR_UNDECLARED, CallName);
+      HasError = true;
+    }
     return toka::Type::fromString("unknown");
   }
 
