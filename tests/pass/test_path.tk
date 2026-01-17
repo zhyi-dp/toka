@@ -1,0 +1,44 @@
+import std/path
+import std/string::{String}
+import std/io::{println}
+
+fn main() -> i32 {
+    // 1. Test join
+    auto joined = path::join(String::from("/usr/local"), String::from("bin/toka"))
+    println("Joined: {}", joined)
+    if !joined.eq(String::from("/usr/local/bin/toka")) { return 1 }
+    
+    auto joined2 = path::join(String::from("/usr/"), String::from("bin/toka"))
+    println("Joined2: {}", joined2)
+    if !joined2.eq(String::from("/usr/bin/toka")) { return 2 }
+    
+    // 2. Test extension
+    auto ext = path::extension(String::from("/usr/local/bin/toka"))
+    println("Ext: {}", ext)
+    if !ext.eq(String::from("")) { return 3 }
+    
+    auto ext2 = path::extension(String::from("test.tk"))
+    println("Ext2: {}", ext2)
+    if !ext2.eq(String::from("tk")) { return 4 }
+    
+    // 3. Test basename
+    auto base = path::basename(String::from("/usr/local/bin/toka"))
+    println("Basename: {}", base)
+    if !base.eq(String::from("toka")) { return 5 }
+    
+    // 4. Test dirname
+    auto dir = path::dirname(String::from("/usr/local/bin/toka"))
+    println("Dirname: {}", dir)
+    if !dir.eq(String::from("/usr/local/bin")) { return 6 }
+    
+    auto dir2 = path::dirname(String::from("/toka"))
+    println("Dirname2: {}", dir2)
+    if !dir2.eq(String::from("/")) { return 7 }
+    
+    auto dir3 = path::dirname(String::from("toka"))
+    println("Dirname3: {}", dir3)
+    if !dir3.eq(String::from(".")) { return 8 }
+
+    println("Path test passed!")
+    return 0
+}

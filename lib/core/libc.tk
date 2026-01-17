@@ -81,7 +81,7 @@ extern fn libc_exit(status: i32) -> void
 extern fn libc_abort() -> void
 extern fn libc_system(*command: char) -> i32
 extern fn libc_getenv(*name: char) -> *char
-extern fn libc_time() -> i64
+extern fn libc_time(*tloc: i64) -> i64
 extern fn libc_localtime(*timer: i64) -> *void // tm struct pointer
 extern fn libc_gmtime(*timer: i64) -> *void
 extern fn libc_strftime(*s: char, max: usize, *format: char, *tm: void) -> usize

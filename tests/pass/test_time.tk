@@ -1,0 +1,30 @@
+import std/time::{now, Time, DateTime}
+import std/io::{println}
+import std/string::{String}
+
+fn main() -> i32 {
+    auto t = now()
+    println("Current Unix Time: {}", t.seconds)
+    if t.seconds <= 0:i64 { 
+        println("Error: invalid time")
+        return 1 
+    }
+    
+    auto dt = t.to_datetime()
+    println("DateTime: {}-{}-{} {}:{}:{}", dt.year(), dt.month(), dt.day(), dt.hour(), dt.minute(), dt.second())
+    
+    if dt.year() < 2024 {
+        println("Error: year looks suspicious")
+        return 2
+    }
+    
+    auto s = dt.format(String::from("%Y-%m-%d %H:%M:%S"))
+    println("Formatted: {}", s)
+    if s.len() == 0 {
+        println("Error: format failed")
+        return 3
+    }
+
+    println("Time test passed!")
+    return 0
+}
