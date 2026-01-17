@@ -16,5 +16,6 @@ fn main() -> i32 {
     auto p# = Point(x = 10)
     auto &y# = &p#
     auto val = p.x // Error: p is mutably borrowed by y
+    // EXPECT: cannot access 'p' while it is mutably borrowed (Rule 406)
     return 0
 }

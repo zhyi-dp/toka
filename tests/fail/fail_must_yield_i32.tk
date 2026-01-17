@@ -14,8 +14,11 @@
 fn main() -> i32 {
     auto y: i32 = for auto x in [1] {
         // missing pass
+        // EXPECT: Yielding for loop body must pass a value
     } or {
         // missing pass
+        // EXPECT: Yielding for loop 'or' block must pass a value
     }
+    // EXPECT: cannot initialize variable of type 'i32' with 'void'
     return 0
 }

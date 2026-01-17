@@ -21,9 +21,11 @@ pub shape MyType(x:i32)
 impl MyType@StrictTrait {
     // Mismatch: Trait says pub, Impl is private
     fn must_be_pub(self) {}
+    // EXPECT: signature mismatch: trait method 'must_be_pub' is pub, but implementation is private
 
     // Mismatch: Trait says private, Impl is pub
     pub fn must_be_priv(self) {}
+    // EXPECT: signature mismatch: trait method 'must_be_priv' is private, but implementation is pub
 }
 
 fn main() {}

@@ -32,6 +32,7 @@ pub const XYZ = (x = 1, y = 2, z = 3)
 
 fn main() -> i32 {
     println("{}", POINT.a)
+    // EXPECT: println must be explicitly imported from std/io
     println("{}", XYZ.x)
     auto point = Point(a = 1, b = 2, c = 3)
     auto xyz = (x = 1, y = 2, z = 3)

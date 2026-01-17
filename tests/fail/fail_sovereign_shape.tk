@@ -17,6 +17,7 @@ shape Resource {
 
 fn main() -> i32 {
     let r = Resource { ptr = alloc(4) }
+    // EXPECT: Expected '(' or '[' after shape name
     // Should fail: Resource has *i32 but no drop impl
     return 0
 }

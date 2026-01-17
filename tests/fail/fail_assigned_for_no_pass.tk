@@ -16,6 +16,7 @@ import std/io::println
 fn main() -> i32 {
     auto y = for auto x in [1] {
         1 + 1 // Error: y expects a value but none passed
+        // EXPECT: Yielding for loop body must pass a value
     } or {
         pass -1
     }

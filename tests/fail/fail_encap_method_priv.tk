@@ -19,4 +19,5 @@ fn main() {
     // It should be private to the module/file defining it.
     // This call should fail compilation.
     s.drop()
+    // EXPECT: method 'drop' is private to 'std/string'
 }

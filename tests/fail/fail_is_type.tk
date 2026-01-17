@@ -16,6 +16,7 @@ shape Data (v: i32)
 fn main() -> i32 {
     auto ^?p = new Data(v = 42)
     if p is Data { // Error: Data is not a variable
+        // EXPECT: 'Data' is a shape, not a valid pattern for 'is'
         assert(false,"")
         return 0
     }
