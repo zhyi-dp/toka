@@ -76,7 +76,7 @@ echo "[tokac.sh] Linking to binary $OUTPUT_BIN..."
 echo "[tokac.sh] Linking to binary $OUTPUT_BIN..."
 # xcrun clang handles sysroot automatically usually, but we keep SDK_PATH just in case if explicit is needed.
 # However, usually just xcrun clang is enough. Let's try to remove manual sysroot first if we use xcrun.
-CMD="$CLANG $LL_FILE -o $OUTPUT_BIN -Wno-override-module"
+CMD="$CLANG $LL_FILE -o $OUTPUT_BIN -Wno-override-module -mllvm -opaque-pointers"
 echo "[tokac.sh] Running: $CMD"
 $CMD
 

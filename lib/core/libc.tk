@@ -19,10 +19,13 @@ import core/types::{char, usize}
 
 // Memory management
 extern fn libc_malloc(size: usize) -> *void
+extern fn libc_calloc(nmemb: usize, size: usize) -> *void
 extern fn libc_realloc(*ptr: void, size: usize) -> *void
 extern fn libc_free(*ptr: void) -> void
 extern fn libc_memcpy(*dest: void, *src: void, n: usize) -> *void
+extern fn libc_memmove(*dest: void, *src: void, n: usize) -> *void
 extern fn libc_memset(*dest: void, val: i32, n: usize) -> *void
+extern fn libc_memcmp(*s1: void, *s2: void, n: usize) -> i32
 
 // I/O (Low level)
 extern fn libc_read(fd: i32, *buf: u8, count: i64) -> i64
@@ -31,21 +34,57 @@ extern fn libc_write(fd: i32, *buf: u8, count: i64) -> i64
 // I/O (FILE*)
 extern fn libc_fopen(*filename: char, *mode: char) -> *void
 extern fn libc_fclose(*stream: void) -> i32
+extern fn libc_fflush(*stream: void) -> i32
+extern fn libc_remove(*filename: char) -> i32
+extern fn libc_rename(*old_path: char, *new_path: char) -> i32
 extern fn libc_fread(*ptr: void, size: usize, nmemb: usize, *stream: void) -> usize
 extern fn libc_fwrite(*ptr: void, size: usize, nmemb: usize, *stream: void) -> usize
 extern fn libc_fseek(*stream: void, offset: i64, whence: i32) -> i32
 extern fn libc_ftell(*stream: void) -> i64
 extern fn libc_rewind(*stream: void) -> void
 extern fn libc_fgetc(*stream: void) -> i32
+extern fn libc_fgets(*s: char, n: i32, *stream: void) -> *char
+extern fn libc_fputs(*s: char, *stream: void) -> i32
 extern fn libc_feof(*stream: void) -> i32
+extern fn libc_fprintf(*stream: void, *format: char, ...) -> i32
+extern fn libc_fscanf(*stream: void, *format: char, ...) -> i32
+extern fn libc_sscanf(*s: char, *format: char, ...) -> i32
 
 // Strings
 extern fn libc_strlen(*s: char) -> usize
+extern fn libc_strcpy(*dest: char, *src: char) -> *char
+extern fn libc_strncpy(*dest: char, *src: char, n: usize) -> *char
+extern fn libc_strcat(*dest: char, *src: char) -> *char
+extern fn libc_strncat(*dest: char, *src: char, n: usize) -> *char
+extern fn libc_strcmp(*s1: char, *s2: char) -> i32
+extern fn libc_strncmp(*s1: char, *s2: char, n: usize) -> i32
+extern fn libc_strchr(*s: char, c: i32) -> *char
+extern fn libc_strrchr(*s: char, c: i32) -> *char
+extern fn libc_strstr(*haystack: char, *needle: char) -> *char
+extern fn libc_strdup(*s: char) -> *char
 extern fn libc_sprintf(*dest: char, *format: char, ...) -> usize
 
-// System
+// Math
+extern fn libc_sin(x: f64) -> f64
+extern fn libc_cos(x: f64) -> f64
+extern fn libc_tan(x: f64) -> f64
+extern fn libc_sqrt(x: f64) -> f64
+extern fn libc_pow(x: f64, y: f64) -> f64
+extern fn libc_log(x: f64) -> f64
+extern fn libc_exp(x: f64) -> f64
+extern fn libc_abs(n: i32) -> i32
+extern fn libc_fabs(x: f64) -> f64
+
+// System/Process
+extern fn libc_exit(status: i32) -> void
 extern fn libc_abort() -> void
+extern fn libc_system(*command: char) -> i32
+extern fn libc_getenv(*name: char) -> *char
 extern fn libc_time() -> i64
+extern fn libc_localtime(*timer: i64) -> *void // tm struct pointer
+extern fn libc_gmtime(*timer: i64) -> *void
+extern fn libc_strftime(*s: char, max: usize, *format: char, *tm: void) -> usize
+extern fn libc___error() -> *i32 // for errno on Mac
 
 // Termios & Console
 extern fn libc_tcgetattr(fd: i32, *termios_p: void) -> i32

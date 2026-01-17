@@ -1,0 +1,41 @@
+import core/libc::*
+import core/types::char
+import std/io::println
+
+fn main() -> i32 {
+    unsafe {
+        // Test strlen
+        auto s = "Hello Libc!"
+        auto len = libc_strlen(s as *char)
+        println("strlen: {}", len)
+        if len != 11:u64 { return 1 }
+
+        // Test sqrt
+        auto sq = libc_sqrt(16.0)
+        println("sqrt(16.0): {}", sq)
+        if sq != 4.0 { return 2 }
+
+        // Test math: pow
+        auto p = libc_pow(2.0, 3.0)
+        println("pow(2.0, 3.0): {}", p)
+        if p != 8.0 { return 3 }
+
+        // Test abs
+        auto a = libc_abs(-42)
+        println("abs(-42): {}", a)
+        if a != 42 { return 4 }
+
+        // Test malloc/free
+        auto *ptr = libc_malloc(10:u64)
+        if *ptr == (0:u64 as *void) { return 5 }
+        libc_free(*ptr)
+
+        // Test time (just check it returns something > 0)
+        auto t = libc_time()
+        println("time: {}", t)
+        if t <= 0:i64 { return 6 }
+    }
+
+    println("Libc expansion test passed!")
+    return 0
+}
