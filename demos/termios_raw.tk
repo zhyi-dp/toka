@@ -3,8 +3,6 @@ import std/termios::*
 import std/memory
 import std/io::*
 
-extern fn getchar() -> i32
-
 fn main() -> i32 {
     println("Entering raw mode. Press 'q' to quit.")
 
@@ -16,8 +14,8 @@ fn main() -> i32 {
 
         // Get current settings
         // fd 0 is stdin
-        tcgetattr(0, *orig_ptr)
-        tcgetattr(0, *raw_ptr)
+        __toka_tcgetattr(0, *orig_ptr)
+        __toka_tcgetattr(0, *raw_ptr)
 
         // Modify raw_ptr to disable ECHO and ICANON
         // c_lflag is at offset 24 (u64)
@@ -27,19 +25,20 @@ fn main() -> i32 {
         raw_ptr.*c_lflag = raw_ptr.*c_lflag band (bnot ((ECHO as u64) bor (ICANON as u64)))
 
         // Apply raw settings
-        // tcsetattr(0, TCSANOW, raw_ptr)
+        __toka_tcsetattr(0, TCSANOW, *raw_ptr)
 
         println("Raw mode active. Input is not echoed. Press 'q' to exit.")
 
-        auto c: u8 = 0  // 准备一个小缓冲区
+        auto d# = 0:u8  // 准备一个小缓冲区
+        auto *c# = *d#
     
         auto running# = true
         while running {
-            auto nread = libc_read(0, *c, 1)
+            auto nread = libc_read(0, *c#, 1)
             if nread > 0 {
                 // Raw Mode 下，回车通常是 13 (\r)
                 if c == 113 { // 'q'
-                    running = false
+                    running# = false
                 } else {
                     // 格式化输出: 手动加上 \r 回到行首
                     if c < 32 {
@@ -54,7 +53,7 @@ fn main() -> i32 {
         
 
         // Restore original settings
-        // tcsetattr(0, TCSANOW, orig_ptr)
+        __toka_tcsetattr(0, TCSANOW, *orig_ptr)
         
         free [72]*orig_ptr
         free [72]*raw_ptr
