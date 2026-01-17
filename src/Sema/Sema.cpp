@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "toka/Sema.h"
+#include "toka/DiagnosticEngine.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cctype>
@@ -50,11 +51,15 @@ bool Sema::checkModule(Module &M) {
   return !HasError;
 }
 
+SourceLocation getLoc(ASTNode *Node) {
+  return {Node->FileName.empty() ? "<unknown>" : Node->FileName, Node->Line,
+          Node->Column};
+}
+
 void Sema::error(ASTNode *Node, const std::string &Msg) {
   HasError = true;
-  llvm::errs() << (Node->FileName.empty() ? "<unknown>" : Node->FileName) << ":"
-               << Node->Line << ":" << Node->Column << ": error: " << Msg
-               << "\n";
+  // Fallback for not-yet-migrated errors
+  DiagnosticEngine::report(getLoc(Node), DiagID::ERR_GENERIC_PARSE, Msg);
 }
 
 void Sema::enterScope() { CurrentScope = new Scope(CurrentScope); }
@@ -176,7 +181,9 @@ void Sema::registerGlobals(Module &M) {
     }
 
     if (!target) {
-      error(Imp.get(), "module '" + Imp->PhysicalPath + "' not found");
+      DiagnosticEngine::report(getLoc(Imp.get()), DiagID::ERR_MODULE_NOT_FOUND,
+                               Imp->PhysicalPath);
+      HasError = true;
       continue;
     }
 
@@ -287,9 +294,10 @@ void Sema::registerGlobals(Module &M) {
           }
 
           if (!found) {
-            error(Imp.get(), "symbol '" + item.Symbol +
-                                 "' not found in module '" + Imp->PhysicalPath +
-                                 "'");
+            DiagnosticEngine::report(getLoc(Imp.get()),
+                                     DiagID::ERR_SYMBOL_NOT_FOUND, item.Symbol,
+                                     Imp->PhysicalPath);
+            HasError = true;
           }
         }
       }
@@ -334,9 +342,10 @@ void Sema::registerGlobals(Module &M) {
               if (ImplMethod->IsPub != Method->IsPub) {
                 std::string traitVis = Method->IsPub ? "pub" : "private";
                 std::string implVis = ImplMethod->IsPub ? "pub" : "private";
-                error(ImplMethod, "signature mismatch: trait method '" +
-                                      Method->Name + "' is " + traitVis +
-                                      ", but implementation is " + implVis);
+                DiagnosticEngine::report(getLoc(ImplMethod),
+                                         DiagID::ERR_SIGNATURE_MISMATCH,
+                                         Method->Name, traitVis, implVis);
+                HasError = true;
               }
             }
             continue;
@@ -346,15 +355,17 @@ void Sema::registerGlobals(Module &M) {
             MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
             MethodDecls[Impl->TypeName][Method->Name] = Method.get();
           } else {
-            error(Impl.get(), "Missing implementation for method '" +
-                                  Method->Name + "' of trait '" +
-                                  Impl->TraitName + "'");
+            DiagnosticEngine::report(getLoc(Impl.get()),
+                                     DiagID::ERR_MISSING_IMPL, Method->Name,
+                                     Impl->TraitName);
+            HasError = true;
           }
         }
       } else {
-        error(Impl.get(), "trait '" + Impl->TraitName +
-                              "' not found for implementation on '" +
-                              Impl->TypeName + "'");
+        DiagnosticEngine::report(getLoc(Impl.get()),
+                                 DiagID::ERR_TRAIT_NOT_FOUND, Impl->TraitName,
+                                 Impl->TypeName);
+        HasError = true;
       }
     }
   }
@@ -417,17 +428,17 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
       if (foundMemb) {
         if (Pat->SubPatterns.size() > 0) {
           if (foundMemb->Type.empty() && foundMemb->SubMembers.empty()) {
-            error(static_cast<ASTNode *>(Pat),
-                  "variant '" + variantName + "' takes no payload");
+            DiagnosticEngine::report(
+                getLoc(Pat), DiagID::ERR_VARIANT_NO_PAYLOAD, variantName);
+            HasError = true;
           } else {
             if (!foundMemb->SubMembers.empty()) {
               // Multi-field tuple variant
               if (Pat->SubPatterns.size() != foundMemb->SubMembers.size()) {
-                error(static_cast<ASTNode *>(Pat),
-                      "variant '" + variantName + "' expects " +
-                          std::to_string(foundMemb->SubMembers.size()) +
-                          " fields, but got " +
-                          std::to_string(Pat->SubPatterns.size()));
+                DiagnosticEngine::report(
+                    getLoc(Pat), DiagID::ERR_VARIANT_ARG_MISMATCH, variantName,
+                    foundMemb->SubMembers.size(), Pat->SubPatterns.size());
+                HasError = true;
               } else {
                 for (size_t i = 0; i < Pat->SubPatterns.size(); ++i) {
                   // Rebind check
@@ -438,10 +449,10 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
             } else {
               // Legacy single-field variant
               if (Pat->SubPatterns.size() != 1) {
-                error(static_cast<ASTNode *>(Pat),
-                      "variant '" + variantName +
-                          "' expects 1 field, but got " +
-                          std::to_string(Pat->SubPatterns.size()));
+                DiagnosticEngine::report(
+                    getLoc(Pat), DiagID::ERR_VARIANT_ARG_MISMATCH, variantName,
+                    1, Pat->SubPatterns.size());
+                HasError = true;
               }
               checkPattern(Pat->SubPatterns[0].get(), foundMemb->Type,
                            SourceIsMutable);
@@ -449,13 +460,15 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
           }
         }
       } else {
-        error(static_cast<ASTNode *>(Pat), "variant '" + variantName +
-                                               "' not found in shape '" +
-                                               shapeName + "'");
+        DiagnosticEngine::report(
+            getLoc(Pat), DiagID::ERR_UNKNOWN_SHAPE_IN_PAT,
+            shapeName); // Actually variant not found in shape
+        HasError = true;
       }
     } else {
-      error(static_cast<ASTNode *>(Pat),
-            "unknown shape '" + shapeName + "' in pattern deconstruction");
+      DiagnosticEngine::report(getLoc(Pat), DiagID::ERR_UNKNOWN_SHAPE_IN_PAT,
+                               shapeName);
+      HasError = true;
     }
     break;
   }
@@ -515,8 +528,9 @@ void Sema::checkFunction(FunctionDecl *Fn) {
     // Check if all paths return if return type is not void
     if (Fn->ReturnType != "void") {
       if (!allPathsReturn(Fn->Body.get())) {
-        error(Fn,
-              "control reaches end of non-void function '" + Fn->Name + "'");
+        DiagnosticEngine::report(getLoc(Fn), DiagID::ERR_CONTROL_REACHES_END,
+                                 Fn->Name);
+        HasError = true;
       }
     }
   }
@@ -558,9 +572,9 @@ void Sema::checkShapeSovereignty() {
         }
 
         if (!hasDropImpl) {
-          error(decl, "Shape '" + name +
-                          "' manages resources/sovereignty but does not "
-                          "implement 'drop'");
+          DiagnosticEngine::report(getLoc(decl), DiagID::ERR_SHAPE_NO_DROP,
+                                   name);
+          HasError = true;
         }
       }
     }
@@ -647,17 +661,15 @@ void Sema::analyzeShapes(Module &M) {
     }
 
     if (props.HasRawPtr && !hasExplicitDrop) {
-      error(S.get(), "Shape '" + S->Name +
-                         "' contains raw pointers via members but does not "
-                         "implement 'drop'. This is unsafe.");
+      DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RAW_PTR,
+                               S->Name);
+      HasError = true;
     }
 
     if (props.HasDrop && !hasExplicitDrop) {
-      error(S.get(),
-            "Shape '" + S->Name +
-                "' contains resources via members that require dropping, but "
-                "does not implement 'drop'. Please implement 'drop' (can be "
-                "empty) to confirm ownership.");
+      DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RESOURCE,
+                               S->Name);
+      HasError = true;
     }
   }
 }
@@ -744,6 +756,5 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
 
   props.Status = ShapeAnalysisStatus::Analyzed;
 }
-
 
 } // namespace toka

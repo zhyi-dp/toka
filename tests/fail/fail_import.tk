@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import core/missing_module
-// EXPECT: module 'core/missing_module' not found
+// EXPECT: could not open file
 import std/io::{MissingSymbol}
-// EXPECT: symbol 'MissingSymbol' not found in module 'std/io'
+// EXPECT: Symbol 'MissingSymbol' not found in module 'std/io'
 
 fn main() {
 }

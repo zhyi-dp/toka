@@ -17,7 +17,8 @@ fn main() {
 
     // 2. Comparison Type Mismatch
     auto c = 1 == "s" // Error: operands must be same type
-    // EXPECT: operands of '==' must be same type ('i32' vs 'str')
+    // EXPECT: Parse error in generic parameter: operands of '==' must be same type ('i32' vs 'str')
+    // EXPECT: Parse error in generic parameter: operands of '==' must be same type ('i32' vs 'str')
 
     // 3. If Condition Type Mismatch
     if (1) {} // Error: condition must be bool
@@ -28,5 +29,5 @@ fn main() {
 
     // 5. Variable Type Mismatch
     auto z: i32 = "hello" // Error: mismatch
-    // EXPECT: cannot initialize variable of type 'i32' with 'str'
+    // EXPECT: Cannot initialize variable of type 'i32' with value of type 'str'
 }

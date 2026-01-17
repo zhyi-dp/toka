@@ -1,15 +1,21 @@
 #include "toka/AST.h"
+#include "toka/DiagnosticEngine.h"
 #include "toka/Sema.h"
 #include "toka/Type.h"
 #include <algorithm>
 #include <iostream>
-#include <vector>
-#include <string>
+#include <map>
 #include <memory>
 #include <set>
-#include <map>
+#include <string>
+#include <vector>
 
 namespace toka {
+
+static SourceLocation getLoc(ASTNode *Node) {
+  return {Node->FileName.empty() ? "<unknown>" : Node->FileName, Node->Line,
+          Node->Column};
+}
 
 static bool isLValue(const Expr *expr) {
   if (dynamic_cast<const VariableExpr *>(expr))
@@ -103,7 +109,10 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     for (auto &f : Rec->Fields) {
       if (seenFields.count(f.first)) {
-        error(Rec, "duplicate field '" + f.first + "' in anonymous record");
+        DiagnosticEngine::report(getLoc(Rec), DiagID::ERR_GENERIC_PARSE,
+                                 "duplicate field '{}' in anonymous record",
+                                 f.first);
+        HasError = true;
       }
       seenFields.insert(f.first);
 
@@ -144,8 +153,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (auto ptr = std::dynamic_pointer_cast<toka::PointerType>(innerObj)) {
       return ptr->getPointeeType();
     }
-    error(Deref,
-          "cannot dereference non-pointer type '" + innerObj->toString() + "'");
+    DiagnosticEngine::report(getLoc(Deref), DiagID::ERR_INVALID_OP,
+                             "dereference", innerObj->toString(), "void");
+    HasError = true;
     return toka::Type::fromString("unknown");
   } else if (auto *Unary = dynamic_cast<UnaryExpr *>(E)) {
     return checkUnaryExpr(Unary);
@@ -157,15 +167,17 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       if (ShapeMap.count(ve->Name) || TypeAliasMap.count(ve->Name)) {
         return toka::Type::fromString(ve->Name);
       }
-      error(ve, "use of undeclared identifier '" + ve->Name + "'");
+      DiagnosticEngine::report(getLoc(ve), DiagID::ERR_UNDECLARED, ve->Name);
+      HasError = true;
       return toka::Type::fromString("unknown");
     }
     if (Info.Moved) {
-      error(ve, "use of moved value: '" + ve->Name + "'");
+      DiagnosticEngine::report(getLoc(ve), DiagID::ERR_USE_MOVED, ve->Name);
+      HasError = true;
     }
     if (Info.IsMutablyBorrowed) {
-      error(ve, "cannot access '" + ve->Name +
-                    "' while it is mutably borrowed (Rule 406)");
+      DiagnosticEngine::report(getLoc(ve), DiagID::ERR_BORROW_MUT, ve->Name);
+      HasError = true;
     }
     return Info.TypeObj;
   } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
@@ -506,8 +518,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         // InitStruct returns "StructName".
         // checkExprStr(InitStruct) returns "StructName".
         // So this should match.
-        error(New, "new expression type mismatch: expected '" + New->Type +
-                       "', got '" + InitType + "'");
+        DiagnosticEngine::report(getLoc(New), DiagID::ERR_TYPE_MISMATCH,
+                                 InitType, New->Type);
+        HasError = true;
       }
     }
     // 'new' usually returns a pointer or the type itself depending on
@@ -522,7 +535,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return typeObj;
   } else if (auto *AllocE = dynamic_cast<AllocExpr *>(E)) {
     if (!m_InUnsafeContext) {
-      error(AllocE, "alloc operation requires unsafe context");
+      DiagnosticEngine::report(getLoc(AllocE), DiagID::ERR_UNSAFE_ALLOC_CTX);
+      HasError = true;
     }
     // Mapping to __toka_alloc
     // Returning raw pointer identity: *Type
@@ -632,8 +646,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           }
         }
         if (!sameModule) {
-          error(Init, "Struct '" + Init->ShapeName + "' is private to '" +
-                          SD->FileName + "'");
+          DiagnosticEngine::report(getLoc(Init), DiagID::ERR_PRIVATE_TYPE,
+                                   Init->ShapeName, SD->FileName);
+          HasError = true;
         }
       }
 
@@ -641,8 +656,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       std::set<std::string> providedFields;
       for (const auto &pair : Init->Members) {
         if (providedFields.count(pair.first)) {
-          error(Init, "Duplicate field '" + pair.first +
-                          "' in struct initialization");
+          DiagnosticEngine::report(getLoc(Init), DiagID::ERR_DUPLICATE_FIELD,
+                                   pair.first);
+          HasError = true;
         }
         providedFields.insert(pair.first);
 
@@ -657,16 +673,19 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         }
 
         if (!fieldFound) {
-          error(Init, "Shape '" + Init->ShapeName + "' has no field named '" +
-                          pair.first + "'");
+          DiagnosticEngine::report(getLoc(Init), DiagID::ERR_NO_SUCH_MEMBER,
+                                   Init->ShapeName, pair.first);
+          HasError = true;
           continue; // Continue to find more errors
         }
 
         std::shared_ptr<toka::Type> exprTypeObj = checkExpr(pair.second.get());
         std::string exprType = exprTypeObj->toString();
         if (!isTypeCompatible(expectedType, exprType)) {
-          error(Init, "Field '" + pair.first + "' expects type '" +
-                          expectedType + "', got '" + exprType + "'");
+          DiagnosticEngine::report(getLoc(Init),
+                                   DiagID::ERR_MEMBER_TYPE_MISMATCH, pair.first,
+                                   expectedType, exprType);
+          HasError = true;
         }
       }
 
@@ -674,12 +693,15 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       for (const auto &defField : SD->Members) {
         // If field is NOT in providedFields
         if (!providedFields.count(defField.Name)) {
-          error(Init, "Missing field '" + defField.Name +
-                          "' in initialization of '" + Init->ShapeName + "'");
+          DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
+                                   defField.Name, Init->ShapeName);
+          HasError = true;
         }
       }
     } else {
-      error(Init, "unknown struct '" + Init->ShapeName + "'");
+      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_UNKNOWN_STRUCT,
+                               Init->ShapeName);
+      HasError = true;
     }
     return toka::Type::fromString(Init->ShapeName);
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
@@ -705,8 +727,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     if (objTypeObj->IsNullable) {
-      error(Memb, "cannot access member of nullable '" + ObjTypeFull +
-                      "' without 'is' check (Rule 408)");
+      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
+                               ObjTypeFull);
+      HasError = true;
     }
     std::string ObjType = resolveType(objTypeObj)->toString();
 

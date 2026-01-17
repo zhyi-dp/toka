@@ -18,5 +18,5 @@ fn main() {
     auto ^r2 = ^r1 // Moves r1 to r2
     
     auto x = r1.w // Error: use of moved value
-    // EXPECT: use of moved value: 'r1'
+    // EXPECT: Use of moved value: 'r1'
 }

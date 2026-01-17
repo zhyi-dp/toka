@@ -1,0 +1,63 @@
+// include/toka/DiagnosticDefs.def
+
+// --- Sema: Scope & Identifiers ---
+DIAG(ERR_VAR_REDECLARED,     Error, "Variable '{}' is already declared in this scope")
+DIAG(ERR_UNDECLARED,         Error, "Use of undeclared identifier '{}'")
+DIAG(ERR_MODULE_NOT_FOUND,   Error, "Module '{}' not found")
+DIAG(ERR_SYMBOL_NOT_FOUND,   Error, "Symbol '{}' not found in module '{}'")
+DIAG(ERR_PRIVATE_TYPE,       Error, "Shape '{}' is private and cannot be accessed from module '{}'")
+
+// --- Sema: Type Checking & Operations ---
+DIAG(ERR_TYPE_MISMATCH,      Error, "Cannot convert type '{}' to '{}'")
+DIAG(ERR_INIT_TYPE_MISMATCH, Error, "Cannot initialize variable of type '{}' with value of type '{}'")
+DIAG(ERR_INVALID_OP,         Error, "Invalid operands for operation '{}': '{}' and '{}'")
+DIAG(ERR_TYPE_REQUIRED,      Error, "Type annotation required for variable '{}'")
+DIAG(ERR_INFER_NULLPTR,      Error, "Cannot infer type from 'nullptr'; explicit type annotation required (e.g., 'auto *p: Type = ...')")
+
+// --- Sema: Shape & Structs ---
+DIAG(ERR_UNKNOWN_STRUCT,     Error, "Unknown shape type '{}'")
+DIAG(ERR_NO_SUCH_MEMBER,     Error, "Shape '{}' has no member named '{}'")
+DIAG(ERR_MEMBER_TYPE_MISMATCH, Error, "Type mismatch for member '{}': expected '{}', but got '{}'")
+DIAG(ERR_MISSING_MEMBER,     Error, "Missing initialization for member '{}' of shape '{}'")
+DIAG(ERR_DUPLICATE_FIELD,    Error, "Duplicate field '{}' in shape initialization")
+
+// --- Sema: Traits & Interfaces ---
+DIAG(ERR_SIGNATURE_MISMATCH, Error, "Method signature mismatch: trait defines '{}' as {}, but implementation is {}")
+DIAG(ERR_MISSING_IMPL,       Error, "Trait '{}' requires implementation of method '{}'")
+DIAG(ERR_TRAIT_NOT_FOUND,    Error, "Trait '{}' is not implemented for type '{}'")
+
+// --- Sema: Control Flow & Functions ---
+DIAG(ERR_CONTROL_REACHES_END, Error, "Control flow reaches end of non-void function '{}'")
+
+// --- Sema: Ownership & Resources (Toka Specials) ---
+DIAG(ERR_USE_MOVED,          Error, "Use of moved value: '{}'")
+DIAG(ERR_MOVE_BORROWED,      Error, "Cannot move '{}' while it is borrowed")
+DIAG(ERR_BORROW_MUT,         Error, "Cannot access '{}' while it is mutably borrowed")
+DIAG(ERR_SHAPE_NO_DROP,      Error, "Shape '{}' manages resources but does not implement 'drop'")
+DIAG(ERR_UNSAFE_RAW_PTR,     Error, "Shape '{}' manages raw pointers but does not implement 'drop'")
+DIAG(ERR_UNSAFE_RESOURCE,    Error, "Shape '{}' contains managed resources but does not implement 'drop'")
+DIAG(ERR_NULL_ACCESS,        Error, "Accessing member of nullable type '{}' requires explicit 'is' check")
+
+// --- Sema: Memory Safety ---
+DIAG(ERR_UNSAFE_ALLOC_CTX,   Error, "Operation 'alloc' is only allowed in unsafe context")
+DIAG(ERR_FREE_SMART,         Error, "Manual 'free' forbidden for smart pointer '{}'; memory is managed automatically")
+DIAG(ERR_FREE_NON_PTR,       Error, "Cannot 'free' value of type '{}'; expected raw pointer")
+
+// --- Pattern Matching ---
+DIAG(ERR_VARIANT_NO_PAYLOAD, Error, "Enum variant '{}' does not accept arguments")
+DIAG(ERR_VARIANT_ARG_MISMATCH, Error, "Enum variant '{}' expects {} fields, but got {}")
+DIAG(ERR_UNKNOWN_SHAPE_IN_PAT, Error, "Unknown type '{}' in pattern matching")
+
+// --- Generics (Upcoming) ---
+DIAG(ERR_GENERIC_COUNT_MISMATCH, Error, "Type '{}' expects {} generic arguments, but got {}")
+DIAG(ERR_GENERIC_CODEGEN,    Error, "Generic instantiation failed: {}")
+
+// --- Parser Errors ---
+DIAG(ERR_EXPECTED_SEMI,      Error, "Expected ';' or newline after statement")
+DIAG(ERR_EXPECTED_DECL,      Error, "Expected declaration after 'pub' modifier")
+DIAG(ERR_EXTERN_PUB,         Error, "'extern' blocks cannot be declared 'pub'")
+DIAG(ERR_IMPL_PUB,           Error, "'impl' blocks cannot be declared 'pub'")
+DIAG(ERR_GENERIC_PARSE,      Error, "Parse error in generic parameter: {}")
+
+// --- Warnings ---
+DIAG(WARN_CODEGEN_UNRESOLVED, Warning, "Unresolved member type for '{}'; defaulting to i32")

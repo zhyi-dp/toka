@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "toka/Parser.h"
+#include "toka/DiagnosticEngine.h"
+#include <algorithm>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <algorithm>
 
 namespace toka {
 
@@ -70,7 +71,9 @@ void Parser::expectEndOfStatement() {
     }
     return;
   }
-  error(peek(), "Expected ';' or newline at end of statement");
+  DiagnosticEngine::report({m_CurrentFile, peek().Line, peek().Column},
+                           DiagID::ERR_EXPECTED_SEMI);
+  std::exit(1);
 }
 
 bool Parser::isEndOfStatement() {
@@ -124,8 +127,8 @@ bool Parser::isEndOfStatement() {
 }
 
 void Parser::error(const Token &tok, const std::string &message) {
-  std::cerr << m_CurrentFile << ":" << tok.Line << ":" << tok.Column
-            << ": error: " << message << "\n";
+  DiagnosticEngine::report({m_CurrentFile, tok.Line, tok.Column},
+                           DiagID::ERR_GENERIC_PARSE, message);
   std::exit(1);
 }
 
@@ -151,12 +154,18 @@ std::unique_ptr<Module> Parser::parseModule() {
     } else if (check(TokenType::KwType) || check(TokenType::KwAlias)) {
       module->TypeAliases.push_back(parseTypeAliasDecl(isPub));
     } else if (check(TokenType::KwExtern)) {
-      if (isPub)
-        error(peek(), "Extern blocks cannot be marked public");
+      if (isPub) {
+        DiagnosticEngine::report({m_CurrentFile, peek().Line, peek().Column},
+                                 DiagID::ERR_EXTERN_PUB);
+        std::exit(1);
+      }
       module->Externs.push_back(parseExternDecl());
     } else if (check(TokenType::KwImpl)) {
-      if (isPub)
-        error(peek(), "Impl blocks cannot be marked public");
+      if (isPub) {
+        DiagnosticEngine::report({m_CurrentFile, peek().Line, peek().Column},
+                                 DiagID::ERR_IMPL_PUB);
+        std::exit(1);
+      }
       module->Impls.push_back(parseImpl());
     } else if (check(TokenType::KwTrait)) {
       module->Traits.push_back(parseTrait(isPub));
@@ -166,14 +175,16 @@ std::unique_ptr<Module> Parser::parseModule() {
       // Legacy or alternate struct init?
       module->Shapes.push_back(parseShape(isPub));
     } else {
-      if (isPub)
-        error(peek(), "Expected declaration after 'pub'");
+      if (isPub) {
+        DiagnosticEngine::report({m_CurrentFile, peek().Line, peek().Column},
+                                 DiagID::ERR_EXPECTED_DECL);
+        std::exit(1);
+      }
       std::cerr << "Unexpected Top Level Token: " << peek().toString() << "\n";
       advance();
     }
   }
   return module;
 }
-
 
 } // namespace toka

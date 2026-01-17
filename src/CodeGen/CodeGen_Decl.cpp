@@ -13,6 +13,7 @@
 // limitations under the License.
 #include "toka/AST.h"
 #include "toka/CodeGen.h"
+#include "toka/DiagnosticEngine.h"
 #include "toka/Type.h"
 #include <cctype>
 #include <iostream>
@@ -1066,9 +1067,12 @@ void CodeGen::genShape(const ShapeDecl *sh) {
         body.push_back(getLLVMType(member.ResolvedType));
       } else {
         // Fallback (Should be unreachable if Sema Pass 2 worked)
-        std::cerr << "WARNING: Unresolved member type for " << member.Name
-                  << " in " << sh->Name
-                  << ". Using inefficient string fallback.\n";
+        if (member.Type == "unknown") { // Assuming "unknown" is the string
+                                        // representation for unresolved types
+          DiagnosticEngine::report({"<codegen>", 0, 0},
+                                   DiagID::WARN_CODEGEN_UNRESOLVED,
+                                   member.Name);
+        }
         body.push_back(resolveType(member.Type,
                                    member.HasPointer || member.IsUnique ||
                                        member.IsShared || member.IsReference));

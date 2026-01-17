@@ -16,7 +16,7 @@ fn missing_return(x: i32) -> i32 {
         return 1
     }
     // Error: Control reaches end of non-void function
-    // EXPECT: control reaches end of non-void function
+    // EXPECT: Control flow reaches end of non-void function
 }
 
 fn main() -> i32 {

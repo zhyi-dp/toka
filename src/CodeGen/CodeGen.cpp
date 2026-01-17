@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "toka/CodeGen.h"
+#include "toka/DiagnosticEngine.h"
 #include <cctype>
 #include <iostream>
 #include <set>
@@ -205,14 +206,22 @@ void CodeGen::generate(const Module &ast) {
 void CodeGen::print(llvm::raw_ostream &os) { m_Module->print(os, nullptr); }
 
 void CodeGen::error(const ASTNode *node, const std::string &message) {
-  m_ErrorCount++;
-  if (node && !node->FileName.empty()) {
-    std::cerr << node->FileName << ":" << node->Line << ":" << node->Column
-              << ": error: " << message << "\n";
-  } else if (node) {
-    std::cerr << "error: " << message << " (at line " << node->Line << ")\n";
+  m_ErrorCount++; // Keep local count if needed for logic, but DiagnosticEngine
+                  // has its own.
+  // Actually, let's trust DiagnosticEngine to handle the counting and output.
+  // We still increment m_ErrorCount because generic CodeGen logic might check
+  // it locally (though DiagnosticEngine::hasErrors() is global). Ideally we
+  // should replace usages of m_ErrorCount with DiagnosticEngine::hasErrors(),
+  // but for now let's just delegate reporting.
+
+  if (node) {
+    DiagnosticEngine::report(
+        {node->FileName.empty() ? "<unknown>" : node->FileName, node->Line,
+         node->Column},
+        DiagID::ERR_GENERIC_CODEGEN, message);
   } else {
-    std::cerr << "error: " << message << "\n";
+    DiagnosticEngine::report({"<unknown>", 0, 0}, DiagID::ERR_GENERIC_CODEGEN,
+                             message);
   }
 }
 

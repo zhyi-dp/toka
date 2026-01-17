@@ -15,7 +15,7 @@ fn main() -> i32 {
     auto x# = 10
     auto &r1 = &x#
     auto &r2 = &x# // Error: already borrowed
-    // EXPECT: cannot access 'x' while it is mutably borrowed (Rule 406)
-    // EXPECT: cannot mutably borrow 'x' because it is already borrowed
+    // EXPECT: Cannot access 'x' while it is mutably borrowed
+    // EXPECT: Parse error in generic parameter: cannot mutably borrow 'x' because it is already borrowed
     return 0
 }

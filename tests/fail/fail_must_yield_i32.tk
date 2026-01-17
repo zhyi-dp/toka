@@ -19,6 +19,6 @@ fn main() -> i32 {
         // missing pass
         // EXPECT: Yielding for loop 'or' block must pass a value
     }
-    // EXPECT: cannot initialize variable of type 'i32' with 'void'
+    // EXPECT: Cannot initialize variable of type 'i32' with value of type 'void'
     return 0
 }

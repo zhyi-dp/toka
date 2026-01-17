@@ -12,12 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "toka/AST.h"
+#include "toka/DiagnosticEngine.h"
 #include "toka/Sema.h"
 #include "toka/Type.h"
 #include <algorithm>
 #include <iostream>
 
 namespace toka {
+
+static SourceLocation getLoc(ASTNode *Node) {
+  return {Node->FileName.empty() ? "<unknown>" : Node->FileName, Node->Line,
+          Node->Column};
+}
 
 bool Sema::allPathsReturn(Stmt *S) {
   if (!S)
@@ -123,19 +129,22 @@ void Sema::checkStmt(Stmt *S) {
     clearStmtBorrows();
 
     if (!isTypeCompatible(CurrentFunctionReturnType, ExprType)) {
-      error(Ret, "return type mismatch: expected '" +
-                     CurrentFunctionReturnType + "', got '" + ExprType + "'");
+      DiagnosticEngine::report(getLoc(Ret), DiagID::ERR_TYPE_MISMATCH, ExprType,
+                               CurrentFunctionReturnType);
+      HasError = true;
     }
   } else if (auto *Free = dynamic_cast<FreeStmt *>(S)) {
     auto FreeTypeObj = checkExpr(Free->Expression.get());
     if (!FreeTypeObj->isRawPointer()) {
       std::string ExprType = FreeTypeObj->toString();
       if (FreeTypeObj->isSmartPointer()) {
-        error(Free, "manual 'free' is forbidden for smart pointers ('" +
-                        ExprType + "'). Use automatic scoping instead.");
+        DiagnosticEngine::report(getLoc(Free), DiagID::ERR_FREE_SMART,
+                                 ExprType);
+        HasError = true;
       } else {
-        error(Free,
-              "can only 'free' a raw pointer ('*'), got '" + ExprType + "'");
+        DiagnosticEngine::report(getLoc(Free), DiagID::ERR_FREE_NON_PTR,
+                                 ExprType);
+        HasError = true;
       }
     }
   } else if (auto *ExprS = dynamic_cast<ExprStmt *>(S)) {
@@ -156,7 +165,9 @@ void Sema::checkStmt(Stmt *S) {
     // If type not specified, infer from init
     if (Var->TypeName.empty() || Var->TypeName == "auto") {
       if (InitType.empty() || InitType == "void") {
-        error(Var, "variable '" + Var->Name + "' type must be specified");
+        DiagnosticEngine::report(getLoc(Var), DiagID::ERR_TYPE_REQUIRED,
+                                 Var->Name);
+        HasError = true;
         Var->TypeName = "unknown";
       } else {
         std::string Inferred = InitType;
@@ -164,26 +175,41 @@ void Sema::checkStmt(Stmt *S) {
         // ALSO has it, we must strip it from the inferred type to avoid
         // redundancy (e.g. *i32 -> i32)
         if (Inferred == "nullptr" && Var->TypeName.empty()) {
-          error(Var, "Cannot infer type from 'nullptr'. Explicit type "
-                     "annotation required (e.g., 'auto *p: Data = nullptr').");
+          DiagnosticEngine::report(getLoc(Var), DiagID::ERR_INFER_NULLPTR);
+          HasError = true;
           Var->TypeName = "unknown";
-          return;
-        }
+          Var->TypeName = "unknown";
+        } else {
+          std::string Inferred = InitType;
+          // If the variable declaration HAS morphology, and the initializer
+          // ALSO has it, we must strip it from the inferred type to avoid
+          // redundancy (e.g. *i32 -> i32)
+          if (Inferred == "nullptr" && Var->TypeName.empty()) {
+            DiagnosticEngine::report(
+                getLoc(Var), DiagID::ERR_GENERIC_PARSE,
+                "Cannot infer type from 'nullptr'. Explicit type annotation "
+                "required (e.g., 'auto *p: Data = nullptr').");
+            HasError = true;
+            Var->TypeName = "unknown";
+            return;
+          }
 
-        if (Var->HasPointer || Var->IsUnique || Var->IsShared ||
-            Var->IsReference) {
-          if (!Inferred.empty() && (Inferred[0] == '*' || Inferred[0] == '^' ||
-                                    Inferred[0] == '~' || Inferred[0] == '&')) {
-            Inferred = Inferred.substr(1);
-            // Also strip attributes from the inferred prefix
+          if (Var->HasPointer || Var->IsUnique || Var->IsShared ||
+              Var->IsReference) {
             if (!Inferred.empty() &&
-                (Inferred[0] == '?' || Inferred[0] == '!' ||
-                 Inferred[0] == '#')) {
+                (Inferred[0] == '*' || Inferred[0] == '^' ||
+                 Inferred[0] == '~' || Inferred[0] == '&')) {
               Inferred = Inferred.substr(1);
+              // Also strip attributes from the inferred prefix
+              if (!Inferred.empty() &&
+                  (Inferred[0] == '?' || Inferred[0] == '!' ||
+                   Inferred[0] == '#')) {
+                Inferred = Inferred.substr(1);
+              }
             }
           }
+          Var->TypeName = Inferred;
         }
-        Var->TypeName = Inferred;
       }
     } else {
       // Check compatibility
@@ -207,8 +233,9 @@ void Sema::checkStmt(Stmt *S) {
       }
 
       if (!InitType.empty() && !isTypeCompatible(DeclFullTy, InitType)) {
-        error(Var, "cannot initialize variable of type '" + DeclFullTy +
-                       "' with '" + InitType + "'");
+        DiagnosticEngine::report(getLoc(Var), DiagID::ERR_INIT_TYPE_MISMATCH,
+                                 DeclFullTy, InitType);
+        HasError = true;
       }
     }
 
@@ -226,18 +253,19 @@ void Sema::checkStmt(Stmt *S) {
       morph = "&";
 
     std::string baseType = Var->TypeName;
-    // Legacy behavior: If type implies morphology (e.g. ^Data) and flags imply
-    // morphology (IsUnique), we often treat the type string's sigil as the
-    // representation of that flag and strip it? Or if flags are set, we PREPEND
-    // morphology. The legacy code checked if baseType started with sigils.
+    // Legacy behavior: If type implies morphology (e.g. ^Data) and flags
+    // imply morphology (IsUnique), we often treat the type string's sigil as
+    // the representation of that flag and strip it? Or if flags are set, we
+    // PREPEND morphology. The legacy code checked if baseType started with
+    // sigils.
 
     if (baseType.size() > 1 && (baseType[0] == '^' || baseType[0] == '~' ||
                                 baseType[0] == '*' || baseType[0] == '&')) {
       if (morph.empty()) {
         morph = std::string(1, baseType[0]);
       }
-      // We strip the sigil from base type if we are extracting it to morph, OR
-      // if morph is already set (redundancy)
+      // We strip the sigil from base type if we are extracting it to morph,
+      // OR if morph is already set (redundancy)
       baseType = baseType.substr(1);
     }
 
@@ -253,8 +281,10 @@ void Sema::checkStmt(Stmt *S) {
         }
       }
     } else {
-      // llvm::errs() << "DEBUG: checkVariableDecl NO_PERSIST Var=" << Var->Name
-      //              << " Morph=" << morph << " LastSrc=" << m_LastBorrowSource
+      // llvm::errs() << "DEBUG: checkVariableDecl NO_PERSIST Var=" <<
+      // Var->Name
+      //              << " Morph=" << morph << " LastSrc=" <<
+      //              m_LastBorrowSource
       //              << "\n";
     }
     m_LastBorrowSource = ""; // Clear for next var
@@ -302,8 +332,9 @@ void Sema::checkStmt(Stmt *S) {
           if (SourceInfoPtr->IsUnique()) {
             if (SourceInfoPtr->IsMutablyBorrowed ||
                 SourceInfoPtr->ImmutableBorrowCount > 0) {
-              error(Var,
-                    "cannot move '" + RHSVar->Name + "' while it is borrowed");
+              DiagnosticEngine::report(getLoc(Var), DiagID::ERR_MOVE_BORROWED,
+                                       RHSVar->Name);
+              HasError = true;
             }
             CurrentScope->markMoved(RHSVar->Name);
           }
@@ -319,9 +350,9 @@ void Sema::checkStmt(Stmt *S) {
     // Basic check: declType should match initType
     if (initType->toString() != "unknown" && initType->toString() != "tuple" &&
         !isTypeCompatible(declType, initType)) {
-      error(Destruct, "destructuring type mismatch: expected '" +
-                          declType->toString() + "', got '" +
-                          initType->toString() + "'");
+      DiagnosticEngine::report(getLoc(Destruct), DiagID::ERR_TYPE_MISMATCH,
+                               initType->toString(), declType->toString());
+      HasError = true;
     }
 
     std::string soulName = Type::stripMorphology(Destruct->TypeName);

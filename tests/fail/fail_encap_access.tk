@@ -22,6 +22,6 @@ fn main() -> i32 {
     
     // This should fail: private_val is not public in encap_lib.tk
     println("Private val: {}", d.private_val)
-    // EXPECT: trait 'encap' not found for implementation on 'Data'
+    // EXPECT: Trait 'encap' is not implemented for type 'Data'
     return 0
 }

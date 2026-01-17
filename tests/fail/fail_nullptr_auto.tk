@@ -13,6 +13,6 @@
 // limitations under the License.
 fn main() -> i32 {
     auto *?p = nullptr
-    // EXPECT: Cannot infer type from 'nullptr'. Explicit type annotation required (e.g., 'auto *p: Data = nullptr').
+    // EXPECT: Cannot infer type from 'nullptr'; explicit type annotation required (e.g., 'auto *p: Type = ...')
     return 0
 }
