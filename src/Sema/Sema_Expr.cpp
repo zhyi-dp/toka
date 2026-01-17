@@ -1313,6 +1313,14 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           auto innerType =
               Info->TypeObj ? Info->TypeObj
                             : toka::Type::fromString(Info->TypeObj->toString());
+
+          // Implicit Dereference for Smart Pointers: &p -> &Pointee
+          if (innerType->isUniquePtr() || innerType->isSharedPtr()) {
+            if (auto ptrInner = innerType->getPointeeType()) {
+              innerType = ptrInner;
+            }
+          }
+
           bool innerWritable = Info->IsMutable() || Var->IsValueMutable;
           innerType =
               innerType->withAttributes(innerWritable, innerType->IsNullable);

@@ -574,7 +574,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   // CRITICAL: For Shared variables, ALWAYS use the handle struct { ptr, ptr
   // }, regardless of what resolveType returned. This ensures all Shared
   // variables have consistent memory layout with ref counting support.
-  if (!type && var->IsShared) {
+  if (var->IsShared) {
     llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
     llvm::Type *refTy =
         llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));

@@ -47,7 +47,8 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
       // Variable on LHS is always a MUTATION of the soul
       ptr = getEntityAddr(varLHS->Name);
-      if (symLHS) {
+      // Don't force soulType for Smart Pointers, we need the structural type
+      if (symLHS && symLHS->morphology == Morphology::None) {
         destType = symLHS->soulType;
       }
 
@@ -381,6 +382,176 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
       error(bin, "Type mismatch in assignment");
       return nullptr;
+    }
+
+    // [Fix] Smart Pointer Assignment Strategy
+    // 1. Promote RHS if needed (Ptr -> SharedHandle)
+    // 2. Drop Old LHS Value (if Smart Pointer)
+
+    // Lookup metadata in Scope Stack (TokaSymbol lacks drop info)
+    bool isUniqueLHS = false;
+    bool isSharedLHS = false;
+    bool hasDropLHS = false;
+    std::string dropFuncLHS = "";
+    bool foundInScope = false;
+    llvm::Value *lhsAlloca = nullptr;
+
+    if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
+      std::string searchName = varLHS->Name;
+      // Strip decorators from search name if needed, but ScopeStack likely
+      // stores base name Iterate backwards
+      for (auto itLayer = m_ScopeStack.rbegin(); itLayer != m_ScopeStack.rend();
+           ++itLayer) {
+        for (auto &sv : *itLayer) {
+          if (sv.Name == searchName) {
+            isUniqueLHS = sv.IsUniquePointer;
+            isSharedLHS = sv.IsShared;
+            hasDropLHS = sv.HasDrop;
+            dropFuncLHS = sv.DropFunc;
+            lhsAlloca = sv.Alloca;
+            foundInScope = true;
+            break;
+          }
+        }
+        if (foundInScope)
+          break;
+      }
+    }
+
+    if (foundInScope && (isSharedLHS || isUniqueLHS)) {
+
+      llvm::Type *effectiveType = destType;
+      // If destType is i32 (broken soulType) but we have Alloca, use Alloca
+      // Type
+      if (lhsAlloca && llvm::isa<llvm::AllocaInst>(lhsAlloca)) {
+        effectiveType =
+            llvm::cast<llvm::AllocaInst>(lhsAlloca)->getAllocatedType();
+      }
+
+      // Promotion: Unique/Raw Ptr -> Shared Handle
+      if (isSharedLHS && rhsVal->getType()->isPointerTy()) {
+        llvm::Function *mallocFn = m_Module->getFunction("malloc");
+        if (!mallocFn) {
+          // Fallback decl
+          std::vector<llvm::Type *> args = {llvm::Type::getInt64Ty(m_Context)};
+          llvm::FunctionType *ft =
+              llvm::FunctionType::get(m_Builder.getPtrTy(), args, false);
+          mallocFn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
+                                            "malloc", m_Module.get());
+        }
+
+        // 1. Alloc RefCount
+        llvm::Value *rcSz =
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 4);
+        llvm::Value *refPtr = m_Builder.CreateCall(mallocFn, rcSz);
+        refPtr = m_Builder.CreateBitCast(
+            refPtr,
+            llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context)));
+        m_Builder.CreateStore(
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1),
+            refPtr);
+
+        // 2. Alloc Data Ptr (if needed, or reuse if RHS is ptr)
+        // If RHS is compatible ptr, steal it.
+        // Assuming RHS is T* and Shared is {T*, i32*}
+        // destType might be i32 (invalid), need Struct Type
+        llvm::Type *handleType = effectiveType;
+
+        if (handleType && handleType->isStructTy()) {
+          llvm::Value *dataPtr = m_Builder.CreateBitCast(
+              rhsVal, handleType->getStructElementType(0));
+
+          // 3. Create Handle
+          llvm::Value *u = llvm::UndefValue::get(handleType);
+          rhsVal = m_Builder.CreateInsertValue(
+              m_Builder.CreateInsertValue(u, dataPtr, 0), refPtr, 1);
+          typesMatch = true; // Forced match
+        }
+      }
+
+      // Drop Old Value
+      if (ptr && effectiveType) {
+        // Load old value
+        llvm::Value *oldVal =
+            m_Builder.CreateLoad(effectiveType, ptr, "old_assign_val");
+
+        // Use same drop logic as Rebind (copied/refactored)
+        // For brevity, I'll inline specific Shared/Unique drop logic here or
+        // call helper if available. Since helpers aren't exposed, I inline.
+        if (isSharedLHS) {
+          llvm::Value *refPtr =
+              m_Builder.CreateExtractValue(oldVal, 1, "old_ref_ptr");
+          llvm::Value *refNN =
+              m_Builder.CreateIsNotNull(refPtr, "assign_sh_nn");
+
+          llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+          llvm::BasicBlock *decBB =
+              llvm::BasicBlock::Create(m_Context, "assign_dec", f);
+          llvm::BasicBlock *contBB =
+              llvm::BasicBlock::Create(m_Context, "assign_next", f);
+
+          m_Builder.CreateCondBr(refNN, decBB, contBB);
+          m_Builder.SetInsertPoint(decBB);
+
+          llvm::Value *cnt =
+              m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
+          llvm::Value *dec = m_Builder.CreateSub(
+              cnt,
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+          m_Builder.CreateStore(dec, refPtr);
+
+          llvm::Value *isZero = m_Builder.CreateICmpEQ(
+              dec,
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+          llvm::BasicBlock *freeBB =
+              llvm::BasicBlock::Create(m_Context, "assign_sh_free", f);
+
+          m_Builder.CreateCondBr(isZero, freeBB, contBB);
+          m_Builder.SetInsertPoint(freeBB);
+
+          llvm::Value *data =
+              m_Builder.CreateExtractValue(oldVal, 0, "old_data_ptr");
+          if (hasDropLHS && !dropFuncLHS.empty()) {
+            llvm::Function *dropFn = m_Module->getFunction(dropFuncLHS);
+            if (dropFn)
+              m_Builder.CreateCall(dropFn, {data});
+          }
+          llvm::Function *freeFunc = m_Module->getFunction("free");
+          if (freeFunc) {
+            m_Builder.CreateCall(
+                freeFunc, m_Builder.CreateBitCast(data, m_Builder.getPtrTy()));
+            m_Builder.CreateCall(freeFunc, m_Builder.CreateBitCast(
+                                               refPtr, m_Builder.getPtrTy()));
+          }
+          m_Builder.CreateBr(contBB);
+          m_Builder.SetInsertPoint(contBB);
+        } else if (isUniqueLHS) {
+          llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+          llvm::Value *notNull =
+              m_Builder.CreateIsNotNull(oldVal, "assign_u_nn");
+          llvm::BasicBlock *freeBB =
+              llvm::BasicBlock::Create(m_Context, "assign_u_free", f);
+          llvm::BasicBlock *contBB =
+              llvm::BasicBlock::Create(m_Context, "assign_u_cont", f);
+
+          m_Builder.CreateCondBr(notNull, freeBB, contBB);
+          m_Builder.SetInsertPoint(freeBB);
+
+          if (hasDropLHS && !dropFuncLHS.empty()) {
+            llvm::Function *dropFn = m_Module->getFunction(dropFuncLHS);
+            if (dropFn)
+              m_Builder.CreateCall(dropFn, {oldVal});
+          }
+          llvm::Function *freeFuncName = m_Module->getFunction("free");
+          if (freeFuncName) {
+            m_Builder.CreateCall(
+                freeFuncName,
+                m_Builder.CreateBitCast(oldVal, m_Builder.getPtrTy()));
+          }
+          m_Builder.CreateBr(contBB);
+          m_Builder.SetInsertPoint(contBB);
+        }
+      }
     }
 
     m_Builder.CreateStore(rhsVal, ptr);
@@ -856,12 +1027,27 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
         cleanName.pop_back();
 
       if (m_Symbols.count(cleanName)) {
-        if (m_Symbols[cleanName].mode == AddressingMode::Reference) {
+        auto &sym = m_Symbols[cleanName];
+        if (sym.mode == AddressingMode::Reference) {
           // Rebinding Support: &ref returns the Handle's Address (L-Value)
-          // So we can write to it: &ref = &other
           llvm::Value *handleAddr = getEntityAddr(cleanName);
-          return PhysEntity(handleAddr, m_Symbols[cleanName].typeName,
-                            m_Builder.getPtrTy(), true);
+          return PhysEntity(handleAddr, sym.typeName, m_Builder.getPtrTy(),
+                            true);
+        }
+        if (sym.morphology == Morphology::Unique ||
+            sym.morphology == Morphology::Shared) {
+          // Implicit Dereference: &smart_ptr -> &pointee
+          // Load the pointer from the stack slot (the handle)
+          llvm::Value *handleSlot = getEntityAddr(cleanName);
+          llvm::Value *ptrVal = m_Builder.CreateLoad(
+              m_Builder.getPtrTy(), handleSlot, cleanName + ".unwrap");
+
+          std::string pointeeType = sym.typeName;
+          if (pointeeType.size() > 1 &&
+              (pointeeType[0] == '^' || pointeeType[0] == '~')) {
+            pointeeType = pointeeType.substr(1);
+          }
+          return PhysEntity(ptrVal, pointeeType, m_Builder.getPtrTy(), true);
         }
       }
       // Standard Address-Of (R-Value)

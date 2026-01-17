@@ -256,8 +256,22 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     expr = parseAllocExpr();
   } else if (match(TokenType::KwNew)) {
     Token kw = previous();
-    Token typeName =
-        consume(TokenType::Identifier, "Expected type after 'new'");
+    Token startTok = peek();
+    std::string typeStr = "";
+    if (check(TokenType::Identifier)) {
+      typeStr = advance().Text;
+      while (check(TokenType::Colon) && checkAt(1, TokenType::Colon)) {
+        advance();
+        advance(); // ::
+        typeStr += "::";
+        typeStr +=
+            consume(TokenType::Identifier, "Expected identifier after ::").Text;
+      }
+    } else {
+      error(peek(), "Expected type after 'new'");
+      return nullptr;
+    }
+
     std::unique_ptr<Expr> init = nullptr;
     if (check(TokenType::LBrace)) {
       advance(); // LBrace
@@ -279,9 +293,8 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         match(TokenType::Comma);
       }
       consume(TokenType::RBrace, "Expected '}'");
-      auto node =
-          std::make_unique<InitStructExpr>(typeName.Text, std::move(fields));
-      node->setLocation(typeName, m_CurrentFile);
+      auto node = std::make_unique<InitStructExpr>(typeStr, std::move(fields));
+      node->setLocation(startTok, m_CurrentFile);
       init = std::move(node);
     } else if (check(TokenType::LParen)) {
       // new Type(...) -> treat as CallExpr for constructor
@@ -293,14 +306,14 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         } while (match(TokenType::Comma));
       }
       consume(TokenType::RParen, "Expected ')'");
-      auto node = std::make_unique<CallExpr>(typeName.Text, std::move(args));
-      node->setLocation(typeName, m_CurrentFile);
+      auto node = std::make_unique<CallExpr>(typeStr, std::move(args));
+      node->setLocation(startTok, m_CurrentFile);
       init = std::move(node);
     } else {
       error(kw, "Expected '{' or '(' initializer for new expression");
       return nullptr;
     }
-    auto node = std::make_unique<NewExpr>(typeName.Text, std::move(init));
+    auto node = std::make_unique<NewExpr>(typeStr, std::move(init));
     node->setLocation(kw, m_CurrentFile);
     expr = std::move(node);
   } else if (match(TokenType::LBracket)) {
