@@ -2576,6 +2576,23 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
         idx = i;
         break;
       }
+
+      // Try stripping the initializer name as well
+      std::string initName = f.first;
+      while (!initName.empty() &&
+             (initName[0] == '^' || initName[0] == '*' || initName[0] == '&' ||
+              initName[0] == '#' || initName[0] == '~' || initName[0] == '!' ||
+              initName[0] == '?'))
+        initName = initName.substr(1);
+      while (!initName.empty() &&
+             (initName.back() == '#' || initName.back() == '?' ||
+              initName.back() == '!'))
+        initName.pop_back();
+
+      if (fn == initName) {
+        idx = i;
+        break;
+      }
     }
     if (idx == -1) {
       error(init, "Unknown field " + f.first);

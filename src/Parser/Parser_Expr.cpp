@@ -302,18 +302,76 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       node->setLocation(startTok, m_CurrentFile);
       init = std::move(node);
     } else if (check(TokenType::LParen)) {
-      // new Type(...) -> treat as CallExpr for constructor
       consume(TokenType::LParen, "Expected '('");
-      std::vector<std::unique_ptr<Expr>> args;
-      if (!check(TokenType::RParen)) {
-        do {
-          args.push_back(parseExpr());
-        } while (match(TokenType::Comma));
+
+      // Check for named initializer syntax: Type(field = val)
+      bool isNamedInit = false;
+      if (check(TokenType::Identifier) && checkAt(1, TokenType::Equal)) {
+        isNamedInit = true;
       }
-      consume(TokenType::RParen, "Expected ')'");
-      auto node = std::make_unique<CallExpr>(typeStr, std::move(args));
-      node->setLocation(startTok, m_CurrentFile);
-      init = std::move(node);
+      // Also check if first field has prefix: ^field = val
+      if (!isNamedInit &&
+          (check(TokenType::Caret) || check(TokenType::Star) ||
+           check(TokenType::Tilde) || check(TokenType::Ampersand))) {
+        if (checkAt(1, TokenType::Identifier) && checkAt(2, TokenType::Equal)) {
+          isNamedInit = true;
+        }
+        // Handle nullable pointer prefix ^?field = val (4 tokens: ^ ? id =)
+        if (!isNamedInit && (checkAt(1, TokenType::TokenNull) ||
+                             checkAt(1, TokenType::TokenWrite))) {
+          if (checkAt(2, TokenType::Identifier) &&
+              checkAt(3, TokenType::Equal)) {
+            isNamedInit = true;
+          }
+        }
+      }
+
+      if (isNamedInit) {
+        std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
+        while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+          std::string prefix = "";
+          if (match(TokenType::Star))
+            prefix = "*";
+          else if (match(TokenType::Caret))
+            prefix = "^";
+          else if (match(TokenType::Tilde))
+            prefix = "~";
+          else if (match(TokenType::Ampersand))
+            prefix = "&";
+
+          // Handle secondary prefixes like ? or # if they are separate tokens?
+          // Usually prefixes are attached or separate? Lexer treats ^ as Caret.
+          // If ^?next is Caret Question Identifier.
+          if (match(TokenType::TokenNull))
+            prefix += "?";
+          if (match(TokenType::TokenWrite))
+            prefix += "#";
+
+          Token fieldName =
+              consume(TokenType::Identifier, "Expected field name");
+          consume(TokenType::Equal, "Expected '=' after field name");
+          fields.push_back({prefix + fieldName.Text, parseExpr()});
+          if (!check(TokenType::RParen))
+            match(TokenType::Comma);
+        }
+        consume(TokenType::RParen, "Expected ')'");
+        auto node =
+            std::make_unique<InitStructExpr>(typeStr, std::move(fields));
+        node->setLocation(startTok, m_CurrentFile);
+        init = std::move(node);
+      } else {
+        // new Type(...) -> treat as CallExpr for constructor (positional)
+        std::vector<std::unique_ptr<Expr>> args;
+        if (!check(TokenType::RParen)) {
+          do {
+            args.push_back(parseExpr());
+          } while (match(TokenType::Comma));
+        }
+        consume(TokenType::RParen, "Expected ')'");
+        auto node = std::make_unique<CallExpr>(typeStr, std::move(args));
+        node->setLocation(startTok, m_CurrentFile);
+        init = std::move(node);
+      }
     } else {
       error(kw, "Expected '{' or '(' initializer for new expression");
       return nullptr;
