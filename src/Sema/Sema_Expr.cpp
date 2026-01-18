@@ -1478,8 +1478,33 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     Bin->LHS->ResolvedType = rhsType;
     lhsType = rhsType;
     LHS = lhsType->toString();
+  } else if (rhsType->isInteger() && lhsNum && !rhsNum) {
+    // Right is Strong Integer, Left is Literal -> Adapt Left
+    Bin->LHS->ResolvedType = rhsType;
+    lhsType = rhsType;
+    LHS = lhsType->toString();
   }
 
+  // Generic Implicit Dereference for Smart Pointers (Soul Interaction)
+  // If one side is Smart Pointer and other side matches its Pointee, decay
+  // Smart Pointer.
+  if (lhsType->isUniquePtr() || lhsType->isSharedPtr()) {
+    if (auto inner = lhsType->getPointeeType()) {
+      if (isTypeCompatible(inner, rhsType)) {
+        lhsType = inner;
+        Bin->LHS->ResolvedType = lhsType; // PERSIST for CodeGen
+        LHS = lhsType->toString();
+      }
+    }
+  } else if (rhsType->isUniquePtr() || rhsType->isSharedPtr()) {
+    if (auto inner = rhsType->getPointeeType()) {
+      if (isTypeCompatible(lhsType, inner)) {
+        rhsType = inner;
+        Bin->RHS->ResolvedType = rhsType; // PERSIST for CodeGen
+        RHS = rhsType->toString();
+      }
+    }
+  }
   bool isRefAssign = false;
 
   // Rebinding Logic: Unwrap &ref on LHS
@@ -1545,12 +1570,26 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   if (isAssign) {
     // Smart Pointer NewExpr Special Case
     bool isSmartNew = false;
+    bool isImplicitDerefAssign = false;
+
     if (dynamic_cast<NewExpr *>(Bin->RHS.get())) {
       if (lhsType->isUniquePtr() || lhsType->isSharedPtr()) {
         auto inner = lhsType->getPointeeType();
-        if (inner && isTypeCompatible(inner, rhsType)) {
+        auto rhsInner = rhsType->getPointeeType(); // new returns ^T
+        if (inner && rhsInner && isTypeCompatible(inner, rhsInner)) {
           isSmartNew = true;
         }
+      }
+    }
+
+    // Implicit Dereference Assignment Logic (Soul Mutation)
+    if (!isSmartNew && !isRefAssign &&
+        (lhsType->isUniquePtr() || lhsType->isSharedPtr())) {
+      auto inner = lhsType->getPointeeType();
+      // If RHS matches Inner, we are assigning to the Soul (implicit *s = val)
+      if (inner && isTypeCompatible(inner, rhsType)) {
+        lhsType = inner; // Decay to Pointee Type for Writability Check
+        isImplicitDerefAssign = true;
       }
     }
 

@@ -1,0 +1,46 @@
+
+
+import std/io::*
+
+fn main() -> i32 {
+    // Unique Pointer Test
+    {
+        auto ^p = new i32(100)
+        println("p: {}", p)
+        {
+            // 关键动作：借用发生
+            // 物理过程：&p 实际上是 &(p->soul)。引用 x 直指数据。
+            // 法律过程：编译器给 p 贴上 [FROZEN] 标签。
+            auto &x = &p 
+            
+            println("Borrowed unique: {}", x)
+            if x != 100 {
+                println("Assertion failed: x should be 100")
+                return 1
+            }
+            
+            // 此时如果尝试 move p (例如 auto ^k = ^p)，编译器必须报错。
+            // 这就是 Rust 的 "cannot move out of ... because it is borrowed"
+        } 
+        // 借用结束，x 销毁。
+        // 法律过程：p 的 [FROZEN] 标签撕掉。
+        
+        // ✅ 合法 Move
+        // 注意你的语法：^p 在右值位置显式表示 Move，这非常清晰！
+        auto ^q = ^p 
+    }
+
+    // Shared Pointer Test
+    {
+        auto ~#s# = new i32(200) // Mutable variable s
+        {
+            auto &y = &s
+            println("Borrowed shared: {}", y)
+            // s cannot be mutated here
+        }
+        s# = 250
+        ~#s = new i32(300) // Rebind shared pointer to new object
+    }
+    
+    return 0
+}

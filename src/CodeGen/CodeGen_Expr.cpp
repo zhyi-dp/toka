@@ -57,136 +57,34 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
         error(bin, "Cannot modify immutable variable '" + varLHS->Name + "'");
         return nullptr;
       }
-    } else if (auto *unaryLHS =
-                   dynamic_cast<const UnaryExpr *>(bin->LHS.get())) {
-      if (unaryLHS->Op == TokenType::Star || unaryLHS->Op == TokenType::Caret ||
-          unaryLHS->Op == TokenType::Tilde) {
-        // Unary morphology on LHS is a REBIND of the identity
-        if (auto *v = dynamic_cast<const VariableExpr *>(unaryLHS->RHS.get())) {
-          ptr = getIdentityAddr(v->Name);
-          destType = m_Builder.getPtrTy();
-
-          // Auto-Drop Logic on Reassignment
-          // We must find the variable in scope to know if it's Unique/Shared
-          // and has Drop
-          bool found = false;
-          bool isUnique = false;
-          bool isShared = false;
-          bool hasDrop = false;
-          std::string dropFuncName = "";
-
-          for (auto itLayer = m_ScopeStack.rbegin();
-               itLayer != m_ScopeStack.rend(); ++itLayer) {
-            for (auto &sv : *itLayer) {
-              if (sv.Name == v->Name) {
-                isUnique = sv.IsUniquePointer;
-                isShared = sv.IsShared;
-                hasDrop = sv.HasDrop;
-                if (hasDrop && !sv.DropFunc.empty()) {
-                  dropFuncName = sv.DropFunc;
-                }
-                found = true;
-                break;
-              }
-            }
-            if (found)
+    } else {
+      // [Fix] Address Resolution for Smart Pointer Unary Exprs (~s, ~#s)
+      // We must peel to find the variable, then find its Alloca (Envelope).
+      const Expr *targetLHS = bin->LHS.get();
+      while (auto *ue = dynamic_cast<const UnaryExpr *>(targetLHS)) {
+        targetLHS = ue->RHS.get();
+      }
+      if (auto *varLHS = dynamic_cast<const VariableExpr *>(targetLHS)) {
+        std::string searchName = varLHS->Name;
+        // Search Scope
+        bool found = false;
+        llvm::Value *allocaPtr = nullptr;
+        for (auto itLayer = m_ScopeStack.rbegin();
+             itLayer != m_ScopeStack.rend(); ++itLayer) {
+          for (auto &sv : *itLayer) {
+            if (sv.Name == searchName) {
+              allocaPtr = sv.Alloca;
+              found = true;
               break;
-          }
-
-          if (found && ptr) {
-            if (isUnique) {
-              // Load old pointer
-              llvm::Value *oldPtr = m_Builder.CreateLoad(m_Builder.getPtrTy(),
-                                                         ptr, "old_unique_ptr");
-              llvm::Value *notNull =
-                  m_Builder.CreateIsNotNull(oldPtr, "rebind_unn");
-
-              llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-              llvm::BasicBlock *freeBB =
-                  llvm::BasicBlock::Create(m_Context, "rebind_free", f);
-              llvm::BasicBlock *contBB =
-                  llvm::BasicBlock::Create(m_Context, "rebind_cont", f);
-
-              m_Builder.CreateCondBr(notNull, freeBB, contBB);
-              m_Builder.SetInsertPoint(freeBB);
-
-              if (hasDrop && !dropFuncName.empty()) {
-                llvm::Function *dropFn = m_Module->getFunction(dropFuncName);
-                if (dropFn)
-                  m_Builder.CreateCall(dropFn, {oldPtr});
-              }
-
-              llvm::Function *freeFunc = m_Module->getFunction("free");
-              if (freeFunc) {
-                m_Builder.CreateCall(
-                    freeFunc,
-                    m_Builder.CreateBitCast(
-                        oldPtr, llvm::PointerType::getUnqual(
-                                    llvm::Type::getInt8Ty(m_Context))));
-              }
-              m_Builder.CreateBr(contBB);
-              m_Builder.SetInsertPoint(contBB);
-            } else if (isShared) {
-              // Load old shared struct {data, ref}
-              // ptr is pointer to the struct alloca
-              // We need to know the struct type. It's available from the alloca
-              // usually.
-              if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
-                llvm::Type *shTy = ai->getAllocatedType();
-                llvm::Value *sh =
-                    m_Builder.CreateLoad(shTy, ptr, "old_shared_val");
-                llvm::Value *refPtr =
-                    m_Builder.CreateExtractValue(sh, 1, "old_ref_ptr");
-                llvm::Value *refIsNotNull =
-                    m_Builder.CreateIsNotNull(refPtr, "rebind_sh_nn");
-
-                llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-                llvm::BasicBlock *decBB =
-                    llvm::BasicBlock::Create(m_Context, "rebind_dec", f);
-                llvm::BasicBlock *contBB =
-                    llvm::BasicBlock::Create(m_Context, "rebind_next", f);
-
-                m_Builder.CreateCondBr(refIsNotNull, decBB, contBB);
-                m_Builder.SetInsertPoint(decBB);
-
-                llvm::Value *count = m_Builder.CreateLoad(
-                    llvm::Type::getInt32Ty(m_Context), refPtr);
-                llvm::Value *dec = m_Builder.CreateSub(
-                    count, llvm::ConstantInt::get(
-                               llvm::Type::getInt32Ty(m_Context), 1));
-                m_Builder.CreateStore(dec, refPtr);
-
-                llvm::Value *isZero = m_Builder.CreateICmpEQ(
-                    dec, llvm::ConstantInt::get(
-                             llvm::Type::getInt32Ty(m_Context), 0));
-                llvm::BasicBlock *freeBB =
-                    llvm::BasicBlock::Create(m_Context, "rebind_sh_free", f);
-
-                m_Builder.CreateCondBr(isZero, freeBB, contBB);
-                m_Builder.SetInsertPoint(freeBB);
-
-                llvm::Value *data =
-                    m_Builder.CreateExtractValue(sh, 0, "old_data_ptr");
-                if (hasDrop && !dropFuncName.empty()) {
-                  llvm::Function *dropFn = m_Module->getFunction(dropFuncName);
-                  if (dropFn)
-                    m_Builder.CreateCall(dropFn, {data});
-                }
-
-                llvm::Function *freeFunc = m_Module->getFunction("free");
-                if (freeFunc) {
-                  m_Builder.CreateCall(
-                      freeFunc,
-                      m_Builder.CreateBitCast(data, m_Builder.getPtrTy()));
-                  m_Builder.CreateCall(
-                      freeFunc,
-                      m_Builder.CreateBitCast(refPtr, m_Builder.getPtrTy()));
-                }
-                m_Builder.CreateBr(contBB);
-                m_Builder.SetInsertPoint(contBB);
-              }
             }
           }
+          if (found)
+            break;
+        }
+
+        if (found && allocaPtr) {
+          // We found the variable. Set ptr to Envelope.
+          ptr = allocaPtr;
         }
       }
     }
@@ -351,17 +249,99 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
       rhsVal = res;
     }
 
-    bool typesMatch = (destType == rhsVal->getType());
-    if (!typesMatch) {
-      // Fallback 1: Integer width matching (i32 vs i32)
-      if (destType->isIntegerTy() && rhsVal->getType()->isIntegerTy()) {
-        if (destType->getIntegerBitWidth() ==
-            rhsVal->getType()->getIntegerBitWidth()) {
-          typesMatch = true;
+    // [Refactor] Move Variable Lookup & Rebind Intent Detection UP
+    const Expr *targetLHS = bin->LHS.get();
+    bool hasRebindIntent = false;
+    while (auto *ue = dynamic_cast<const UnaryExpr *>(targetLHS)) {
+      if (ue->Op == TokenType::TokenWrite || ue->IsRebindable) {
+        hasRebindIntent = true;
+      }
+      targetLHS = ue->RHS.get();
+    }
+
+    // Lookup metadata in Scope Stack
+    bool isUniqueLHS = false;
+    bool isSharedLHS = false;
+    bool hasDropLHS = false;
+    std::string dropFuncLHS = "";
+    bool foundInScope = false;
+    llvm::Value *lhsAlloca = nullptr;
+
+    if (auto *varLHS = dynamic_cast<const VariableExpr *>(targetLHS)) {
+      std::string searchName = varLHS->Name;
+      for (auto itLayer = m_ScopeStack.rbegin(); itLayer != m_ScopeStack.rend();
+           ++itLayer) {
+        for (auto &sv : *itLayer) {
+          if (sv.Name == searchName) {
+            isUniqueLHS = sv.IsUniquePointer;
+            isSharedLHS = sv.IsShared;
+            hasDropLHS = sv.HasDrop;
+            dropFuncLHS = sv.DropFunc;
+            lhsAlloca = sv.Alloca;
+            foundInScope = true;
+            break;
+          }
+        }
+        if (foundInScope)
+          break;
+      }
+    }
+
+    // Disable smart ptr logic if we are just mutating the soul (unless Rebind)
+    if (bin->LHS->ResolvedType && !rhsVal->getType()->isPointerTy()) {
+      // Only if NO rebind intent
+      if (!hasRebindIntent && !bin->LHS->ResolvedType->isSharedPtr() &&
+          !bin->LHS->ResolvedType->isUniquePtr()) {
+        isSharedLHS = false;
+        isUniqueLHS = false;
+      }
+    }
+
+    // [Refactor] Apply Identity Correction BEFORE Type Check
+    if (foundInScope && (isSharedLHS || isUniqueLHS || hasRebindIntent)) {
+      // If no explicit rebind intent (#), and we are hitting the Soul,
+      // we check if we SHOULD be hitting the Soul.
+      // E.g. s = 10. ptr is Soul Addr. LHS IsShared. Rebind=False.
+      // We keep ptr as Soul Addr.
+      // BUT if Rebind=True (*#ptr), we MUST force ptr = lhsAlloca.
+      if (hasRebindIntent) {
+        ptr = lhsAlloca;
+      } else if (isSharedLHS || isUniqueLHS) {
+        // If RHS is also a pointer suitable for rebind, we MIGHT mean rebind?
+        // No, Sema enforces explicit syntax. CodeGen just follows orders.
+        // Waiting... Toka 1.3 says "Strict Morphology".
+        // If s = new... (Logic moved to Sema).
+        // CodeGen: If ptr points to Soul, and we want to write Soul, keep it.
+      }
+
+      // Re-derive destType if we changed ptr
+      if (ptr) {
+        if (llvm::isa<llvm::AllocaInst>(ptr)) {
+          destType = llvm::cast<llvm::AllocaInst>(ptr)->getAllocatedType();
+        } else {
+          // Fallback: With Opaque Pointers, we cannot deduce element type from
+          // pointer. We rely on destType being previously correct or LHS check.
         }
       }
-      // Fallback 2: Pointer matching
+    }
+
+    // [Refactor] Strict Type Check with Exemptions
+    bool typesMatch = (destType == rhsVal->getType());
+    if (!typesMatch) {
+      // 1. Integer width fallback
+      if (destType->isIntegerTy() && rhsVal->getType()->isIntegerTy()) {
+        if (destType->getIntegerBitWidth() ==
+            rhsVal->getType()->getIntegerBitWidth())
+          typesMatch = true;
+      }
+      // 2. Pointer matching
       if (destType->isPointerTy() && rhsVal->getType()->isPointerTy()) {
+        typesMatch = true;
+      }
+      // 3. [Fix] Shared Pointer Promotion Exemption
+      // Dest: {T*, i32*} (Struct), RHS: T* (Pointer) -> Allow
+      if (isSharedLHS && destType->isStructTy() &&
+          rhsVal->getType()->isPointerTy()) {
         typesMatch = true;
       }
     }
@@ -388,47 +368,30 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     // 1. Promote RHS if needed (Ptr -> SharedHandle)
     // 2. Drop Old LHS Value (if Smart Pointer)
 
-    // Lookup metadata in Scope Stack (TokaSymbol lacks drop info)
-    bool isUniqueLHS = false;
-    bool isSharedLHS = false;
-    bool hasDropLHS = false;
-    std::string dropFuncLHS = "";
-    bool foundInScope = false;
-    llvm::Value *lhsAlloca = nullptr;
+    // [Refactor] Cleanup: Trace Unified Logic (Post-Check)
+    // Variables populated above.
+    llvm::errs() << "DEBUG: UnifiedCheck Name="
+                 << (foundInScope ? "Found" : "NotFound")
+                 << " IsShared=" << isSharedLHS << " IsUnique=" << isUniqueLHS
+                 << " LHS_ResType="
+                 << (bin->LHS->ResolvedType ? bin->LHS->ResolvedType->toString()
+                                            : "Null")
+                 << "\n";
 
-    if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-      std::string searchName = varLHS->Name;
-      // Strip decorators from search name if needed, but ScopeStack likely
-      // stores base name Iterate backwards
-      for (auto itLayer = m_ScopeStack.rbegin(); itLayer != m_ScopeStack.rend();
-           ++itLayer) {
-        for (auto &sv : *itLayer) {
-          if (sv.Name == searchName) {
-            isUniqueLHS = sv.IsUniquePointer;
-            isSharedLHS = sv.IsShared;
-            hasDropLHS = sv.HasDrop;
-            dropFuncLHS = sv.DropFunc;
-            lhsAlloca = sv.Alloca;
-            foundInScope = true;
-            break;
-          }
-        }
-        if (foundInScope)
-          break;
-      }
-    }
-
-    if (foundInScope && (isSharedLHS || isUniqueLHS)) {
-
+    if (foundInScope && (isSharedLHS || isUniqueLHS || hasRebindIntent)) {
       llvm::Type *effectiveType = destType;
-      // If destType is i32 (broken soulType) but we have Alloca, use Alloca
-      // Type
-      if (lhsAlloca && llvm::isa<llvm::AllocaInst>(lhsAlloca)) {
-        effectiveType =
-            llvm::cast<llvm::AllocaInst>(lhsAlloca)->getAllocatedType();
+
+      // [Fix] Distinguish Rebind (s = ...) vs Soul Mutation (s# = ...)
+      if (lhsAlloca && ptr != lhsAlloca && !hasRebindIntent) {
+        // If ptr is NOT alloca, and logic says NO rebind, we are modifying
+        // Soul. Except if we already decided above intended rebind.
+        isSharedLHS = false;
+        isUniqueLHS = false;
       }
 
       // Promotion: Unique/Raw Ptr -> Shared Handle
+      llvm::errs() << "DEBUG: SmartPtrLogic Enter. isShared=" << isSharedLHS
+                   << " RHS IsPtr=" << rhsVal->getType()->isPointerTy() << "\n";
       if (isSharedLHS && rhsVal->getType()->isPointerTy()) {
         llvm::Function *mallocFn = m_Module->getFunction("malloc");
         if (!mallocFn) {
@@ -774,6 +737,63 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   llvm::Type *lhsType = lhs->getType();
   llvm::Type *rhsType = rhs->getType();
 
+  // [Fix] Implicit Smart Pointer Dereference (Bridge Sema -> CodeGen)
+  // If Sema authorized a Value usage (resolvedType is generic) but we generated
+  // a Pointer/Handle, we must unwrap/load the Soul.
+
+  auto unwrapSmartPtr = [&](llvm::Value *val,
+                            const Expr *expr) -> llvm::Value * {
+    if (!val || !expr || !expr->ResolvedType)
+      return val;
+
+    llvm::Type *currentTy = val->getType();
+    bool isTargetStruct = currentTy->isStructTy();
+    bool isTargetPtr = currentTy->isPointerTy();
+
+    // If we differ from ResolvedType (e.g. Sema says i32, we have {i32*,
+    // count*} or i32*) Simple heuristic: If we have a mismatch with the OTHER
+    // operand that is solved by dereferencing OR if the ResolvedType itself is
+    // not a SmartPointer/Pointer.
+
+    // Check if expr->ResolvedType is NOT a pointer/smart-ptr, but we represent
+    // one.
+    bool semaIsValue = !expr->ResolvedType->isPointer() &&
+                       !expr->ResolvedType->isReference() &&
+                       !expr->ResolvedType->isSmartPointer();
+
+    if (semaIsValue) {
+      if (isTargetStruct && currentTy->getStructNumElements() == 2) {
+        // Shared Pointer Handle: Extract Data Ptr then Load
+        llvm::Value *dataPtr =
+            m_Builder.CreateExtractValue(val, 0, "smart_deref_ptr");
+        // Check if loading is valid (opaque pointers make dataPtr typeless,
+        // need Element Type) We rely on ResolvedType to provide the Element
+        // Type
+        llvm::Type *loadTy = getLLVMType(expr->ResolvedType);
+        if (loadTy) {
+          return m_Builder.CreateLoad(loadTy, dataPtr, "smart_deref_val");
+        }
+      } else if (isTargetPtr) {
+        // Unique Pointer or Raw Pointer: Load the Value
+        // Verify we aren't loading a pointer-to-pointer if the target IS a
+        // pointer But semaIsValue=true means target is i32, struct, etc. not
+        // pointer.
+        llvm::Type *loadTy = getLLVMType(expr->ResolvedType);
+        if (loadTy) {
+          return m_Builder.CreateLoad(loadTy, val, "ptr_deref_val");
+        }
+      }
+    }
+    return val;
+  };
+
+  lhs = unwrapSmartPtr(lhs, bin->LHS.get());
+  rhs = unwrapSmartPtr(rhs, bin->RHS.get());
+
+  // Refresh types after unwrap
+  lhsType = lhs->getType();
+  rhsType = rhs->getType();
+
   bool isPtrArith =
       (lhsType->isPointerTy() && rhsType->isIntegerTy()) ||
       (rhsType->isPointerTy() && lhsType->isIntegerTy() && bin->Op == "+");
@@ -1038,7 +1058,7 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
             sym.morphology == Morphology::Shared) {
           // Implicit Dereference: &smart_ptr -> &pointee
           // Load the pointer from the stack slot (the handle)
-          llvm::Value *handleSlot = getEntityAddr(cleanName);
+          llvm::Value *handleSlot = getIdentityAddr(cleanName);
           llvm::Value *ptrVal = m_Builder.CreateLoad(
               m_Builder.getPtrTy(), handleSlot, cleanName + ".unwrap");
 
@@ -1047,7 +1067,7 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
               (pointeeType[0] == '^' || pointeeType[0] == '~')) {
             pointeeType = pointeeType.substr(1);
           }
-          return PhysEntity(ptrVal, pointeeType, m_Builder.getPtrTy(), true);
+          return PhysEntity(ptrVal, pointeeType, m_Builder.getPtrTy(), false);
         }
       }
       // Standard Address-Of (R-Value)
@@ -2038,6 +2058,9 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
 
         // Check for named arg (x = val)
         if (auto *bin = dynamic_cast<const BinaryExpr *>(arg.get())) {
+          // Attempt auto-deref in CodeGen if Sema authorized it?
+          // If LHS is ptr and RHS is int (identity/value mismatch)
+
           if (bin->Op == "=") {
             if (auto *var =
                     dynamic_cast<const VariableExpr *>(bin->LHS.get())) {

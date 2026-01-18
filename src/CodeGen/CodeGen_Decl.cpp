@@ -411,6 +411,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       return nullptr;
     }
   }
+  llvm::errs() << "DEBUG: PostInit Var=" << varName
+               << " InitVal=" << (initVal ? "Yes" : "No") << "\n";
 
   llvm::Type *type = nullptr;
   llvm::Type *elemTy = nullptr;
@@ -591,6 +593,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     error(var, "Cannot infer type for variable '" + varName + "'");
     return nullptr;
   }
+  llvm::errs() << "DEBUG: PostType Var=" << varName
+               << " Ty=" << (type ? "Yes" : "No") << "\n";
 
   if (var->Init && initVal) {
     // Move Semantics for Unique
@@ -703,6 +707,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       }
     }
   }
+  llvm::errs() << "DEBUG: PreAlloca Var=" << varName << "\n";
 
   llvm::AllocaInst *alloca = m_Builder.CreateAlloca(type, nullptr, varName);
 
@@ -814,6 +819,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   }
 
   m_Builder.CreateStore(initVal, alloca);
+  llvm::errs() << "DEBUG: PostStore Var=" << varName << "\n";
 
   // Automatic Drop Registration
   if (!m_ScopeStack.empty()) {
@@ -863,27 +869,45 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       }
     }
 
-    if (!var->IsReference &&
-        (!var->HasPointer || var->IsUnique ||
-         var->IsShared)) { // Do not auto-drop references or raw pointers!
-      VariableScopeInfo info;
-      info.Name = varName;
-      info.Alloca = alloca;
-      info.IsUniquePointer = var->IsUnique;
-      info.IsShared = var->IsShared;
-      info.HasDrop = hasDrop;
-      info.DropFunc = dropFunc;
-      m_ScopeStack.back().push_back(info);
+    llvm::errs() << "DEBUG: PrePushCheck Var=" << varName
+                 << " IsRef=" << var->IsReference
+                 << " HasPtr=" << var->HasPointer
+                 << " IsUnique=" << var->IsUnique
+                 << " IsShared=" << var->IsShared << "\n";
+
+    // [Fix] Scope Registration Logic
+    // We must register ALL variables (including references and raw pointers) so
+    // they can be looked up for Identity Rebinds.
+    // However, we must Ensure they are NOT auto-dropped unless they own their
+    // data.
+
+    bool canDrop = !var->IsReference &&
+                   (!var->HasPointer || var->IsUnique || var->IsShared);
+    if (!canDrop) {
+      hasDrop = false;
+      dropFunc = "";
     }
+
+    VariableScopeInfo info;
+    info.Name = varName;
+    info.Alloca = alloca;
+    info.IsUniquePointer = var->IsUnique;
+    info.IsShared = var->IsShared;
+    info.HasDrop = hasDrop;
+    info.DropFunc = dropFunc;
+
+    m_ScopeStack.back().push_back(info);
     // Debug Lookup
     // llvm::errs() << "DEBUG: genFreeStmt lookup varName='" << varName
     //              << "' count=" << m_ValueTypeNames.count(varName) << " val='"
     //              << m_ValueTypeNames[varName] << "'\n";
+  } else {
+    llvm::errs() << "DEBUG: ScopeStack Empty! Var=" << varName << "\n";
   }
   // Debug
   // llvm::errs() << "DEBUG: genVariableDecl varName=" << varName
   //              << " TypeName=" << m_ValueTypeNames[varName] << "\n";
-
+  llvm::errs() << "DEBUG: EndVarDecl Var=" << varName << "\n";
   return nullptr;
 }
 

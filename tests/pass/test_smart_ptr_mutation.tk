@@ -1,0 +1,10 @@
+fn main() -> i32 {
+    auto ~#s# = new i32(100)
+    // Implicit dereference mutation (s# refers to the Soul)
+    s# = 300
+    
+    if s != 300 {
+        return 1
+    }
+    return 0
+}
