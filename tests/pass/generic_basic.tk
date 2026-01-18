@@ -1,8 +1,11 @@
+import std/memory::assert
+
 shape Box<T> (
     val: T
 )
 
 fn main() -> i32 {
     auto b = Box<i32>(val=10)
+    assert(b.val == 10, "Box test failed")
     return 0
 }

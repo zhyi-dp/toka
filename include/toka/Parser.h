@@ -77,6 +77,7 @@ private:
 
   std::unique_ptr<Expr> parseExpr(int minPrec = 0);
   std::unique_ptr<Expr> parsePrimary();
+  std::string parseTypeString();
 
   // ... Add more precedence helpers here
 };

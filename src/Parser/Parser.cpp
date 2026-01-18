@@ -130,6 +130,29 @@ void Parser::error(const Token &tok, const std::string &message) {
   std::exit(1);
 }
 
+std::string Parser::parseTypeString() {
+  std::string type;
+  int balance = 0;
+  while (!check(TokenType::EndOfFile)) {
+    TokenType t = peek().Kind;
+    if (t == TokenType::LBracket || t == TokenType::LParen ||
+        t == TokenType::GenericLT)
+      balance++;
+
+    if (balance == 0 && (check(TokenType::Comma) || check(TokenType::RParen) ||
+                         check(TokenType::Equal) || isEndOfStatement() ||
+                         check(TokenType::LBrace)))
+      break;
+
+    if (t == TokenType::RBracket || t == TokenType::RParen ||
+        t == TokenType::Greater)
+      balance--;
+
+    type += advance().Text;
+  }
+  return type;
+}
+
 std::unique_ptr<Module> Parser::parseModule() {
   auto module = std::make_unique<Module>();
   // module->FileName = m_CurrentFile;

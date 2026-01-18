@@ -95,6 +95,15 @@ std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
   return T;
 }
 
+std::shared_ptr<toka::Type>
+Sema::checkExpr(Expr *E, std::shared_ptr<toka::Type> expected) {
+  auto oldExpected = m_ExpectedType;
+  m_ExpectedType = expected;
+  auto T = checkExpr(E);
+  m_ExpectedType = oldExpected;
+  return T;
+}
+
 // -----------------------------------------------------------------------------
 // Type & Morphology Helpers
 // -----------------------------------------------------------------------------
@@ -827,25 +836,38 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
   } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
     return checkCallExpr(Call);
   } else if (auto *New = dynamic_cast<NewExpr *>(E)) {
-    // Return the Type being created.
-    // Validating the Initializer matches the Type is good (e.g.
-    // InitStructExpr)
+    std::string resolvedName = resolveType(New->Type);
+
+    // [New] Generic Inference for 'new'
+    if (ShapeMap.count(resolvedName)) {
+      ShapeDecl *SD = ShapeMap[resolvedName];
+      if (!SD->GenericParams.empty() && m_ExpectedType) {
+        auto ptrTy =
+            std::dynamic_pointer_cast<toka::PointerType>(m_ExpectedType);
+        if (ptrTy) {
+          auto expShape =
+              std::dynamic_pointer_cast<toka::ShapeType>(ptrTy->PointeeType);
+          if (expShape && (expShape->Name == SD->Name ||
+                           expShape->Name.find(SD->Name + "_M") == 0)) {
+            resolvedName = resolveType(expShape->toString());
+          }
+        }
+      }
+    }
+
     if (New->Initializer) {
-      auto InitTypeObj = checkExpr(New->Initializer.get());
+      // Pass the resolved target type as expected type for inference
+      auto InitTypeObj = checkExpr(New->Initializer.get(),
+                                   toka::Type::fromString(resolvedName));
       std::string InitType = InitTypeObj->toString();
-      std::string resolvedTarget = resolveType(New->Type);
-      if (!isTypeCompatible(resolvedTarget, InitType) &&
-          InitType != "unknown") {
-        // InitStruct returns "StructName".
-        // checkExprStr(InitStruct) returns "StructName".
-        // So this should match.
+      if (!isTypeCompatible(resolvedName, InitType) && InitType != "unknown") {
         DiagnosticEngine::report(getLoc(New), DiagID::ERR_TYPE_MISMATCH,
                                  InitType, New->Type);
         HasError = true;
       }
     }
     // 'new' usually returns a unique pointer: ^Type
-    return toka::Type::fromString("^" + resolveType(New->Type));
+    return toka::Type::fromString("^" + resolvedName);
   } else if (auto *UnsafeE = dynamic_cast<UnsafeExpr *>(E)) {
     bool oldUnsafe = m_InUnsafeContext;
     m_InUnsafeContext = true;
@@ -972,6 +994,103 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (ShapeMap.count(resolvedName)) {
       ShapeDecl *SD = ShapeMap[resolvedName];
 
+      // Try inference from m_ExpectedType first
+      if (!SD->GenericParams.empty() && m_ExpectedType) {
+        auto expShape =
+            std::dynamic_pointer_cast<toka::ShapeType>(m_ExpectedType);
+        if (expShape && (expShape->Name == SD->Name ||
+                         expShape->Name.find(SD->Name + "_M") == 0)) {
+          resolvedName = resolveType(m_ExpectedType->toString());
+          SD = ShapeMap[resolvedName];
+        }
+      }
+
+      // [NEW] Inference from fields if still a template
+      if (!SD->GenericParams.empty() &&
+          (resolvedName == SD->Name || resolvedName == SD->Name + "<>")) {
+        auto trim = [](std::string s) {
+          size_t first = s.find_first_not_of(" \t\n\r");
+          if (first == std::string::npos)
+            return std::string("");
+          size_t last = s.find_last_not_of(" \t\n\r");
+          return s.substr(first, (last - first + 1));
+        };
+        std::map<std::string, std::string> inferred;
+        for (auto const &pair : Init->Members) {
+          std::string fieldName = Type::stripMorphology(pair.first);
+          const ShapeMember *pM = nullptr;
+          for (const auto &m : SD->Members) {
+            if (m.Name == fieldName) {
+              pM = &m;
+              break;
+            }
+          }
+          if (!pM)
+            continue;
+
+          auto valType = checkExpr(pair.second.get(), nullptr);
+          if (!valType)
+            continue;
+
+          // Simple pattern matching for inference
+          // If template field is [T; N_]
+          if (pM->Type.find("[") == 0) {
+            auto arrTy = std::dynamic_pointer_cast<toka::ArrayType>(valType);
+            if (arrTy) {
+              size_t semi = pM->Type.find(';');
+              size_t close = pM->Type.find(']');
+              if (semi != std::string::npos && close != std::string::npos) {
+                auto trim_inline = [](std::string s) {
+                  size_t first = s.find_first_not_of(" \t\n\r");
+                  if (first == std::string::npos)
+                    return std::string("");
+                  size_t last = s.find_last_not_of(" \t\n\r");
+                  return s.substr(first, (last - first + 1));
+                };
+                std::string tName = trim_inline(pM->Type.substr(1, semi - 1));
+                std::string nName =
+                    trim_inline(pM->Type.substr(semi + 1, close - semi - 1));
+
+                // Match T
+                for (const auto &gp : SD->GenericParams) {
+                  if (gp.Name == tName && !gp.IsConst)
+                    inferred[tName] = arrTy->ElementType->toString();
+                  if (gp.Name == nName && gp.IsConst)
+                    inferred[nName] = std::to_string(arrTy->Size);
+                }
+              }
+            }
+          } else {
+            // Field is just T
+            for (const auto &gp : SD->GenericParams) {
+              if (gp.Name == pM->Type && !gp.IsConst)
+                inferred[gp.Name] = valType->toString();
+            }
+          }
+        }
+
+        if (inferred.size() > 0) {
+          // Construct Name<Arg1, Arg2...>
+          std::string fullName = SD->Name + "<";
+          for (size_t i = 0; i < SD->GenericParams.size(); ++i) {
+            std::string pName = SD->GenericParams[i].Name;
+            if (inferred.count(pName))
+              fullName += inferred[pName];
+            else
+              fullName += "unknown";
+            if (i < SD->GenericParams.size() - 1)
+              fullName += ", ";
+          }
+          fullName += ">";
+          resolvedName = resolveType(fullName);
+          SD = ShapeMap[resolvedName];
+        }
+      }
+    }
+
+    if (ShapeMap.count(resolvedName)) {
+      ShapeDecl *SD = ShapeMap[resolvedName];
+
       // Visibility Check:
       std::string sdFile =
           DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc).FileName;
@@ -1019,12 +1138,12 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         providedFields.insert(pair.first);
 
         bool fieldFound = false;
-        std::string expectedType;
+        const ShapeMember *pDefMember = nullptr;
         std::string providedFieldName = Type::stripMorphology(pair.first);
         for (const auto &defField : SD->Members) {
           if (defField.Name == providedFieldName) {
             fieldFound = true;
-            expectedType = defField.Type;
+            pDefMember = &defField;
             break;
           }
         }
@@ -1036,12 +1155,19 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           continue; // Continue to find more errors
         }
 
-        std::shared_ptr<toka::Type> exprTypeObj = checkExpr(pair.second.get());
+        // [MOD] Pass expected type for inference
+        auto memberTypeObj = pDefMember->ResolvedType;
+        if (!memberTypeObj)
+          memberTypeObj = toka::Type::fromString(pDefMember->Type);
+
+        std::shared_ptr<toka::Type> exprTypeObj =
+            checkExpr(pair.second.get(), memberTypeObj);
         std::string exprType = exprTypeObj->toString();
-        if (!isTypeCompatible(expectedType, exprType)) {
+
+        if (!isTypeCompatible(memberTypeObj, exprTypeObj)) {
           DiagnosticEngine::report(getLoc(Init),
                                    DiagID::ERR_MEMBER_TYPE_MISMATCH, pair.first,
-                                   expectedType, exprType);
+                                   memberTypeObj->toString(), exprType);
           HasError = true;
         }
       }
@@ -1067,7 +1193,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     // Mask Calculation for Struct
-    std::string resolvedInitName = resolveType(Init->ShapeName);
+    std::string resolvedInitName =
+        resolvedName; // Use the already resolved (and potentially inferred)
+                      // name
     if (ShapeMap.count(resolvedInitName)) {
       ShapeDecl *SD = ShapeMap[resolvedInitName];
       uint64_t mask = 0;
@@ -2393,7 +2521,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         auto valType = checkExpr(valExpr);
         auto expectedType = toka::Type::fromString(expectedTypeStr);
 
-        if (!valType->isCompatibleWith(*expectedType)) {
+        if (!isTypeCompatible(expectedType, valType)) {
           error(valExpr, "Type mismatch for field '" +
                              (isNamed ? fieldName : std::to_string(argIdx)) +
                              "': expected " + expectedType->toString() +
@@ -2449,7 +2577,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
     std::string ctx = "arg " + std::to_string(i + 1);
     checkStrictMorphology(Call->Args[i].get(), targetMorph, sourceMorph, ctx);
 
-    if (!argType->isCompatibleWith(*paramType)) {
+    if (!isTypeCompatible(paramType, argType)) {
       error(Call->Args[i].get(), "Type mismatch for argument " +
                                      std::to_string(i + 1) + ": expected " +
                                      paramType->toString() + ", got " +

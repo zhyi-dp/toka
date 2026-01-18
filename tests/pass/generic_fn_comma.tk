@@ -1,0 +1,14 @@
+shape Buffer<T, N_: usize>(
+    data: [T; N_],
+    len: usize
+)
+
+fn process(buf: Buffer<i32, 16>) -> i32 {
+    return buf.len as i32
+}
+
+fn main() -> i32 {
+    auto b = Buffer<i32, 16>(data = [0; 16], len = 0)
+    process(b)
+    return 0
+}

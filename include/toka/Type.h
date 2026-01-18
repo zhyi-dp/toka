@@ -185,9 +185,11 @@ class ArrayType : public Type {
 public:
   std::shared_ptr<Type> ElementType;
   uint64_t Size;
+  std::string SymbolicSize; // [NEW] For const generics like N_
 
-  ArrayType(std::shared_ptr<Type> elem, uint64_t size)
-      : Type(Array), ElementType(elem), Size(size) {}
+  ArrayType(std::shared_ptr<Type> elem, uint64_t size, std::string sym = "")
+      : Type(Array), ElementType(elem), Size(size),
+        SymbolicSize(std::move(sym)) {}
   std::string toString() const override;
   bool equals(const Type &other) const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;

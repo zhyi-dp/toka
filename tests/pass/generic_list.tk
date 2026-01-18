@@ -1,0 +1,16 @@
+// tests/pass/generic_list.tk
+shape Node<T> (
+    val: T,
+    ^next: Node<T>
+)
+
+fn main() -> i32 {
+    // Recursive instantiation check
+    // Node<i32> contains ^Node<i32>
+    auto ^head = new Node<i32>(val=1, ^next=nullptr)
+    
+    // Explicit recursion test
+    auto ^second = new Node<i32>(val=2, ^next=^head)
+    
+    return 0
+}

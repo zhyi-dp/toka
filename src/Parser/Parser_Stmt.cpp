@@ -80,19 +80,7 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
 
   std::string typeName = "";
   if (match(TokenType::Colon)) {
-    int depth = 0;
-    while (!check(TokenType::EndOfFile)) {
-      if (check(TokenType::LBracket))
-        depth++;
-      if (check(TokenType::RBracket))
-        depth--;
-
-      if (depth == 0 && (isEndOfStatement() || check(TokenType::Equal) ||
-                         check(TokenType::Comma) || check(TokenType::RParen) ||
-                         check(TokenType::LBrace)))
-        break;
-      typeName += advance().Text;
-    }
+    typeName = parseTypeString();
   }
 
   std::unique_ptr<Expr> init;

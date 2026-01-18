@@ -69,7 +69,8 @@ Sema::resolveType(std::shared_ptr<toka::Type> type) {
   if (auto arr = std::dynamic_pointer_cast<toka::ArrayType>(type)) {
     auto inner = resolveType(arr->ElementType);
     if (inner != arr->ElementType) {
-      auto newArr = std::make_shared<toka::ArrayType>(inner, arr->Size);
+      auto newArr = std::make_shared<toka::ArrayType>(inner, arr->Size,
+                                                      arr->SymbolicSize);
       newArr->IsWritable = arr->IsWritable;
       newArr->IsNullable = arr->IsNullable;
       return newArr;
@@ -208,10 +209,11 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
       for (auto const &[K, V] : substMap) {
         size_t pos = 0;
         while ((pos = memberTypeStr.find(K, pos)) != std::string::npos) {
-          // Check word boundaries (simple check)
-          bool startOk = (pos == 0) || !std::isalnum(memberTypeStr[pos - 1]);
+          // Check word boundaries (include underscore)
+          auto isWordChar = [](char c) { return std::isalnum(c) || c == '_'; };
+          bool startOk = (pos == 0) || !isWordChar(memberTypeStr[pos - 1]);
           bool endOk = (pos + K.size() == memberTypeStr.size()) ||
-                       !std::isalnum(memberTypeStr[pos + K.size()]);
+                       !isWordChar(memberTypeStr[pos + K.size()]);
 
           if (startOk && endOk) {
             std::string valStr = V->toString();
@@ -247,8 +249,27 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
         prefix += "*";
 
       std::string fullTypeStr = prefix + member.Type;
-      // Recursion here might trigger nested instantiation if member is
-      // compatible
+      // [NEW] If it's an array with a symbolic size that's one of our generic
+      // params, replace it before resolution.
+      auto memberTypeObj = toka::Type::fromString(fullTypeStr);
+      if (auto arr =
+              std::dynamic_pointer_cast<toka::ArrayType>(memberTypeObj)) {
+        if (!arr->SymbolicSize.empty() && substMap.count(arr->SymbolicSize)) {
+          // Replace symbolic size (const generic)
+          std::string valStr = substMap.at(arr->SymbolicSize)->toString();
+          // We can't easily change the string, so we recreate the type string.
+          // Or just update the ResolvedType later.
+          // Let's re-parse with the value.
+          size_t semi = fullTypeStr.find(';');
+          size_t close = fullTypeStr.find(']', semi);
+          if (semi != std::string::npos && close != std::string::npos) {
+            std::string newVal = fullTypeStr.substr(0, semi + 1) + " " +
+                                 valStr + fullTypeStr.substr(close);
+            fullTypeStr = newVal;
+          }
+        }
+      }
+
       std::string resolvedName = resolveType(fullTypeStr);
       member.ResolvedType = toka::Type::fromString(resolvedName);
     }
@@ -263,6 +284,10 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
                             std::shared_ptr<toka::Type> Source) {
   if (!Target || !Source)
     return false;
+
+  // [NEW] Canonicalize types before comparison
+  Target = resolveType(Target);
+  Source = resolveType(Source);
 
   // Unknown/Unresolved types are compatible with everything (Error
   // Recovery)
@@ -399,14 +424,15 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   // Used for passing mutable variables to immutable args.
   // S->withAttributes(false, ...) effectively strips writability logic from
   // comparison.
-  auto cleanT = T->withAttributes(false, T->IsNullable);
-  auto cleanS = S->withAttributes(false, S->IsNullable);
+  // 4. Writability Stripping (T# compatible with T)
+  auto cleanT = Target->withAttributes(false, Target->IsNullable);
+  auto cleanS = Source->withAttributes(false, Source->IsNullable);
   if (cleanT->equals(*cleanS))
     return true;
 
   // 5. Pointer Nullability Subtyping (*Data compatible with *?Data)
-  if (auto ptrT = std::dynamic_pointer_cast<toka::PointerType>(T)) {
-    if (auto ptrS = std::dynamic_pointer_cast<toka::PointerType>(S)) {
+  if (auto ptrT = std::dynamic_pointer_cast<toka::PointerType>(Target)) {
+    if (auto ptrS = std::dynamic_pointer_cast<toka::PointerType>(Source)) {
       if (ptrS->getPointeeType()->equals(*ptrT->getPointeeType())) {
         // Same Pointee. Check nullability.
         // We assume subtyping: NonNullable <: Nullable

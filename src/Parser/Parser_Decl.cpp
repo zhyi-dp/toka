@@ -162,19 +162,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           // If we didn't have a prefix, initiate empty
           m.Type = "";
         }
-        int bracketDepth = 0;
-        while (!check(TokenType::EndOfFile)) {
-          if (check(TokenType::LBracket))
-            bracketDepth++;
-          if (check(TokenType::RBracket))
-            bracketDepth--;
-
-          if (bracketDepth == 0 &&
-              (check(TokenType::Comma) || check(TokenType::RParen)))
-            break;
-
-          m.Type += advance().Text;
-        }
+        m.Type += parseTypeString();
         members.push_back(std::move(m));
         if (!check(TokenType::RParen))
           match(TokenType::Comma);
@@ -267,17 +255,12 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
       Token argName = consume(TokenType::Identifier, "Expected argument name");
       std::string argType = "i64"; // fallback
       if (match(TokenType::Colon)) {
-        argType = "";
-        while (!check(TokenType::Comma) && !check(TokenType::RParen) &&
-               !check(TokenType::EndOfFile)) {
-          argType += advance().Text;
-        }
+        argType = parseTypeString();
       }
       FunctionDecl::Arg arg;
       arg.Name = argName.Text;
       arg.Type = argType;
       arg.HasPointer = hasPointer;
-      arg.IsReference = isRef;
       arg.IsReference = isRef;
       // arg.IsMutable = argName.HasWrite; // Deprecated
       // arg.IsNullable = argName.HasNull; // Deprecated
@@ -301,11 +284,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
   // Return Type
   std::string retType = "void"; // default
   if (match(TokenType::Arrow)) {
-    retType = "";
-    while (!check(TokenType::LBrace) && !isEndOfStatement() &&
-           !check(TokenType::EndOfFile)) {
-      retType += advance().Text;
-    }
+    retType = parseTypeString();
   }
 
   std::unique_ptr<BlockStmt> body = nullptr;
@@ -343,11 +322,7 @@ std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
       Token argName = consume(TokenType::Identifier, "Expected argument name");
       std::string argType = "i64";
       if (match(TokenType::Colon)) {
-        argType = "";
-        while (!check(TokenType::Comma) && !check(TokenType::RParen) &&
-               !check(TokenType::EndOfFile)) {
-          argType += advance().Text;
-        }
+        argType = parseTypeString();
       }
       ExternDecl::Arg arg;
       arg.Name = argName.Text;
@@ -365,10 +340,7 @@ std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
 
   std::string retType = "void";
   if (match(TokenType::Arrow)) {
-    retType = "";
-    while (!isEndOfStatement() && !check(TokenType::EndOfFile)) {
-      retType += advance().Text;
-    }
+    retType = parseTypeString();
   }
   expectEndOfStatement();
 
@@ -480,16 +452,7 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
   Token name = consume(TokenType::Identifier, "Expected type alias name");
   consume(TokenType::Equal, "Expected '='");
 
-  std::string targetType = "";
-  int depth = 0;
-  while ((depth > 0 || !isEndOfStatement()) && !check(TokenType::EndOfFile)) {
-    Token t = advance();
-    targetType += t.Text;
-    if (t.Kind == TokenType::LBracket || t.Kind == TokenType::LParen)
-      depth++;
-    else if (t.Kind == TokenType::RBracket || t.Kind == TokenType::RParen)
-      depth--;
-  }
+  std::string targetType = parseTypeString();
   expectEndOfStatement();
 
   auto decl =

@@ -235,8 +235,15 @@ std::shared_ptr<Type> ReferenceType::withAttributes(bool w, bool n) const {
 // --- Composite ---
 
 std::string ArrayType::toString() const {
-  std::string s =
-      "[" + ElementType->toString() + "; " + std::to_string(Size) + "]";
+  std::string s = "[";
+  s += ElementType->toString();
+  s += "; ";
+  if (!SymbolicSize.empty()) {
+    s += SymbolicSize;
+  } else {
+    s += std::to_string(Size);
+  }
+  s += "]";
   if (IsWritable && IsNullable) {
     s += "!";
   } else {
@@ -270,6 +277,15 @@ std::shared_ptr<Type> ArrayType::withAttributes(bool w, bool n) const {
 
 std::string ShapeType::toString() const {
   std::string s = Name;
+  if (!GenericArgs.empty()) {
+    s += "<";
+    for (size_t i = 0; i < GenericArgs.size(); ++i) {
+      if (i > 0)
+        s += ", ";
+      s += GenericArgs[i]->toString();
+    }
+    s += ">";
+  }
   if (IsWritable && IsNullable) {
     s += "!";
   } else {
@@ -519,11 +535,14 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     if (semi != std::string::npos && close != std::string::npos) {
       auto elem = Type::fromString(s.substr(1, semi - 1));
       uint64_t size = 0;
+      std::string symSize = "";
+      std::string sizeStr = s.substr(semi + 1, close - semi - 1);
       try {
-        size = std::stoull(s.substr(semi + 1, close - semi - 1));
+        size = std::stoull(sizeStr);
       } catch (...) {
+        symSize = trim(sizeStr);
       }
-      auto arr = std::make_shared<ArrayType>(elem, size);
+      auto arr = std::make_shared<ArrayType>(elem, size, symSize);
       arr->IsWritable = isWritable;
       arr->IsNullable = isNullable;
       return arr;

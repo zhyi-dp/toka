@@ -1,12 +1,32 @@
-// tests/pass/generic_buffer.tk
-shape Buffer<T, N_: usize> (
-    data: [T; N_]
+// targets/pass/complex_generic.tk
+
+// 1. 常量泛型 (-1阶)
+shape Buffer<T, N_: usize>(
+    data: [T; N_], // 使用 N_ 作为数组长度
+    len: usize
+)
+
+// 2. 递归泛型 (0阶) + 嵌套使用
+shape Node<T>(
+    // 嵌套：Node 里面有个 Buffer，大小固定为 16
+    buf: Buffer<T, 16>, 
+    
+    // 递归：指向下一个同类型节点
+    ^next: Node<T> 
 )
 
 fn main() -> i32 {
-    // Buffer with i32 and size 10
-    auto b = Buffer<i32, 10>(data=[0; 10])
+    // 3. 实例化
+    // 这会触发一连串单态化：
+    // Node<i32> -> Buffer<i32, 16> -> [i32; 16]
     
-    // Test access or just compilation
+    auto ^head: Node<i32> = new Node<i32>(
+        // 使用数组重复初始化语法 [val; count]
+        // 这里需要编译器能识别 [0; 16] 匹配 [i32; 16]
+        buf = Buffer<i32, 16>(data=[0; 16], len=0), 
+        
+        ^next = unset
+    )
+    
     return 0
 }

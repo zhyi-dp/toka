@@ -187,6 +187,8 @@ private:
   Module *CurrentModule = nullptr;
   bool m_InUnsafeContext = false;
   bool m_InLHS = false;
+  std::shared_ptr<toka::Type>
+      m_ExpectedType; // [NEW] Track expected type for inference
 
   struct ControlFlowInfo {
     std::string Label;
@@ -218,6 +220,9 @@ private:
   checkExprImpl(Expr *E); // New Object API Implementation
   std::shared_ptr<toka::Type>
   checkExpr(Expr *E); // New Object API Wrapper (Annotates AST)
+  std::shared_ptr<toka::Type> checkExpr(
+      Expr *E,
+      std::shared_ptr<toka::Type> expected); // [NEW] Overload for inference
   std::shared_ptr<toka::Type>
   checkUnaryExpr(UnaryExpr *Unary); // New Object API
   std::shared_ptr<toka::Type>
