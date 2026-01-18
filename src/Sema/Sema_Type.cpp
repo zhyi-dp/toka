@@ -299,7 +299,8 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
 
 bool Sema::isTypeCompatible(const std::string &Target,
                             const std::string &Source) {
-  if (Target == Source || Target == "unknown" || Source == "unknown")
+  if (Target == Source || Target == "unknown" || Source == "unknown" ||
+      Source == "Unresolved(unknown)")
     return true;
 
   auto tObj = toka::Type::fromString(Target);

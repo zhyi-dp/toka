@@ -213,8 +213,59 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
   }
 
   // 3. Resolve RHS Value
-  PhysEntity rhs_ent = genExpr(rhsExpr).load(m_Builder);
-  llvm::Value *rhsVal = rhs_ent.load(m_Builder);
+  llvm::Value *rhsVal = nullptr;
+
+  // [Fix] Handle UnsetExpr (x = unset)
+  // Generating code for 'unset' directly returns nullptr/error in genExpr.
+  // We must handle it here to produce an UndefValue.
+  if (dynamic_cast<const UnsetExpr *>(rhsExpr)) {
+    // Generate Undef for LHS Type
+    llvm::Type *destTy = nullptr;
+
+    // 1. Try to get from Symbol (Most reliable for variables/morphology)
+    if (symLHS) {
+      if (hasRebind) {
+        if (symLHS->morphology == Morphology::Shared) {
+          llvm::Type *ptrTy = llvm::PointerType::getUnqual(symLHS->soulType);
+          llvm::Type *refTy =
+              llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+          destTy = llvm::StructType::get(m_Context, {ptrTy, refTy});
+        } else if (symLHS->morphology == Morphology::Unique) {
+          destTy = llvm::PointerType::getUnqual(symLHS->soulType);
+        } else {
+          destTy = symLHS->soulType;
+        }
+      } else {
+        destTy = symLHS->soulType;
+      }
+    }
+
+    // 2. Try to get from AST Type (For array index, deref, etc)
+    if (!destTy && lhsExpr->ResolvedType) {
+      destTy = getLLVMType(lhsExpr->ResolvedType);
+    }
+
+    // 3. Fallback: Alloca type (if available and valid)
+    if (!destTy && lhsAlloca) {
+      if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(lhsAlloca)) {
+        destTy = AI->getAllocatedType();
+      }
+    }
+
+    if (destTy) {
+      rhsVal = llvm::UndefValue::get(destTy);
+    } else {
+      // Cannot infer type for unset assignment. CodeGen error?
+      // Sema should have caught this or we rely on explicit typing.
+      return nullptr;
+    }
+
+  } else {
+    // Normal Expr
+    PhysEntity rhs_ent = genExpr(rhsExpr).load(m_Builder);
+    rhsVal = rhs_ent.load(m_Builder);
+  }
+
   if (!rhsVal)
     return nullptr;
 
@@ -234,7 +285,7 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
     emitSoulAssignment(soulAddr, rhsVal, destTy);
   }
 
-  return PhysEntity(rhsVal, rhs_ent.typeName, rhsVal->getType(), false);
+  return PhysEntity(rhsVal, "void", rhsVal->getType(), false);
 }
 
 PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {

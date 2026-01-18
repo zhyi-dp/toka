@@ -13,6 +13,7 @@ DIAG(ERR_GENERIC_SEMA,       Error, "{}")
 // --- Sema: Type Checking & Operations ---
 DIAG(ERR_TYPE_MISMATCH,      Error, "Cannot convert type '{}' to '{}'")
 DIAG(ERR_INIT_TYPE_MISMATCH, Error, "Cannot initialize variable of type '{}' with value of type '{}'")
+DIAG(ERR_USE_UNSET,          Error, "Use of unset variable or member '{}'")
 DIAG(ERR_INVALID_OP,         Error, "Invalid operands for operation '{}': '{}' and '{}'")
 DIAG(ERR_TYPE_REQUIRED,      Error, "Type annotation required for variable '{}'")
 DIAG(ERR_INFER_NULLPTR,      Error, "Cannot infer type from 'nullptr'; explicit type annotation required (e.g., 'auto *p: Type = ...')")

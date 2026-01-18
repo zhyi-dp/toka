@@ -79,6 +79,12 @@ public:
   std::string toString() const override { return "none"; }
 };
 
+class UnsetExpr : public Expr {
+public:
+  UnsetExpr() {}
+  std::string toString() const override { return "unset"; }
+};
+
 class VariableExpr : public Expr {
 public:
   std::string Name;

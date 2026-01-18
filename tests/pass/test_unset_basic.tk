@@ -1,0 +1,7 @@
+
+pub fn main() -> void {
+    auto x#: i32 = unset;
+    x# = 42;
+    // Should be initialized (mask updated)
+    auto y = x;
+}

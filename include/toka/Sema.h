@@ -27,6 +27,8 @@ struct SymbolInfo {
   std::shared_ptr<toka::Type> TypeObj;
 
   bool Moved = false;
+  uint64_t InitMask =
+      0; // 0=unset, 1=set. For shapes, each bit corresponds to a member.
 
   // Borrow Tracking
   int ImmutableBorrowCount = 0;
@@ -137,6 +139,8 @@ private:
   void computeShapeProperties(const std::string &shapeName, Module &M);
 
   bool HasError = false;
+  uint64_t m_LastInitMask =
+      1; // Default to fully initialized (1 for simple var)
   Scope *CurrentScope = nullptr;
   std::vector<FunctionDecl *>
       GlobalFunctions; // All functions across all modules
@@ -174,6 +178,7 @@ private:
 
   Module *CurrentModule = nullptr;
   bool m_InUnsafeContext = false;
+  bool m_InLHS = false;
 
   struct ControlFlowInfo {
     std::string Label;

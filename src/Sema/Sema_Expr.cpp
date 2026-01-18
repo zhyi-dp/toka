@@ -72,6 +72,7 @@ std::string Sema::checkUnaryExprStr(UnaryExpr *Unary) {
 std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
   if (!E)
     return nullptr;
+  m_LastInitMask = 1; // Default to fully set
   auto T = checkExprImpl(E);
   E->ResolvedType = T;
   return T;
@@ -182,83 +183,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
   if (!E)
     return toka::Type::fromString("void");
 
-  if (auto *S = dynamic_cast<InitStructExpr *>(E)) {
-    // Determine Shape Decl
-    ShapeDecl *shapeDecl = nullptr;
-    SymbolInfo Sym;
-
-    // First, verify the Type exists
-    if (!CurrentScope->lookup(S->ShapeName, Sym)) {
-      DiagnosticEngine::report(getLoc(S), DiagID::ERR_UNDECLARED, S->ShapeName);
-      HasError = true;
-    } else {
-      // Check ShapeMap for the resolved name
-      if (ShapeMap.count(S->ShapeName))
-        shapeDecl = ShapeMap[S->ShapeName];
-    }
-
-    // Fallback if not found locally, might be imported?
-    // Existing check logic relies on checking Member names?
-    // Let's rely on ShapeMap for now.
-
-    if (shapeDecl) {
-      for (const auto &field : S->Members) {
-        // Field key is in field.first (Parsed with sigil, e.g. "*p")
-        std::string key = field.first;
-        std::string declName = key;
-        MorphKind keyMorph = MorphKind::None;
-        if (!key.empty()) {
-          char c = key[0];
-          if (c == '*') {
-            keyMorph = MorphKind::Raw;
-            declName = key.substr(1);
-          } else if (c == '^') {
-            keyMorph = MorphKind::Unique;
-            declName = key.substr(1);
-          } else if (c == '~') {
-            keyMorph = MorphKind::Shared;
-            declName = key.substr(1);
-          } else if (c == '&') {
-            keyMorph = MorphKind::Ref;
-            declName = key.substr(1);
-          }
-        }
-        // If explicit identifier has no sigil, keyMorph is None.
-
-        // Find member in ShapeDecl
-        std::string fieldTypeStr = "";
-        for (const auto &mem : shapeDecl->Members) {
-          if (mem.Name == declName) {
-            fieldTypeStr = mem.Type;
-            break;
-          }
-        }
-
-        if (!fieldTypeStr.empty()) {
-          MorphKind fieldMorph = MorphKind::None;
-          char c = fieldTypeStr[0];
-          if (c == '*')
-            fieldMorph = MorphKind::Raw;
-          else if (c == '^')
-            fieldMorph = MorphKind::Unique;
-          else if (c == '~')
-            fieldMorph = MorphKind::Shared;
-          else if (c == '&')
-            fieldMorph = MorphKind::Ref;
-
-          checkStrictMorphology(S, fieldMorph, keyMorph, declName);
-        }
-
-        // Recurse checks
-        checkExpr(field.second.get());
-        // We assume field type compatibility is checked elsewhere or we should
-        // check here? Usually InitStructExpr is checked in `checkNewExpr` or
-        // similar, but standalone? Wait, NewExpr handles InitStructExpr
-        // initialization type checking? "S->ShapeName" suggests this IS a
-        // constructor-like expr.
-      }
-    }
-    return toka::Type::fromString(S->ShapeName);
+  if (auto *U = dynamic_cast<UnsetExpr *>(E)) {
+    m_LastInitMask = 0;
+    return toka::Type::fromString("unknown");
   }
 
   if (auto *Num = dynamic_cast<NumberExpr *>(E)) {
@@ -354,6 +281,32 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       DiagnosticEngine::report(getLoc(ve), DiagID::ERR_BORROW_MUT, ve->Name);
       HasError = true;
     }
+
+    // Unset Check: Only check if NOT in LHS
+    if (!m_InLHS) {
+      bool isFullyInit = true;
+      if (Info.InitMask == 0) {
+        isFullyInit = false;
+      } else if (Info.TypeObj && Info.TypeObj->isShape()) {
+        // Check all bits for shape
+        std::string soul = Info.TypeObj->getSoulName();
+        if (ShapeMap.count(soul)) {
+          ShapeDecl *SD = ShapeMap[soul];
+          uint64_t expected = (1ULL << SD->Members.size()) - 1;
+          if (SD->Members.size() >= 64)
+            expected = ~0ULL;
+          if ((Info.InitMask & expected) != expected) {
+            isFullyInit = false;
+          }
+        }
+      }
+
+      if (!isFullyInit) {
+        DiagnosticEngine::report(getLoc(ve), DiagID::ERR_USE_UNSET, ve->Name);
+        HasError = true;
+      }
+    }
+    m_LastInitMask = Info.InitMask;
     return Info.TypeObj;
   } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
     return toka::Type::fromString("nullptr");
@@ -482,7 +435,19 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     m_ControlFlowStack.push_back({"", "void", false, isReceiver});
+
+    // Save Mask State for Intersection Rule
+    std::map<std::string, uint64_t> masksBefore;
+    for (auto &pair : CurrentScope->Symbols) {
+      masksBefore[pair.first] = pair.second.InitMask;
+    }
+
     checkStmt(ie->Then.get());
+
+    std::map<std::string, uint64_t> masksThen;
+    for (auto &pair : CurrentScope->Symbols) {
+      masksThen[pair.first] = pair.second.InitMask;
+    }
 
     // Restore if narrowed
     if (narrowed) {
@@ -493,14 +458,50 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     std::string thenType = m_ControlFlowStack.back().ExpectedType;
+    bool thenReturns = allPathsJump(ie->Then.get());
     m_ControlFlowStack.pop_back();
 
     std::string elseType = "void";
+    bool elseReturns = false;
     if (ie->Else) {
+      // Restore Before Else
+      for (auto &pair : masksBefore) {
+        CurrentScope->Symbols[pair.first].InitMask = pair.second;
+      }
+
       m_ControlFlowStack.push_back({"", "void", false, isReceiver});
       checkStmt(ie->Else.get());
       elseType = m_ControlFlowStack.back().ExpectedType;
+      elseReturns = allPathsJump(ie->Else.get());
       m_ControlFlowStack.pop_back();
+
+      // Intersection Rule
+      if (thenReturns && elseReturns) {
+        // Unreachable after if
+      } else if (thenReturns) {
+        // State is from Else branch
+      } else if (elseReturns) {
+        // State is from Then branch
+        for (auto &pair : CurrentScope->Symbols) {
+          if (masksThen.count(pair.first))
+            pair.second.InitMask = masksThen[pair.first];
+        }
+      } else {
+        // Actual Intersection
+        for (auto &pair : CurrentScope->Symbols) {
+          uint64_t thenM =
+              masksThen.count(pair.first) ? masksThen[pair.first] : 0;
+          pair.second.InitMask &= thenM;
+        }
+      }
+    } else {
+      // No Else: Intersection with Before state (which we just did by not
+      // initializing or by restoring)
+      // Actually, if there is no else, anything set in 'then' is NOT set after
+      // the if.
+      for (auto &pair : CurrentScope->Symbols) {
+        pair.second.InitMask = masksBefore[pair.first];
+      }
     }
 
     if (isReceiver) {
@@ -975,9 +976,100 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                                Init->ShapeName);
       HasError = true;
     }
+
+    // Mask Calculation for Struct
+    if (ShapeMap.count(Init->ShapeName)) {
+      ShapeDecl *SD = ShapeMap[Init->ShapeName];
+      uint64_t mask = 0;
+      for (int i = 0; i < (int)SD->Members.size(); ++i) {
+        std::string memName = SD->Members[i].Name;
+        bool found = false;
+        for (const auto &pair : Init->Members) {
+          if (pair.first == memName) {
+            // Check the expression again to get its mask
+            // (Optimization: cache this? calling checkExpr twice might be
+            // expensive or verify idempotence. checkExpr sets m_LastInitMask)
+            checkExpr(pair.second.get());
+
+            uint64_t subMask = 1;
+            // Determine expected mask for member type
+            // If member is primitive, expected is 1.
+            // If member is shape?
+            // Current limitation: Flattened masks not fully supported for
+            // nested shapes in one integer. But we treat fully initialized
+            // nested shape as "1". So if m_LastInitMask indicates full init, we
+            // set bit i.
+
+            // How to check full init?
+            // If Member is Shape:
+            //   Look up Member Shape.
+            //   Expected = (1 << Size) - 1.
+            //   If (m_LastInitMask & Expected) == Expected -> Set bit i.
+            // If Member is Primitive:
+            //   Expected = 1.
+            //   If (m_LastInitMask & 1) -> Set bit i.
+
+            std::shared_ptr<Type> memTypeObj =
+                toka::Type::fromString(SD->Members[i].Type);
+            uint64_t expected = 1;
+            if (memTypeObj->isShape()) {
+              std::string sName = memTypeObj->getSoulName();
+              if (ShapeMap.count(sName)) {
+                size_t sz = ShapeMap[sName]->Members.size();
+                if (sz >= 64)
+                  expected = ~0ULL;
+                else
+                  expected = (1ULL << sz) - 1;
+              }
+            }
+
+            if ((m_LastInitMask & expected) == expected) {
+              if (i < 64)
+                mask |= (1ULL << i);
+            }
+            found = true;
+            break;
+          }
+        }
+        // If not found (missing member), bit remains 0. Error reported above.
+      }
+      m_LastInitMask = mask;
+    } else {
+      // Unknown struct, assume full init to avoid cascading errors?
+      // Or 0?
+      m_LastInitMask = 1;
+    }
+
     return toka::Type::fromString(Init->ShapeName);
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
     auto objTypeObj = checkExpr(Memb->Object.get());
+
+    // Unset Check for Member Access
+    if (!m_InLHS) {
+      if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
+        SymbolInfo Info;
+        if (CurrentScope->lookup(objVar->Name, Info)) {
+          if (Info.TypeObj && Info.TypeObj->isShape()) {
+            std::string soul = Info.TypeObj->getSoulName();
+            if (ShapeMap.count(soul)) {
+              ShapeDecl *SD = ShapeMap[soul];
+              for (int i = 0; i < (int)SD->Members.size(); ++i) {
+                if (SD->Members[i].Name == Memb->Member) {
+                  if (i < 64 && !(Info.InitMask & (1ULL << i))) {
+                    DiagnosticEngine::report(getLoc(Memb),
+                                             DiagID::ERR_USE_UNSET,
+                                             objVar->Name + "." + Memb->Member);
+                    HasError = true;
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     std::string ObjTypeFull = objTypeObj->toString();
 
     if (ObjTypeFull == "module") {
@@ -1448,7 +1540,10 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
 // Stage 5: Object-Oriented Binary Expression Check
 std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   // 1. Resolve Operands using New API
+  m_InLHS = (Bin->Op == "=" || Bin->Op == "+=" || Bin->Op == "-=" ||
+             Bin->Op == "*=" || Bin->Op == "/=");
   auto lhsType = checkExpr(Bin->LHS.get());
+  m_InLHS = false;
   auto rhsType = checkExpr(Bin->RHS.get());
 
   if (!lhsType || !rhsType)
@@ -1687,6 +1782,38 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       error(Bin, "assignment type mismatch: cannot assign '" + RHS + "' to '" +
                      LHS + "'");
     }
+
+    // [Fix] Update InitMask logic for 'unset' variables
+    Expr *LHSExpr = Bin->LHS.get();
+    // Unwrap mutation suffix/prefix if any (e.g. x#) -> handled by VariableExpr
+    // IsValueMutable? If LHS is VariableExpr, update mask.
+    if (auto *Var = dynamic_cast<VariableExpr *>(LHSExpr)) {
+      SymbolInfo *Info = nullptr;
+      if (CurrentScope->findSymbol(Var->Name, Info)) {
+        Info->InitMask = ~0ULL; // Fully initialized
+      }
+    } else if (auto *Memb = dynamic_cast<MemberExpr *>(LHSExpr)) {
+      // Handle Partial Initialization
+      Expr *Obj = Memb->Object.get();
+      if (auto *Var = dynamic_cast<VariableExpr *>(Obj)) {
+        SymbolInfo *Info = nullptr;
+        if (CurrentScope->findSymbol(Var->Name, Info)) {
+          if (Info->TypeObj && Info->TypeObj->isShape()) {
+            std::string sName = Info->TypeObj->getSoulName();
+            if (ShapeMap.count(sName)) {
+              ShapeDecl *SD = ShapeMap[sName];
+              for (int i = 0; i < (int)SD->Members.size(); ++i) {
+                if (SD->Members[i].Name == Memb->Member) {
+                  Info->InitMask |= (1ULL << i);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     return lhsType;
   }
 

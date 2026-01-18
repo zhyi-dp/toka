@@ -370,45 +370,55 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   llvm::Type *decayArrayType = nullptr;
   std::string inferredTypeName = "";
   if (var->Init) {
-    m_CFStack.push_back({varName, nullptr, nullptr, nullptr});
-    PhysEntity initEnt = genExpr(var->Init.get());
+    // [Fix] Handle UnsetExpr: Skip generation for explicit 'unset'
+    if (dynamic_cast<const UnsetExpr *>(var->Init.get())) {
+      // Do nothing -> initVal remains nullptr.
+      // This prevents 'Store' from being generated later, leaving memory
+      // uninitialized (or garbage).
+      // Note: type inference logic below handles missing type + initVal=null if
+      // TypeName is present.
+    } else {
+      m_CFStack.push_back({varName, nullptr, nullptr, nullptr});
+      PhysEntity initEnt = genExpr(var->Init.get());
 
-    // [Fix] Array-to-Pointer Decay Interception
-    // Check if RHS is physically an array type that should decay to a pointer
-    if (var->HasPointer || var->IsReference) {
-      if (var->Init) {
-        if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
-          if (ue->Op == TokenType::Star) {
-            if (auto *ve = dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
-              std::string veName = Type::stripMorphology(ve->Name);
-              if (m_Symbols.count(veName)) {
-                llvm::Type *t = m_Symbols[veName].soulType;
-                if (t && t->isArrayTy()) {
-                  decayArrayType = t;
+      // [Fix] Array-to-Pointer Decay Interception
+      // Check if RHS is physically an array type that should decay to a pointer
+      if (var->HasPointer || var->IsReference) {
+        if (var->Init) {
+          if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
+            if (ue->Op == TokenType::Star) {
+              if (auto *ve =
+                      dynamic_cast<const VariableExpr *>(ue->RHS.get())) {
+                std::string veName = Type::stripMorphology(ve->Name);
+                if (m_Symbols.count(veName)) {
+                  llvm::Type *t = m_Symbols[veName].soulType;
+                  if (t && t->isArrayTy()) {
+                    decayArrayType = t;
+                  }
                 }
               }
             }
           }
         }
       }
-    }
 
-    if (decayArrayType) {
+      if (decayArrayType) {
 
-      llvm::Value *arrPtr =
-          initEnt.value; // PhysEntity.value gives address due to genUnaryExpr
-      llvm::Value *zero =
-          llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0);
-      initVal = m_Builder.CreateInBoundsGEP(decayArrayType, arrPtr,
-                                            {zero, zero}, "array.decay");
-    } else {
-      initVal = initEnt.load(m_Builder);
-    }
+        llvm::Value *arrPtr = initEnt.value; // PhysEntity.value gives address
+                                             // due to genUnaryExpr
+        llvm::Value *zero =
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0);
+        initVal = m_Builder.CreateInBoundsGEP(decayArrayType, arrPtr,
+                                              {zero, zero}, "array.decay");
+      } else {
+        initVal = initEnt.load(m_Builder);
+      }
 
-    inferredTypeName = initEnt.typeName;
-    m_CFStack.pop_back();
-    if (!initVal) {
-      return nullptr;
+      inferredTypeName = initEnt.typeName;
+      m_CFStack.pop_back();
+      if (!initVal) {
+        return nullptr;
+      }
     }
   }
   llvm::errs() << "DEBUG: PostInit Var=" << varName
@@ -820,7 +830,9 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     }
   }
 
-  m_Builder.CreateStore(initVal, alloca);
+  if (initVal) {
+    m_Builder.CreateStore(initVal, alloca);
+  }
   llvm::errs() << "DEBUG: PostStore Var=" << varName << "\n";
 
   // Automatic Drop Registration

@@ -82,7 +82,8 @@ static std::unordered_map<std::string, TokenType> Keywords = {
     {"crate", TokenType::KwCrate},
     {"unsafe", TokenType::KwUnsafe},
     {"alloc", TokenType::KwAlloc},
-    {"free", TokenType::KwFree}};
+    {"free", TokenType::KwFree},
+    {"unset", TokenType::KwUnset}};
 
 Lexer::Lexer(const char *source, SourceLocation startLoc)
     : m_Source(source), m_Current(source), m_StartLoc(startLoc) {}

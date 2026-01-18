@@ -216,6 +216,11 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     auto node = std::make_unique<NoneExpr>();
     node->setLocation(tok, m_CurrentFile);
     expr = std::move(node);
+  } else if (match(TokenType::KwUnset)) {
+    Token tok = previous();
+    auto node = std::make_unique<UnsetExpr>();
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
   } else if (match(TokenType::String)) {
     Token tok = previous();
     auto node = std::make_unique<StringExpr>(tok.Text);
