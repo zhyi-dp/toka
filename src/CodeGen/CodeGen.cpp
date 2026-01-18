@@ -52,6 +52,8 @@ PhysEntity CodeGen::genExpr(const Expr *expr) {
     return genAnonymousRecordExpr(e);
   if (auto e = dynamic_cast<const ArrayExpr *>(expr))
     return genArrayExpr(e);
+  if (auto e = dynamic_cast<const RepeatedArrayExpr *>(expr))
+    return genRepeatedArrayExpr(e);
 
   // 3. 内存与成员访问
   if (auto e = dynamic_cast<const MemberExpr *>(expr))

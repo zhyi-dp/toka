@@ -1,0 +1,12 @@
+// tests/pass/generic_buffer.tk
+shape Buffer<T, N_: usize> (
+    data: [T; N_]
+)
+
+fn main() -> i32 {
+    // Buffer with i32 and size 10
+    auto b = Buffer<i32, 10>(data=[0; 10])
+    
+    // Test access or just compilation
+    return 0
+}

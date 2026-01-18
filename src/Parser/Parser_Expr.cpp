@@ -278,6 +278,19 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     std::string typeStr = "";
     if (check(TokenType::Identifier)) {
       typeStr = advance().Text;
+      // [NEW] Handle Generics for New Type: Node<i32>
+      if (check(TokenType::GenericLT)) {
+        typeStr += advance().Text; // <
+        int balance = 1;
+        while (balance > 0 && !check(TokenType::EndOfFile)) {
+          if (check(TokenType::GenericLT))
+            balance++;
+          else if (check(TokenType::Greater))
+            balance--;
+          typeStr += advance().Text;
+        }
+      }
+
       while (check(TokenType::Colon) && checkAt(1, TokenType::Colon)) {
         advance();
         advance(); // ::
@@ -396,9 +409,19 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     // Array literal [1, 2, 3]
     std::vector<std::unique_ptr<Expr>> elements;
     if (!check(TokenType::RBracket)) {
-      do {
+      elements.push_back(parseExpr());
+      if (match(TokenType::Semicolon)) {
+        auto count = parseExpr();
+        consume(TokenType::RBracket, "Expected ']' after repeat count");
+        auto node = std::make_unique<RepeatedArrayExpr>(std::move(elements[0]),
+                                                        std::move(count));
+        node->setLocation(m_Tokens[m_Pos - 1], m_CurrentFile);
+        expr = std::move(node);
+        return expr; // Return immediately
+      }
+      while (match(TokenType::Comma)) {
         elements.push_back(parseExpr());
-      } while (match(TokenType::Comma));
+      }
     }
     consume(TokenType::RBracket, "Expected ']' after array elements");
     expr = std::make_unique<ArrayExpr>(std::move(elements));

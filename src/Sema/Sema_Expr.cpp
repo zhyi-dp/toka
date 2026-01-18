@@ -295,8 +295,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // 3. Create and Register Synthetic ShapeDecl
     // We treat it as a regular Struct
     auto SyntheticShape = std::make_unique<ShapeDecl>(
-        false, UniqueName, std::vector<std::string>{}, ShapeKind::Struct,
-        members);
+        false, UniqueName, std::vector<ShapeDecl::GenericParam>{},
+        ShapeKind::Struct, members);
 
     // Important: Register in ShapeMap so MemberExpr can find it
     ShapeMap[UniqueName] = SyntheticShape.get();
@@ -833,7 +833,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (New->Initializer) {
       auto InitTypeObj = checkExpr(New->Initializer.get());
       std::string InitType = InitTypeObj->toString();
-      if (!isTypeCompatible(New->Type, InitType) && InitType != "unknown") {
+      std::string resolvedTarget = resolveType(New->Type);
+      if (!isTypeCompatible(resolvedTarget, InitType) &&
+          InitType != "unknown") {
         // InitStruct returns "StructName".
         // checkExprStr(InitStruct) returns "StructName".
         // So this should match.
@@ -843,7 +845,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       }
     }
     // 'new' usually returns a unique pointer: ^Type
-    return toka::Type::fromString("^" + New->Type);
+    return toka::Type::fromString("^" + resolveType(New->Type));
   } else if (auto *UnsafeE = dynamic_cast<UnsafeExpr *>(E)) {
     bool oldUnsafe = m_InUnsafeContext;
     m_InUnsafeContext = true;
@@ -966,8 +968,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return toka::Type::fromString("unknown");
   } else if (auto *Init = dynamic_cast<InitStructExpr *>(E)) {
     // Validate fields against ShapeMap
-    if (ShapeMap.count(Init->ShapeName)) {
-      ShapeDecl *SD = ShapeMap[Init->ShapeName];
+    std::string resolvedName = resolveType(Init->ShapeName);
+    if (ShapeMap.count(resolvedName)) {
+      ShapeDecl *SD = ShapeMap[resolvedName];
 
       // Visibility Check:
       std::string sdFile =
@@ -1017,8 +1020,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
         bool fieldFound = false;
         std::string expectedType;
+        std::string providedFieldName = Type::stripMorphology(pair.first);
         for (const auto &defField : SD->Members) {
-          if (defField.Name == pair.first) {
+          if (defField.Name == providedFieldName) {
             fieldFound = true;
             expectedType = defField.Type;
             break;
@@ -1027,7 +1031,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
         if (!fieldFound) {
           DiagnosticEngine::report(getLoc(Init), DiagID::ERR_NO_SUCH_MEMBER,
-                                   Init->ShapeName, pair.first);
+                                   resolvedName, pair.first);
           HasError = true;
           continue; // Continue to find more errors
         }
@@ -1045,7 +1049,12 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       // Check for missing fields
       for (const auto &defField : SD->Members) {
         // If field is NOT in providedFields
-        if (!providedFields.count(defField.Name)) {
+        if (!providedFields.count(defField.Name) &&
+            !providedFields.count("^" + defField.Name) &&
+            !providedFields.count("*" + defField.Name) &&
+            !providedFields.count("~" + defField.Name) &&
+            !providedFields.count("&" + defField.Name) &&
+            !providedFields.count("^?" + defField.Name)) {
           DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
                                    defField.Name, Init->ShapeName);
           HasError = true;
@@ -1058,8 +1067,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     // Mask Calculation for Struct
-    if (ShapeMap.count(Init->ShapeName)) {
-      ShapeDecl *SD = ShapeMap[Init->ShapeName];
+    std::string resolvedInitName = resolveType(Init->ShapeName);
+    if (ShapeMap.count(resolvedInitName)) {
+      ShapeDecl *SD = ShapeMap[resolvedInitName];
       uint64_t mask = 0;
       for (int i = 0; i < (int)SD->Members.size(); ++i) {
         std::string memName = SD->Members[i].Name;
@@ -1120,7 +1130,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       m_LastInitMask = 1;
     }
 
-    return toka::Type::fromString(Init->ShapeName);
+    return toka::Type::fromString(resolvedInitName);
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
     auto objTypeObj = checkExpr(Memb->Object.get());
 
@@ -1367,6 +1377,15 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
     s += ")";
     return toka::Type::fromString(s);
+  } else if (auto *Repeat = dynamic_cast<RepeatedArrayExpr *>(E)) {
+    auto elemType = checkExpr(Repeat->Value.get());
+    uint64_t size = 0;
+    if (auto *Num = dynamic_cast<NumberExpr *>(Repeat->Count.get())) {
+      size = Num->Value;
+    } else {
+      error(Repeat, "Array repeat count must be a numeric literal");
+    }
+    return std::make_shared<toka::ArrayType>(elemType, size);
   } else if (auto *ArrLit = dynamic_cast<ArrayExpr *>(E)) {
     // Infer from first element
     if (!ArrLit->Elements.empty()) {

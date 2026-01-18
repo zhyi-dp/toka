@@ -14,6 +14,7 @@
 #include "toka/AST.h"
 #include "toka/Sema.h"
 #include "toka/Type.h"
+#include <cctype>
 #include <set>
 #include <string>
 
@@ -36,23 +37,44 @@ std::string Sema::resolveType(const std::string &Type) {
     }
   }
 
-  if (TypeAliasMap.count(Type)) {
-    // For strong types, we only resolve if we want the UNDERLYING type
-    // But for most semantic checks, we might want to keep the strong Name.
-    // However, resolveType is usually used to find the physical layout.
-    // Verify object creation (Coexistence Phase)
-    toka::Type::fromString(TypeAliasMap[Type].Target);
-    return resolveType(TypeAliasMap[Type].Target);
-  }
-  // Coexistence Phase
-  toka::Type::fromString(Type);
-  return Type;
+  // Fallback: use the object-based resolver which handles generics
+  auto typeObj = toka::Type::fromString(Type);
+  auto resolved = resolveType(typeObj);
+  return resolved->toString();
 }
 
 std::shared_ptr<toka::Type>
 Sema::resolveType(std::shared_ptr<toka::Type> type) {
   if (!type)
     return nullptr;
+
+  if (auto ptr = std::dynamic_pointer_cast<toka::PointerType>(type)) {
+    auto inner = resolveType(ptr->getPointeeType());
+    if (inner != ptr->getPointeeType()) {
+      std::shared_ptr<toka::PointerType> newPtr;
+      if (ptr->typeKind == toka::Type::UniquePtr)
+        newPtr = std::make_shared<toka::UniquePointerType>(inner);
+      else if (ptr->typeKind == toka::Type::SharedPtr)
+        newPtr = std::make_shared<toka::SharedPointerType>(inner);
+      else if (ptr->typeKind == toka::Type::Reference)
+        newPtr = std::make_shared<toka::ReferenceType>(inner);
+      else
+        newPtr = std::make_shared<toka::RawPointerType>(inner);
+      newPtr->IsWritable = ptr->IsWritable;
+      newPtr->IsNullable = ptr->IsNullable;
+      return newPtr;
+    }
+  }
+
+  if (auto arr = std::dynamic_pointer_cast<toka::ArrayType>(type)) {
+    auto inner = resolveType(arr->ElementType);
+    if (inner != arr->ElementType) {
+      auto newArr = std::make_shared<toka::ArrayType>(inner, arr->Size);
+      newArr->IsWritable = arr->IsWritable;
+      newArr->IsNullable = arr->IsNullable;
+      return newArr;
+    }
+  }
 
   if (auto shape = std::dynamic_pointer_cast<toka::ShapeType>(type)) {
     // [NEW] Monomorphization Trigger
@@ -127,88 +149,87 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
   // We need a robust mangler. For Proof of Concept:
   std::string mangledName = templateName + "_M";
   for (auto &Arg : GenericShape->GenericArgs) {
-    mangledName +=
-        "_" + toka::Type::stripMorphology(Arg->toString()); // Ultra simple
+    std::string argStr = Arg->toString();
+    // Sanitize literal values for mangled name (e.g. "10" is fine, but maybe
+    // others are not)
+    for (char &c : argStr) {
+      if (!std::isalnum(c) && c != '_')
+        c = '_';
+    }
+    mangledName += "_" + argStr;
   }
 
   // 3. Check Cache
-  if (ShapeMap.count(mangledName)) {
-    // Already instantiated
-    auto instance = std::make_shared<ShapeType>(mangledName);
-    instance->resolve(ShapeMap[mangledName]);
-    return instance;
+  // We use ShapeMap as the primary cache for instantiated decls.
+  // We also have a GenericShapeCache if we want to return the same ShapeType
+  // object too.
+  static std::map<std::string, std::shared_ptr<toka::Type>> GenericShapeCache;
+  if (GenericShapeCache.count(mangledName)) {
+    return GenericShapeCache[mangledName];
   }
 
-  // 4. Instantiate (Clone & Subst)
-  // Clang's TreeTransform style... we just brute force clone for Phase 1.
+  // 4. Instantiate (Cache-First Cycle Breaking)
+  // Create partial decl first to allow recursion
+  auto NewDecl = std::make_unique<ShapeDecl>(
+      Template->IsPub, mangledName, std::vector<ShapeDecl::GenericParam>{},
+      Template->Kind, std::vector<ShapeMember>{}, Template->IsPacked);
+  NewDecl->Loc = Template->Loc;
+
+  ShapeDecl *storedDecl = NewDecl.get();
+  SyntheticShapes.push_back(std::move(NewDecl));
+  ShapeMap[mangledName] = storedDecl; // Register IMMEDIATELY
+
+  auto NewShapeTy = std::make_shared<toka::ShapeType>(mangledName);
+  NewShapeTy->Decl = storedDecl;
+  GenericShapeCache[mangledName] = NewShapeTy; // Cache-first for recursion
+
+  // Now resolve members with recursion enabled
   std::vector<ShapeMember> newMembers;
   std::map<std::string, std::shared_ptr<toka::Type>> substMap;
 
   for (size_t i = 0; i < Template->GenericParams.size(); ++i) {
-    substMap[Template->GenericParams[i]] = GenericShape->GenericArgs[i];
+    substMap[Template->GenericParams[i].Name] = GenericShape->GenericArgs[i];
   }
 
   for (auto &oldMember : Template->Members) {
     ShapeMember newM = oldMember;
-    // Subst Type String? No, Subst Resolved Type?
-    // Since Template members aren't resolved (skipped in analyzeShapes),
-    // we have to resolve them NOW under substitution context.
 
-    // If member is "T", it becomes "i32".
-    // If member is "Box<T>", it becomes "Box<i32>".
-    // This requires parsing the type string again OR walking the AST if it was
-    // rich. Our members store raw strings in .Type. simple substitution in
-    // string? Dangerous. Better: Parse type string to Type object (with T as
-    // Unknown/Unresolved), then visit Type object and replace Unresolved(T)
-    // with GenericArgs[i].
-
-    // Let's implement a 'substitute' helper on Type.
-    // For Phase 1: Simple string check since T is usually bare or simple.
-
-    // If type string is EXACTLY "T":
+    // Simple Substitution Logic (Phase 1)
     if (substMap.count(newM.Type)) {
       newM.ResolvedType = substMap[newM.Type];
-      // Update string for debug/codegen consistency?
-      // CodeGen uses ResolvedType if available, or .Type if not.
-      // We must ensure CodeGen prefers ResolvedType.
-      // Let's update .Type to be safe for naive pass
-      newM.Type = newM.ResolvedType->toString();
+      newM.Type = newM.ResolvedType->toString(); // Update string
     } else {
-      // Basic resolution if not T
-      // But wait, what if "Box<T>"?
-      // We need a proper type parser that respects generic params.
-      // resolveType(string) usually does global lookup.
-      // We need resolveType(Type, Context).
+      // [FIX] Nested Generic Substitution Workaround (Phase 1.5)
+      // If type string contains generic param, replace it.
+      // E.g. "Node<T>" -> "Node<i32>"
+      // Very naive, but needed for `^next: Node<T>`
+      std::string memberTypeStr = newM.Type;
+      // For each param, replace in string
+      for (auto const &[K, V] : substMap) {
+        size_t pos = 0;
+        while ((pos = memberTypeStr.find(K, pos)) != std::string::npos) {
+          // Check word boundaries (simple check)
+          bool startOk = (pos == 0) || !std::isalnum(memberTypeStr[pos - 1]);
+          bool endOk = (pos + K.size() == memberTypeStr.size()) ||
+                       !std::isalnum(memberTypeStr[pos + K.size()]);
 
-      // WORKAROUND Phase 1:
-      // 1. Parse string to Type (containing Unresolved(T))
-      // 2. Walk Type, if Unresolved(T) found in substMap, replace.
-      // 3. Resolve result.
-
-      auto looseType = toka::Type::fromString(newM.Type);
-      auto substType = resolveType(looseType); // Will fail to resolve T global
-      // Wait, resolveType does global lookup. T is not global.
-      // We need a local substitution pass.
-
-      // Assume looseType has "T" as a sub-type.
-      // We can't walk it easily yet.
-      // For POC: Ignore nested generics in definition for now.
+          if (startOk && endOk) {
+            std::string valStr = V->toString();
+            memberTypeStr.replace(pos, K.size(), valStr);
+            pos += valStr.size();
+          } else {
+            pos += K.size();
+          }
+        }
+      }
+      newM.Type = memberTypeStr;
     }
 
     newMembers.push_back(newM);
   }
 
-  auto NewDecl = std::make_unique<ShapeDecl>(
-      Template->IsPub, mangledName, std::vector<std::string>{},
-      ShapeKind::Struct, newMembers, Template->IsPacked);
-  // Register
-  ShapeDecl *storedDecl = NewDecl.get();
-  // Add to Module (globals) so we can see it later?
-  // Yes, synthesized shapes need ownership.
-  // SyntheticShapes is private in Sema. Use a accessor or friend?
-  // Sema_Type.cpp is PART of Sema. function is member of Sema.
-  SyntheticShapes.push_back(std::move(NewDecl));
-  ShapeMap[mangledName] = storedDecl; // Add to global map
+  // Update members of the already-registered decl
+  storedDecl->Members = newMembers;
 
   // Recursively analyze the new shape (resolve members fully)
   // We manually run the resolution logic that analyzeShapes does
@@ -457,8 +478,8 @@ bool Sema::isTypeCompatible(const std::string &Target,
       Source == "Unresolved(unknown)")
     return true;
 
-  auto tObj = toka::Type::fromString(Target);
-  auto sObj = toka::Type::fromString(Source);
+  auto tObj = toka::Type::fromString(resolveType(Target));
+  auto sObj = toka::Type::fromString(resolveType(Source));
   return isTypeCompatible(tObj, sObj);
 }
 

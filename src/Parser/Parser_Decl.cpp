@@ -29,13 +29,19 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
 
   Token name = consume(TokenType::Identifier, "Expected shape name");
 
-  // Parse Generic Parameters: Name<T, U>
-  std::vector<std::string> genericParams;
+  // Parse Generic Parameters: Name<T, U> or Name<T, N_: usize>
+  std::vector<ShapeDecl::GenericParam> genericParams;
   if (match(TokenType::GenericLT)) {
     do {
-      Token param =
-          consume(TokenType::Identifier, "Expected generic parameter name");
-      genericParams.push_back(param.Text);
+      ShapeDecl::GenericParam gp;
+      gp.Name =
+          consume(TokenType::Identifier, "Expected generic parameter name")
+              .Text;
+      if (match(TokenType::Colon)) {
+        gp.Type = advance().Text; // e.g. usize
+        gp.IsConst = true;
+      }
+      genericParams.push_back(gp);
     } while (match(TokenType::Comma));
     consume(TokenType::Greater, "Expected '>' to close generic parameters");
   }

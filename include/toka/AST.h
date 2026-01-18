@@ -232,6 +232,15 @@ public:
   }
 };
 
+class RepeatedArrayExpr : public Expr {
+public:
+  std::unique_ptr<Expr> Value;
+  std::unique_ptr<Expr> Count;
+  RepeatedArrayExpr(std::unique_ptr<Expr> val, std::unique_ptr<Expr> count)
+      : Value(std::move(val)), Count(std::move(count)) {}
+  std::string toString() const override { return "RepeatedArray"; }
+};
+
 class UnsafeExpr : public Expr {
 public:
   std::unique_ptr<Expr> Expression;
@@ -628,13 +637,18 @@ public:
   bool IsPub = false;
   bool IsPacked = false;
   std::string Name;
-  std::vector<std::string> GenericParams; // [NEW] e.g. <T, U>
+  struct GenericParam {
+    std::string Name;
+    std::string Type; // Empty if it's a type parameter
+    bool IsConst = false;
+  };
+  std::vector<GenericParam> GenericParams; // [UPDATED] e.g. <T, N_: usize>
   ShapeKind Kind;
   std::vector<ShapeMember> Members;
   int64_t ArraySize = 0; // For Array kind
 
   ShapeDecl(bool isPub, const std::string &name,
-            std::vector<std::string> generics, ShapeKind kind,
+            std::vector<GenericParam> generics, ShapeKind kind,
             std::vector<ShapeMember> members, bool packed = false)
       : IsPub(isPub), IsPacked(packed), Name(name),
         GenericParams(std::move(generics)), Kind(kind),
@@ -647,7 +661,9 @@ public:
       for (size_t i = 0; i < GenericParams.size(); ++i) {
         if (i > 0)
           s += ", ";
-        s += GenericParams[i];
+        s += GenericParams[i].Name;
+        if (GenericParams[i].IsConst)
+          s += ": " + GenericParams[i].Type;
       }
       s += ">";
     }

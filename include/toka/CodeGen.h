@@ -206,6 +206,7 @@ private:
   PhysEntity genLiteralExpr(const Expr *expr);
   PhysEntity genTupleExpr(const TupleExpr *expr);
   PhysEntity genArrayExpr(const ArrayExpr *expr);
+  PhysEntity genRepeatedArrayExpr(const RepeatedArrayExpr *expr);
   PhysEntity genCastExpr(const CastExpr *expr);
   PhysEntity genUnaryExpr(const UnaryExpr *expr);
   PhysEntity genIfExpr(const IfExpr *expr);

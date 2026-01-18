@@ -2870,4 +2870,35 @@ llvm::Constant *CodeGen::genConstant(const Expr *expr, llvm::Type *targetType) {
   return nullptr;
 }
 
+PhysEntity CodeGen::genRepeatedArrayExpr(const RepeatedArrayExpr *expr) {
+  PhysEntity val_ent = genExpr(expr->Value.get());
+  llvm::Value *val = val_ent.load(m_Builder);
+  if (!val)
+    return nullptr;
+  uint64_t count = 0;
+  if (auto *num = dynamic_cast<const NumberExpr *>(expr->Count.get())) {
+    count = num->Value;
+  } else {
+    error(expr, "Repeat count must be a numeric literal");
+    return nullptr;
+  }
+  llvm::Type *elemTy = val->getType();
+  llvm::ArrayType *arrTy = llvm::ArrayType::get(elemTy, count);
+  if (auto *c = llvm::dyn_cast<llvm::Constant>(val)) {
+    std::vector<llvm::Constant *> elements(count, c);
+    llvm::Value *arrVal = llvm::ConstantArray::get(arrTy, elements);
+    std::string arrayTypeName =
+        "[" + val_ent.typeName + "; " + std::to_string(count) + "]";
+    return PhysEntity(arrVal, arrayTypeName, arrTy, false);
+  }
+  llvm::Value *alloca =
+      m_Builder.CreateAlloca(arrTy, nullptr, "repeated_array");
+  for (uint64_t i = 0; i < count; ++i) {
+    llvm::Value *ptr = m_Builder.CreateStructGEP(arrTy, alloca, i);
+    m_Builder.CreateStore(val, ptr);
+  }
+  std::string arrayTypeName =
+      "[" + val_ent.typeName + "; " + std::to_string(count) + "]";
+  return PhysEntity(alloca, arrayTypeName, arrTy, true);
+}
 } // namespace toka
