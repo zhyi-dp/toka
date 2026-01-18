@@ -664,6 +664,46 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
   return nullptr;
 }
 
+llvm::Value *CodeGen::projectSoul(llvm::Value *handle, const TokaSymbol &sym) {
+  if (!handle)
+    return nullptr;
+
+  llvm::Value *current = handle;
+
+  // 1. Direct Mode: Box is the Soul
+  if (sym.mode == AddressingMode::Direct) {
+    return current;
+  }
+
+  // 2. Reference Mode: Reference is a pointer alias
+  if (sym.mode == AddressingMode::Reference) {
+    return m_Builder.CreateLoad(m_Builder.getPtrTy(), current,
+                                "ref.alias_soul");
+  }
+
+  // 3. Pointer Modes (Raw, Unique, Shared)
+  if (sym.morphology == Morphology::Shared) {
+    // allocaPtr is {T*, Ref*}*. We want T*.
+    llvm::Type *elem0Ty = llvm::PointerType::getUnqual(sym.soulType);
+    llvm::Type *elem1Ty =
+        llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+    llvm::Type *structTy = llvm::StructType::get(m_Context, {elem0Ty, elem1Ty});
+
+    llvm::Value *dataPtrAddr =
+        m_Builder.CreateStructGEP(structTy, handle, 0, "shared.data_gep");
+    return m_Builder.CreateLoad(m_Builder.getPtrTy(), dataPtrAddr,
+                                "shared.data_ptr");
+  }
+
+  // Raw & Unique: Peeling recursive loads based on indirection level
+  for (int i = 0; i < sym.indirectionLevel; ++i) {
+    current =
+        m_Builder.CreateLoad(m_Builder.getPtrTy(), current, "ptr.peel_soul");
+  }
+
+  return current;
+}
+
 llvm::Value *CodeGen::getEntityAddr(const std::string &name) {
   std::string baseName = name;
   while (!baseName.empty() &&
@@ -694,39 +734,8 @@ llvm::Value *CodeGen::getEntityAddr(const std::string &name) {
     return nullptr;
   }
 
-  // std::cerr << "DEBUG: getEntityAddr: " << baseName << " mode=" <<
-  // (int)sym.mode << " level=" << sym.indirectionLevel << "\n";
-
-  llvm::Value *current = sym.allocaPtr; // Identity (Box)
-
-  // 1. Direct Mode: Box is the Soul
-  if (sym.mode == AddressingMode::Direct) {
-    return current;
-  }
-
-  // 2. Pointer Mode: Peeling Recursive loads
-  // Special Handling for Shared: Extract Data Pointer from Handle
-  if (sym.morphology == Morphology::Shared) {
-    // allocaPtr is {T*, Ref*}*. We want T*.
-    // GEP 0 -> T**. Load -> T*.
-    llvm::Type *elem0Ty = llvm::PointerType::getUnqual(sym.soulType);
-    llvm::Type *elem1Ty =
-        llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
-    llvm::Type *structTy = llvm::StructType::get(m_Context, {elem0Ty, elem1Ty});
-
-    llvm::Value *dataPtrAddr = m_Builder.CreateStructGEP(
-        structTy, sym.allocaPtr, 0, baseName + ".shared_data_gep");
-    return m_Builder.CreateLoad(m_Builder.getPtrTy(), dataPtrAddr,
-                                baseName + ".shared_data_ptr");
-  }
-
-  // LLVM 17 requires explicit type for loads.
-  for (int i = 0; i < sym.indirectionLevel; ++i) {
-    current = m_Builder.CreateLoad(m_Builder.getPtrTy(), current,
-                                   baseName + ".peel_layer");
-  }
-
-  return current;
+  // Unified Address Layering: Project Soul from Identity Handle
+  return projectSoul(sym.allocaPtr, sym);
 }
 
 llvm::Value *CodeGen::getIdentityAddr(const std::string &name) {

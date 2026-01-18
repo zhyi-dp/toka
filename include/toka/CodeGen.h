@@ -171,6 +171,7 @@ private:
   // Address Layering Protocol
   llvm::Value *getEntityAddr(const std::string &name);
   llvm::Value *getIdentityAddr(const std::string &name);
+  llvm::Value *projectSoul(llvm::Value *handle, const TokaSymbol &sym);
   llvm::Value *emitEntityAddr(const Expr *expr); // "Soul" - actual data address
   llvm::Value *
   emitHandleAddr(const Expr *expr); // "Handle" - identity/sleeve (alloca)
