@@ -453,6 +453,20 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     }
   } else if (match(TokenType::Identifier)) {
     Token name = previous();
+    // [NEW] Check for Generics <...>
+    if (check(TokenType::GenericLT)) {
+      name.Text += advance().Text; // Consume <
+      int balance = 1;
+      while (balance > 0 && !check(TokenType::EndOfFile)) {
+        if (check(TokenType::GenericLT))
+          balance++;
+        else if (check(TokenType::Greater))
+          balance--;
+
+        name.Text += advance().Text;
+      }
+    }
+
     bool isStructInit = false;
     if (check(TokenType::LBrace)) {
       // Disambiguate against match block or other blocks starting with brace

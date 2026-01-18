@@ -28,6 +28,18 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
     consume(TokenType::KwShape, "Expected 'shape' after 'packed'");
 
   Token name = consume(TokenType::Identifier, "Expected shape name");
+
+  // Parse Generic Parameters: Name<T, U>
+  std::vector<std::string> genericParams;
+  if (match(TokenType::GenericLT)) {
+    do {
+      Token param =
+          consume(TokenType::Identifier, "Expected generic parameter name");
+      genericParams.push_back(param.Text);
+    } while (match(TokenType::Comma));
+    consume(TokenType::Greater, "Expected '>' to close generic parameters");
+  }
+
   ShapeKind kind = ShapeKind::Struct;
   std::vector<ShapeMember> members;
   int64_t arraySize = 0;
@@ -167,7 +179,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
     error(peek(), "Expected '(' or '[' after shape name");
   }
 
-  auto decl = std::make_unique<ShapeDecl>(isPub, name.Text, kind,
+  auto decl = std::make_unique<ShapeDecl>(isPub, name.Text, genericParams, kind,
                                           std::move(members), packed);
   decl->ArraySize = arraySize;
   // decl->FileName = m_CurrentFile;

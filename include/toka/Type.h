@@ -200,8 +200,11 @@ public:
 class ShapeType : public Type {
 public:
   std::string Name;
+  std::vector<std::shared_ptr<Type>> GenericArgs; // [NEW] Generic Arguments
   ShapeDecl *Decl = nullptr;
-  ShapeType(const std::string &name) : Type(Shape), Name(name) {}
+  ShapeType(const std::string &name,
+            std::vector<std::shared_ptr<Type>> args = {})
+      : Type(Shape), Name(name), GenericArgs(std::move(args)) {}
   void resolve(ShapeDecl *decl);
   bool isResolved() const { return Decl != nullptr; }
   std::string toString() const override;

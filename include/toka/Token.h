@@ -142,6 +142,7 @@ enum class TokenType {
   Bang,
   Neq,
   Less,
+  GenericLT, // < (no space after)
   Greater,
   LessEqual,
   GreaterEqual,

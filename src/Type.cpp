@@ -544,7 +544,36 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
   if (s == "unknown")
     return std::make_shared<UnresolvedType>(s);
 
-  auto shape = std::make_shared<ShapeType>(s);
+  // Check for generics: Name<Arg1, Arg2>
+  size_t lt = s.find('<');
+  size_t gt = s.rfind('>');
+  std::vector<std::shared_ptr<Type>> genericArgs;
+  std::string baseName = s;
+
+  if (lt != std::string::npos && gt != std::string::npos && gt > lt) {
+    baseName = s.substr(0, lt);
+    std::string argsStr = s.substr(lt + 1, gt - lt - 1);
+
+    // Split args logic (handle nested generics)
+    int balance = 0;
+    size_t start = 0;
+    for (size_t i = 0; i < argsStr.size(); ++i) {
+      if (argsStr[i] == '<')
+        balance++;
+      else if (argsStr[i] == '>')
+        balance--;
+      else if (argsStr[i] == ',' && balance == 0) {
+        genericArgs.push_back(
+            Type::fromString(argsStr.substr(start, i - start)));
+        start = i + 1;
+      }
+    }
+    if (start < argsStr.size()) {
+      genericArgs.push_back(Type::fromString(argsStr.substr(start)));
+    }
+  }
+
+  auto shape = std::make_shared<ShapeType>(baseName, genericArgs);
   shape->IsWritable = isWritable;
   shape->IsNullable = isNullable;
   return shape;

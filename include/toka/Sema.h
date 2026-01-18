@@ -243,6 +243,9 @@ private:
   bool isTypeCompatible(std::shared_ptr<toka::Type> Target,
                         std::shared_ptr<toka::Type> Source);
 
+  std::shared_ptr<toka::Type>
+  instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape);
+
   // Helper for type synthesis from AST nodes with morphology flags
   template <typename T>
   static std::string synthesizePhysicalType(const T &Arg) {

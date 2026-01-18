@@ -406,7 +406,7 @@ Token Lexer::punctuation() {
       return Token{TokenType::Neq, "!=", line, col};
     }
     return Token{TokenType::Bang, "!", line, col};
-  case '<':
+  case '<': {
     if (peek() == '-') {
       advance();
       return Token{TokenType::Dependency, "<-", line, col};
@@ -415,7 +415,13 @@ Token Lexer::punctuation() {
       advance();
       return Token{TokenType::LessEqual, "<=", line, col};
     }
-    return Token{TokenType::Less, "<", line, col};
+    // Toka Generic Rule: < followed by space is Less, otherwise GenericLT
+    char nextC = peek();
+    if (nextC == ' ' || nextC == '\t' || nextC == '\n' || nextC == '\r') {
+      return Token{TokenType::Less, "<", line, col};
+    }
+    return Token{TokenType::GenericLT, "<", line, col};
+  }
   case '>':
     if (peek() == '=') {
       advance();

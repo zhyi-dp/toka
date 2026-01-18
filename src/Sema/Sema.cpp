@@ -128,11 +128,22 @@ void Sema::registerGlobals(Module &M) {
     CurrentScope->define(Ext->Name, {toka::Type::fromString("extern")});
   }
   for (auto &St : M.Shapes) {
-    ms.Shapes[St->Name] = St.get();
-    ShapeMap[St->Name] = St.get();
-    // [NEW] Shapes usually resolved via ShapeMap, but define in scope for
-    // consistency if needed.
-    CurrentScope->define(St->Name, {toka::Type::fromString(St->Name)});
+    if (!St->GenericParams.empty()) {
+      // [NEW] Generic Template Registration
+      // Do NOT generate TypeLayout or simple ShapeMap entry yet.
+      // We might need a separate GenericShapeMap or flag it.
+      // For now, put in ShapeMap but the key distinction is St->GenericParams
+      // is not empty. The Type system will see "Box" in ShapeMap, but when it
+      // resolves, it sees GenericParams.
+      ms.Shapes[St->Name] = St.get();
+      ShapeMap[St->Name] = St.get();
+    } else {
+      ms.Shapes[St->Name] = St.get();
+      ShapeMap[St->Name] = St.get();
+      // [NEW] Shapes usually resolved via ShapeMap, but define in scope for
+      // consistency if needed.
+      CurrentScope->define(St->Name, {toka::Type::fromString(St->Name)});
+    }
   }
   for (auto &Alias : M.TypeAliases) {
     ms.TypeAliases[Alias->Name] = {Alias->TargetType, Alias->IsStrong};
@@ -499,6 +510,11 @@ void Sema::analyzeShapes(Module &M) {
   // This must happen after registerGlobals (Pass 1) so that all Shape names are
   // known.
   for (auto &S : M.Shapes) {
+    // [NEW] Skip analysis for Generic Templates. They are analyzed only upon
+    // Instantiation.
+    if (!S->GenericParams.empty())
+      continue;
+
     // We only resolve members for Struct, Tuple, Union (Not Enum variants
     // purely yet? Enums have members too) Actually ShapeMember is used for all.
     for (auto &member : S->Members) {

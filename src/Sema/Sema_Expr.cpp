@@ -295,7 +295,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // 3. Create and Register Synthetic ShapeDecl
     // We treat it as a regular Struct
     auto SyntheticShape = std::make_unique<ShapeDecl>(
-        false, UniqueName, ShapeKind::Struct, members);
+        false, UniqueName, std::vector<std::string>{}, ShapeKind::Struct,
+        members);
 
     // Important: Register in ShapeMap so MemberExpr can find it
     ShapeMap[UniqueName] = SyntheticShape.get();
@@ -2174,8 +2175,27 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   ExternDecl *Ext = nullptr;
   ShapeDecl *Sh = nullptr; // Constructor
 
+  // [NEW] Generic Constructor Pre-Check
+  // If CallName looks like a generic type "Box<i32>", try to resolve it as a
+  // Type. This triggers monomorphization in resolveType.
+  if (CallName.find('<') != std::string::npos) {
+    auto possibleType = toka::Type::fromString(CallName);
+    if (possibleType && !possibleType->isUnknown()) {
+      auto resolved = resolveType(possibleType);
+      if (auto shapeT = std::dynamic_pointer_cast<toka::ShapeType>(resolved)) {
+        if (shapeT->Decl) {
+          Sh = shapeT->Decl;
+          Call->Callee =
+              shapeT->Name; // Update Call Name to Mangled Name for CodeGen!
+          CallName =
+              shapeT->Name; // Update local var for verification logic below
+        }
+      }
+    }
+  }
+
   size_t scopePos = CallName.find("::");
-  if (scopePos != std::string::npos) {
+  if (!Sh && scopePos != std::string::npos) {
     std::string ModName = CallName.substr(0, scopePos);
     std::string FuncName = CallName.substr(scopePos + 2);
     SymbolInfo modSpec;
@@ -2195,29 +2215,40 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       error(Call, "Module '" + ModName + "' not found or not imported");
       return toka::Type::fromString("unknown");
     }
-  } else {
-    // Local Scope Lookup (Local, Imported, or Shadowed)
-    SymbolInfo sym;
-    if (CurrentScope->lookup(CallName, sym)) {
-      // Find implementation based on lookup
-      for (auto *GF : GlobalFunctions) {
-        if (GF->Name == CallName) {
-          Fn = GF;
+  } else if (!Sh) {
+    if (ExternMap.count(CallName))
+      Ext = ExternMap[CallName];
+    else if (ShapeMap.count(CallName))
+      Sh = ShapeMap[CallName];
+
+    // Fallback: Check if it's a type alias to a shape
+    if (!Fn && !Ext && !Sh && TypeAliasMap.count(CallName)) {
+      std::string target = TypeAliasMap[CallName].Target;
+      if (ShapeMap.count(target))
+        Sh = ShapeMap[target];
+    }
+  }
+  // Local Scope Lookup (Local, Imported, or Shadowed)
+  SymbolInfo sym;
+  if (CurrentScope->lookup(CallName, sym)) {
+    // Find implementation based on lookup
+    for (auto *GF : GlobalFunctions) {
+      if (GF->Name == CallName) {
+        Fn = GF;
+        break;
+      }
+    }
+    if (!Fn) {
+      for (auto &pair : ExternMap) {
+        if (pair.second->Name == CallName) {
+          Ext = pair.second;
           break;
         }
       }
-      if (!Fn) {
-        for (auto &pair : ExternMap) {
-          if (pair.second->Name == CallName) {
-            Ext = pair.second;
-            break;
-          }
-        }
-      }
-      std::string soulName = Type::stripMorphology(CallName);
-      if (!Fn && !Ext && ShapeMap.count(soulName)) {
-        Sh = ShapeMap[soulName];
-      }
+    }
+    std::string soulName = Type::stripMorphology(CallName);
+    if (!Fn && !Ext && ShapeMap.count(soulName)) {
+      Sh = ShapeMap[soulName];
     }
   }
 

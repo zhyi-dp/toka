@@ -628,17 +628,31 @@ public:
   bool IsPub = false;
   bool IsPacked = false;
   std::string Name;
+  std::vector<std::string> GenericParams; // [NEW] e.g. <T, U>
   ShapeKind Kind;
   std::vector<ShapeMember> Members;
   int64_t ArraySize = 0; // For Array kind
 
-  ShapeDecl(bool isPub, const std::string &name, ShapeKind kind,
+  ShapeDecl(bool isPub, const std::string &name,
+            std::vector<std::string> generics, ShapeKind kind,
             std::vector<ShapeMember> members, bool packed = false)
-      : IsPub(isPub), IsPacked(packed), Name(name), Kind(kind),
+      : IsPub(isPub), IsPacked(packed), Name(name),
+        GenericParams(std::move(generics)), Kind(kind),
         Members(std::move(members)) {}
 
   std::string toString() const override {
-    return std::string(IsPub ? "Pub " : "") + "Shape(" + Name + ")";
+    std::string s = std::string(IsPub ? "Pub " : "") + "Shape(" + Name;
+    if (!GenericParams.empty()) {
+      s += "<";
+      for (size_t i = 0; i < GenericParams.size(); ++i) {
+        if (i > 0)
+          s += ", ";
+        s += GenericParams[i];
+      }
+      s += ">";
+    }
+    s += ")";
+    return s;
   }
 };
 
