@@ -717,6 +717,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
                      var->IsShared, var->IsReference, var->IsValueMutable,
                      var->IsValueNullable || var->IsPointerNullable, elemTy);
   sym.isRebindable = var->IsRebindable;
+  sym.hasDrop = false;
+  sym.dropFunc = "";
   sym.isContinuous =
       (elemTy && elemTy->isArrayTy()) ||
       (dynamic_cast<const AllocExpr *>(var->Init.get()) &&
@@ -897,6 +899,12 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     info.DropFunc = dropFunc;
 
     m_ScopeStack.back().push_back(info);
+
+    // [New] Update m_Symbols with drop metadata for dispatcher
+    if (m_Symbols.count(varName)) {
+      m_Symbols[varName].hasDrop = hasDrop;
+      m_Symbols[varName].dropFunc = dropFunc;
+    }
     // Debug Lookup
     // llvm::errs() << "DEBUG: genFreeStmt lookup varName='" << varName
     //              << "' count=" << m_ValueTypeNames.count(varName) << " val='"
@@ -1919,6 +1927,10 @@ void CodeGen::fillSymbolMetadata(TokaSymbol &sym, std::shared_ptr<Type> typeObj,
   // stored it in Type? Currently Type has IsWritable. IsRebindable is typically
   // a property of the binding, not the type (like `mut` binding in Rust). So
   // we'll leave sym.isRebindable to be set by the caller (Declaration).
+
+  // Drop logic placeholder (caller should refine if needed)
+  sym.hasDrop = false;
+  sym.dropFunc = "";
 }
 
 } // namespace toka

@@ -684,13 +684,13 @@ llvm::Value *CodeGen::projectSoul(llvm::Value *handle, const TokaSymbol &sym) {
   // 3. Pointer Modes (Raw, Unique, Shared)
   if (sym.morphology == Morphology::Shared) {
     // allocaPtr is {T*, Ref*}*. We want T*.
-    llvm::Type *elem0Ty = llvm::PointerType::getUnqual(sym.soulType);
-    llvm::Type *elem1Ty =
+    llvm::Type *ptrTy = llvm::PointerType::getUnqual(sym.soulType);
+    llvm::Type *refTy =
         llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
-    llvm::Type *structTy = llvm::StructType::get(m_Context, {elem0Ty, elem1Ty});
+    llvm::Type *structTy = llvm::StructType::get(m_Context, {ptrTy, refTy});
 
     llvm::Value *dataPtrAddr =
-        m_Builder.CreateStructGEP(structTy, handle, 0, "shared.data_gep");
+        m_Builder.CreateStructGEP(structTy, current, 0, "shared.data_gep");
     return m_Builder.CreateLoad(m_Builder.getPtrTy(), dataPtrAddr,
                                 "shared.data_ptr");
   }

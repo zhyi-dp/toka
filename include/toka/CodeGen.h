@@ -63,6 +63,8 @@ struct TokaSymbol {
   bool isNullable;        // ?/! marker
   std::string typeName;   // Original type string (e.g. "dyn @Shape")
   std::shared_ptr<Type> soulTypeObj; // The new Type Object source of truth
+  bool hasDrop = false;
+  std::string dropFunc = "";
 };
 
 struct PhysEntity {
@@ -147,6 +149,17 @@ private:
     std::string DropFunc;
   };
   std::vector<std::vector<VariableScopeInfo>> m_ScopeStack;
+
+  // Assignment Strategy Dispatcher (Step 2)
+  PhysEntity emitAssignment(const Expr *lhs, const Expr *rhs);
+  void emitSoulAssignment(llvm::Value *soulAddr, llvm::Value *rhsVal,
+                          llvm::Type *type);
+  void emitEnvelopeRebind(llvm::Value *handleAddr, llvm::Value *rhsVal,
+                          const TokaSymbol &sym, const Expr *lhsExpr);
+  llvm::Value *emitPromotion(llvm::Value *rawPtr, llvm::Type *targetHandleType,
+                             const TokaSymbol &sym);
+  void emitAcquire(llvm::Value *sharedHandle);
+  void emitRelease(llvm::Value *sharedHandle, const TokaSymbol &sym);
 
   llvm::Type *resolveType(const std::string &baseType, bool hasPointer);
   llvm::Type *getLLVMType(std::shared_ptr<Type> type);

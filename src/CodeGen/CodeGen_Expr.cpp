@@ -21,504 +21,289 @@
 
 namespace toka {
 
+void CodeGen::emitAcquire(llvm::Value *sharedHandle) {
+  if (!sharedHandle || !sharedHandle->getType()->isStructTy())
+    return;
+  llvm::Value *refPtr =
+      m_Builder.CreateExtractValue(sharedHandle, 1, "sh.acq_ref_ptr");
+  llvm::Value *nn = m_Builder.CreateIsNotNull(refPtr, "sh.acq_nn");
+
+  llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock *incBB =
+      llvm::BasicBlock::Create(m_Context, "sh.acq_inc", f);
+  llvm::BasicBlock *contBB =
+      llvm::BasicBlock::Create(m_Context, "sh.acq_cont", f);
+  m_Builder.CreateCondBr(nn, incBB, contBB);
+
+  m_Builder.SetInsertPoint(incBB);
+  llvm::Value *cnt =
+      m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
+  llvm::Value *inc = m_Builder.CreateAdd(
+      cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+  m_Builder.CreateStore(inc, refPtr);
+  m_Builder.CreateBr(contBB);
+
+  m_Builder.SetInsertPoint(contBB);
+}
+
+void CodeGen::emitRelease(llvm::Value *sharedHandle, const TokaSymbol &sym) {
+  if (!sharedHandle || !sharedHandle->getType()->isStructTy())
+    return;
+  llvm::Value *refPtr =
+      m_Builder.CreateExtractValue(sharedHandle, 1, "sh.rel_ref_ptr");
+  llvm::Value *nn = m_Builder.CreateIsNotNull(refPtr, "sh.rel_nn");
+
+  llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock *decBB =
+      llvm::BasicBlock::Create(m_Context, "sh.rel_dec", f);
+  llvm::BasicBlock *contBB =
+      llvm::BasicBlock::Create(m_Context, "sh.rel_cont", f);
+  m_Builder.CreateCondBr(nn, decBB, contBB);
+
+  m_Builder.SetInsertPoint(decBB);
+  llvm::Value *cnt =
+      m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
+  llvm::Value *dec = m_Builder.CreateSub(
+      cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+  m_Builder.CreateStore(dec, refPtr);
+
+  llvm::Value *isZero = m_Builder.CreateICmpEQ(
+      dec, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+  llvm::BasicBlock *freeBB =
+      llvm::BasicBlock::Create(m_Context, "sh.rel_free", f);
+  m_Builder.CreateCondBr(isZero, freeBB, contBB);
+
+  m_Builder.SetInsertPoint(freeBB);
+  llvm::Value *data =
+      m_Builder.CreateExtractValue(sharedHandle, 0, "sh.rel_data");
+
+  // Call drop if exists
+  if (sym.hasDrop && !sym.dropFunc.empty()) {
+    if (auto *df = m_Module->getFunction(sym.dropFunc)) {
+      m_Builder.CreateCall(df, {data});
+    }
+  }
+
+  llvm::Function *freeFn = m_Module->getFunction("free");
+  if (freeFn) {
+    m_Builder.CreateCall(freeFn,
+                         m_Builder.CreateBitCast(data, m_Builder.getPtrTy()));
+    m_Builder.CreateCall(freeFn,
+                         m_Builder.CreateBitCast(refPtr, m_Builder.getPtrTy()));
+  }
+  m_Builder.CreateBr(contBB);
+
+  m_Builder.SetInsertPoint(contBB);
+}
+
+llvm::Value *CodeGen::emitPromotion(llvm::Value *rawPtr,
+                                    llvm::Type *targetHandleType,
+                                    const TokaSymbol &sym) {
+  if (!rawPtr || !targetHandleType || !targetHandleType->isStructTy())
+    return rawPtr;
+
+  llvm::Function *mallocFn = m_Module->getFunction("malloc");
+  if (!mallocFn) {
+    std::vector<llvm::Type *> args = {llvm::Type::getInt64Ty(m_Context)};
+    llvm::FunctionType *ft =
+        llvm::FunctionType::get(m_Builder.getPtrTy(), args, false);
+    mallocFn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
+                                      "malloc", m_Module.get());
+  }
+
+  llvm::Value *rcSz =
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 4);
+  llvm::Value *rawRC =
+      m_Builder.CreateCall(mallocFn, rcSz, "sh.prom_rc_malloc");
+  llvm::Value *refPtr = m_Builder.CreateBitCast(
+      rawRC, llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context)));
+  m_Builder.CreateStore(
+      llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1), refPtr);
+
+  llvm::Value *dataPtr = m_Builder.CreateBitCast(
+      rawPtr, targetHandleType->getStructElementType(0));
+  llvm::Value *u = llvm::UndefValue::get(targetHandleType);
+  llvm::Value *handle = m_Builder.CreateInsertValue(u, dataPtr, 0);
+  handle = m_Builder.CreateInsertValue(handle, refPtr, 1);
+  return handle;
+}
+
+void CodeGen::emitSoulAssignment(llvm::Value *soulAddr, llvm::Value *rhsVal,
+                                 llvm::Type *type) {
+  if (!soulAddr || !rhsVal || !type)
+    return;
+  m_Builder.CreateStore(rhsVal, soulAddr);
+}
+
+void CodeGen::emitEnvelopeRebind(llvm::Value *handleAddr, llvm::Value *rhsVal,
+                                 const TokaSymbol &sym, const Expr *lhsExpr) {
+  if (!handleAddr || !rhsVal)
+    return;
+
+  if (sym.morphology == Morphology::Shared) {
+    // 1. Acquire(New) - Order prevents self-assignment suicide
+    emitAcquire(rhsVal);
+    // 2. Release(Old)
+    llvm::Value *oldVal =
+        m_Builder.CreateLoad(rhsVal->getType(), handleAddr, "sh.old_handle");
+    emitRelease(oldVal, sym);
+    // 3. Update(Handle)
+    m_Builder.CreateStore(rhsVal, handleAddr);
+  } else if (sym.morphology == Morphology::Unique) {
+    // Unique: simple Release(Old) + Update
+    llvm::Value *oldVal =
+        m_Builder.CreateLoad(rhsVal->getType(), handleAddr, "u.old_handle");
+    llvm::Value *nn = m_Builder.CreateIsNotNull(oldVal, "u.old_nn");
+    llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *freeBB =
+        llvm::BasicBlock::Create(m_Context, "u.rel_free", f);
+    llvm::BasicBlock *contBB =
+        llvm::BasicBlock::Create(m_Context, "u.rel_cont", f);
+    m_Builder.CreateCondBr(nn, freeBB, contBB);
+
+    m_Builder.SetInsertPoint(freeBB);
+    if (sym.hasDrop && !sym.dropFunc.empty()) {
+      if (auto *df = m_Module->getFunction(sym.dropFunc)) {
+        m_Builder.CreateCall(df, {oldVal});
+      }
+    }
+    llvm::Function *freeFn = m_Module->getFunction("free");
+    if (freeFn) {
+      m_Builder.CreateCall(
+          freeFn, m_Builder.CreateBitCast(oldVal, m_Builder.getPtrTy()));
+    }
+    m_Builder.CreateBr(contBB);
+    m_Builder.SetInsertPoint(contBB);
+
+    m_Builder.CreateStore(rhsVal, handleAddr);
+  } else {
+    // Raw/Ref: direct store
+    m_Builder.CreateStore(rhsVal, handleAddr);
+  }
+}
+
+PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
+  // 1. Resolve Intent
+  bool hasRebind = false;
+  const Expr *targetLHS = lhsExpr;
+  while (auto *ue = dynamic_cast<const UnaryExpr *>(targetLHS)) {
+    if (ue->IsRebindable || ue->Op == TokenType::TokenWrite)
+      hasRebind = true;
+    targetLHS = ue->RHS.get();
+  }
+
+  // 2. Resolve LHS Metadata
+  TokaSymbol *symLHS = nullptr;
+  llvm::Value *lhsAlloca = nullptr;
+  if (auto *varLHS = dynamic_cast<const VariableExpr *>(targetLHS)) {
+    std::string baseName = varLHS->Name;
+    while (!baseName.empty() &&
+           (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
+            baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+      baseName = baseName.substr(1);
+    while (!baseName.empty() &&
+           (baseName.back() == '#' || baseName.back() == '?' ||
+            baseName.back() == '!'))
+      baseName.pop_back();
+
+    if (m_Symbols.count(baseName)) {
+      symLHS = &m_Symbols[baseName];
+      lhsAlloca = symLHS->allocaPtr;
+    }
+  }
+
+  // 3. Resolve RHS Value
+  PhysEntity rhs_ent = genExpr(rhsExpr).load(m_Builder);
+  llvm::Value *rhsVal = rhs_ent.load(m_Builder);
+  if (!rhsVal)
+    return nullptr;
+
+  if (hasRebind && symLHS && lhsAlloca) {
+    // Scene B: Envelope Rebind
+    if (symLHS->morphology == Morphology::Shared &&
+        rhsVal->getType()->isPointerTy()) {
+      rhsVal = emitPromotion(rhsVal, symLHS->soulType, *symLHS);
+    }
+    emitEnvelopeRebind(lhsAlloca, rhsVal, *symLHS, lhsExpr);
+  } else {
+    // Scene A: Soul Assignment
+    llvm::Value *soulAddr = emitEntityAddr(lhsExpr);
+    llvm::Type *destTy = rhsVal->getType();
+    if (symLHS && symLHS->morphology == Morphology::None)
+      destTy = symLHS->soulType;
+    emitSoulAssignment(soulAddr, rhsVal, destTy);
+  }
+
+  return PhysEntity(rhsVal, rhs_ent.typeName, rhsVal->getType(), false);
+}
+
 PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   const BinaryExpr *bin = expr;
   if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" || bin->Op == "*=" ||
       bin->Op == "/=") {
 
-    llvm::Value *ptr = nullptr;
-    llvm::Type *destType = nullptr;
-    TokaSymbol *symLHS = nullptr;
+    if (bin->Op == "=") {
+      return emitAssignment(bin->LHS.get(), bin->RHS.get());
+    }
 
-    if (auto *varLHS = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-      std::string baseName = varLHS->Name;
+    // Compound Assignment: LHS = LHS op RHS (Always Soul view)
+    llvm::Value *soulAddr = emitEntityAddr(bin->LHS.get());
+    PhysEntity rhsVal_ent = genExpr(bin->RHS.get()).load(m_Builder);
+    llvm::Value *rhsVal = rhsVal_ent.load(m_Builder);
+    if (!soulAddr || !rhsVal)
+      return nullptr;
+
+    // Determine destType for Load [Fix for Opaque Pointers]
+    llvm::Type *destType = nullptr;
+    if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
+      std::string baseName = ve->Name;
       while (!baseName.empty() &&
-             (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
-              baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+             (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&'))
         baseName = baseName.substr(1);
       while (!baseName.empty() &&
-             (baseName.back() == '#' || baseName.back() == '?' ||
-              baseName.back() == '!'))
+             (baseName.back() == '#' || baseName.back() == '!'))
         baseName.pop_back();
 
       if (m_Symbols.count(baseName)) {
-        symLHS = &m_Symbols[baseName];
+        destType = m_Symbols[baseName].soulType;
       }
+    }
 
-      // Variable on LHS is always a MUTATION of the soul
-      ptr = getEntityAddr(varLHS->Name);
-      // Don't force soulType for Smart Pointers, we need the structural type
-      if (symLHS && symLHS->morphology == Morphology::None) {
-        destType = symLHS->soulType;
-      }
+    if (!destType) {
+      destType = rhsVal->getType(); // Fallback
+    }
 
-      // Semantic Check (LHS must be mutable)
-      if (symLHS && !symLHS->isMutable) {
-        error(bin, "Cannot modify immutable variable '" + varLHS->Name + "'");
-        return nullptr;
-      }
+    // Standard Compound Logic
+    llvm::Value *lhsVal =
+        m_Builder.CreateLoad(destType, soulAddr, "compound.lhs");
+    if (lhsVal->getType() != rhsVal->getType()) {
+      error(bin, "Type mismatch in compound assignment");
+      return nullptr;
+    }
+
+    llvm::Value *res = nullptr;
+    if (lhsVal->getType()->isFloatingPointTy()) {
+      if (bin->Op == "+=")
+        res = m_Builder.CreateFAdd(lhsVal, rhsVal);
+      else if (bin->Op == "-=")
+        res = m_Builder.CreateFSub(lhsVal, rhsVal);
+      else if (bin->Op == "*=")
+        res = m_Builder.CreateFMul(lhsVal, rhsVal);
+      else if (bin->Op == "/=")
+        res = m_Builder.CreateFDiv(lhsVal, rhsVal);
     } else {
-      // [Fix] Address Resolution for Smart Pointer Unary Exprs (~s, ~#s)
-      // We must peel to find the variable, then find its Alloca (Envelope).
-      const Expr *targetLHS = bin->LHS.get();
-      while (auto *ue = dynamic_cast<const UnaryExpr *>(targetLHS)) {
-        targetLHS = ue->RHS.get();
-      }
-      if (auto *varLHS = dynamic_cast<const VariableExpr *>(targetLHS)) {
-        std::string searchName = varLHS->Name;
-        // Search Scope
-        bool found = false;
-        llvm::Value *allocaPtr = nullptr;
-        for (auto itLayer = m_ScopeStack.rbegin();
-             itLayer != m_ScopeStack.rend(); ++itLayer) {
-          for (auto &sv : *itLayer) {
-            if (sv.Name == searchName) {
-              allocaPtr = sv.Alloca;
-              found = true;
-              break;
-            }
-          }
-          if (found)
-            break;
-        }
-
-        if (found && allocaPtr) {
-          // We found the variable. Set ptr to Envelope.
-          ptr = allocaPtr;
-        }
-      }
+      if (bin->Op == "+=")
+        res = m_Builder.CreateAdd(lhsVal, rhsVal);
+      else if (bin->Op == "-=")
+        res = m_Builder.CreateSub(lhsVal, rhsVal);
+      else if (bin->Op == "*=")
+        res = m_Builder.CreateMul(lhsVal, rhsVal);
+      else if (bin->Op == "/=")
+        res = m_Builder.CreateSDiv(lhsVal, rhsVal);
     }
 
-    if (!ptr) {
-      ptr = genAddr(bin->LHS.get());
-    }
-
-    if (!ptr) {
-      return nullptr;
-    }
-
-    PhysEntity rhsVal_ent = genExpr(bin->RHS.get()).load(m_Builder);
-    llvm::Value *rhsVal = rhsVal_ent.load(m_Builder);
-    if (!rhsVal)
-      return nullptr;
-
-    // Determine destType if not already found (for MemberExpr, ArrayIndexExpr,
-    // etc.)
-    llvm::errs() << "DEBUG_V2: Checking destType. isNull="
-                 << (destType == nullptr) << "\n";
-    if (!destType) {
-      if (auto *pe = dynamic_cast<const PostfixExpr *>(bin->LHS.get())) {
-        llvm::errs() << "DEBUG_V2: LHS is PostfixExpr. Op=" << (int)pe->Op
-                     << "\n";
-        if (pe->Op == TokenType::TokenWrite || pe->Op == TokenType::TokenNull) {
-          const Expr *base = pe->LHS.get();
-          while (auto *innerPe = dynamic_cast<const PostfixExpr *>(base))
-            base = innerPe->LHS.get();
-          if (auto *ve = dynamic_cast<const VariableExpr *>(base)) {
-            std::string baseName = ve->Name;
-            while (!baseName.empty() &&
-                   (baseName[0] == '*' || baseName[0] == '#' ||
-                    baseName[0] == '&'))
-              baseName = baseName.substr(1);
-            while (!baseName.empty() &&
-                   (baseName.back() == '#' || baseName.back() == '!' ||
-                    baseName.back() == '?'))
-              baseName.pop_back();
-
-            llvm::errs() << "DEBUG: PostfixExpr assignment check baseName='"
-                         << baseName << "'\n";
-            if (m_Symbols.count(baseName)) {
-              destType = m_Symbols[baseName].soulType;
-              std::string s;
-              llvm::raw_string_ostream os(s);
-              if (destType)
-                destType->print(os);
-              llvm::errs() << "DEBUG: Found symbol. SoulType: " << os.str()
-                           << "\n";
-            } else {
-              llvm::errs() << "DEBUG: Symbol not found: " << baseName << "\n";
-            }
-          }
-        }
-      }
-
-      if (auto *memLHS = dynamic_cast<const MemberExpr *>(bin->LHS.get())) {
-        llvm::Type *objType = nullptr;
-        std::function<std::string(const Expr *)> getBaseName =
-            [&](const Expr *e) -> std::string {
-          if (auto *v = dynamic_cast<const VariableExpr *>(e))
-            return v->Name;
-          if (auto *p = dynamic_cast<const PostfixExpr *>(e))
-            return getBaseName(p->LHS.get());
-          if (auto *u = dynamic_cast<const UnaryExpr *>(e))
-            return getBaseName(u->RHS.get());
-          return "";
-        };
-
-        std::string baseName = getBaseName(memLHS->Object.get());
-        while (!baseName.empty() && (baseName[0] == '*' || baseName[0] == '#' ||
-                                     baseName[0] == '&' || baseName[0] == '^' ||
-                                     baseName[0] == '~' || baseName[0] == '!'))
-          baseName = baseName.substr(1);
-        while (!baseName.empty() &&
-               (baseName.back() == '#' || baseName.back() == '?' ||
-                baseName.back() == '!'))
-          baseName.pop_back();
-
-        if (m_Symbols.count(baseName))
-          objType = m_Symbols[baseName].soulType;
-        else
-          objType = genExpr(memLHS->Object.get()).load(m_Builder)->getType();
-
-        if (objType && objType->isStructTy()) {
-          llvm::StructType *st = llvm::cast<llvm::StructType>(objType);
-          std::string memberName = memLHS->Member;
-          while (!memberName.empty() &&
-                 (memberName[0] == '^' || memberName[0] == '*' ||
-                  memberName[0] == '&' || memberName[0] == '#' ||
-                  memberName[0] == '~' || memberName[0] == '!'))
-            memberName = memberName.substr(1);
-
-          std::string stName = m_TypeToName[st];
-          if (!stName.empty()) {
-            auto &fields = m_StructFieldNames[stName];
-            for (int i = 0; i < (int)fields.size(); ++i) {
-              std::string fn = fields[i];
-              while (!fn.empty() &&
-                     (fn[0] == '^' || fn[0] == '*' || fn[0] == '&' ||
-                      fn[0] == '#' || fn[0] == '~' || fn[0] == '!'))
-                fn = fn.substr(1);
-              while (!fn.empty() &&
-                     (fn.back() == '#' || fn.back() == '?' || fn.back() == '!'))
-                fn.pop_back();
-
-              if (fn == memberName) {
-                destType = st->getElementType(i);
-                break;
-              }
-            }
-          }
-        }
-      } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
-        destType = gep->getResultElementType();
-      } else if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
-        destType = ai->getAllocatedType();
-      } else if (auto *unary =
-                     dynamic_cast<const UnaryExpr *>(bin->LHS.get())) {
-        if (unary->Op == TokenType::Star) {
-          // Dereference assignment: *ptr = val
-          // For LLVM 17+, we fallback to rhs type if we can't find it
-          destType = rhsVal->getType();
-        }
-      }
-    }
-
-    if (!destType) {
-      destType = rhsVal->getType(); // Last resort
-    }
-
-    if (bin->Op != "=") {
-      // Compound: LHS = LHS op RHS
-      llvm::Value *lhsVal = m_Builder.CreateLoad(destType, ptr);
-      if (lhsVal->getType() != rhsVal->getType()) {
-        error(bin, "Type mismatch in compound assignment");
-        return nullptr;
-      }
-
-      llvm::Value *res = nullptr;
-      if (lhsVal->getType()->isFloatingPointTy()) {
-        if (bin->Op == "+=")
-          res = m_Builder.CreateFAdd(lhsVal, rhsVal);
-        else if (bin->Op == "-=")
-          res = m_Builder.CreateFSub(lhsVal, rhsVal);
-        else if (bin->Op == "*=")
-          res = m_Builder.CreateFMul(lhsVal, rhsVal);
-        else if (bin->Op == "/=")
-          res = m_Builder.CreateFDiv(lhsVal, rhsVal);
-      } else {
-        if (bin->Op == "+=")
-          res = m_Builder.CreateAdd(lhsVal, rhsVal);
-        else if (bin->Op == "-=")
-          res = m_Builder.CreateSub(lhsVal, rhsVal);
-        else if (bin->Op == "*=")
-          res = m_Builder.CreateMul(lhsVal, rhsVal);
-        else if (bin->Op == "/=")
-          res = m_Builder.CreateSDiv(lhsVal, rhsVal);
-      }
-
-      rhsVal = res;
-    }
-
-    // [Refactor] Move Variable Lookup & Rebind Intent Detection UP
-    const Expr *targetLHS = bin->LHS.get();
-    bool hasRebindIntent = false;
-    while (auto *ue = dynamic_cast<const UnaryExpr *>(targetLHS)) {
-      if (ue->Op == TokenType::TokenWrite || ue->IsRebindable) {
-        hasRebindIntent = true;
-      }
-      targetLHS = ue->RHS.get();
-    }
-
-    // Lookup metadata in Scope Stack
-    bool isUniqueLHS = false;
-    bool isSharedLHS = false;
-    bool hasDropLHS = false;
-    std::string dropFuncLHS = "";
-    bool foundInScope = false;
-    llvm::Value *lhsAlloca = nullptr;
-
-    if (auto *varLHS = dynamic_cast<const VariableExpr *>(targetLHS)) {
-      std::string searchName = varLHS->Name;
-      for (auto itLayer = m_ScopeStack.rbegin(); itLayer != m_ScopeStack.rend();
-           ++itLayer) {
-        for (auto &sv : *itLayer) {
-          if (sv.Name == searchName) {
-            isUniqueLHS = sv.IsUniquePointer;
-            isSharedLHS = sv.IsShared;
-            hasDropLHS = sv.HasDrop;
-            dropFuncLHS = sv.DropFunc;
-            lhsAlloca = sv.Alloca;
-            foundInScope = true;
-            break;
-          }
-        }
-        if (foundInScope)
-          break;
-      }
-    }
-
-    // Disable smart ptr logic if we are just mutating the soul (unless Rebind)
-    if (bin->LHS->ResolvedType && !rhsVal->getType()->isPointerTy()) {
-      // Only if NO rebind intent
-      if (!hasRebindIntent && !bin->LHS->ResolvedType->isSharedPtr() &&
-          !bin->LHS->ResolvedType->isUniquePtr()) {
-        isSharedLHS = false;
-        isUniqueLHS = false;
-      }
-    }
-
-    // [Refactor] Apply Identity Correction BEFORE Type Check
-    if (foundInScope && (isSharedLHS || isUniqueLHS || hasRebindIntent)) {
-      // If no explicit rebind intent (#), and we are hitting the Soul,
-      // we check if we SHOULD be hitting the Soul.
-      // E.g. s = 10. ptr is Soul Addr. LHS IsShared. Rebind=False.
-      // We keep ptr as Soul Addr.
-      // BUT if Rebind=True (*#ptr), we MUST force ptr = lhsAlloca.
-      if (hasRebindIntent) {
-        ptr = lhsAlloca;
-      } else if (isSharedLHS || isUniqueLHS) {
-        // If RHS is also a pointer suitable for rebind, we MIGHT mean rebind?
-        // No, Sema enforces explicit syntax. CodeGen just follows orders.
-        // Waiting... Toka 1.3 says "Strict Morphology".
-        // If s = new... (Logic moved to Sema).
-        // CodeGen: If ptr points to Soul, and we want to write Soul, keep it.
-      }
-
-      // Re-derive destType if we changed ptr
-      if (ptr) {
-        if (llvm::isa<llvm::AllocaInst>(ptr)) {
-          destType = llvm::cast<llvm::AllocaInst>(ptr)->getAllocatedType();
-        } else {
-          // Fallback: With Opaque Pointers, we cannot deduce element type from
-          // pointer. We rely on destType being previously correct or LHS check.
-        }
-      }
-    }
-
-    // [Refactor] Strict Type Check with Exemptions
-    bool typesMatch = (destType == rhsVal->getType());
-    if (!typesMatch) {
-      // 1. Integer width fallback
-      if (destType->isIntegerTy() && rhsVal->getType()->isIntegerTy()) {
-        if (destType->getIntegerBitWidth() ==
-            rhsVal->getType()->getIntegerBitWidth())
-          typesMatch = true;
-      }
-      // 2. Pointer matching
-      if (destType->isPointerTy() && rhsVal->getType()->isPointerTy()) {
-        typesMatch = true;
-      }
-      // 3. [Fix] Shared Pointer Promotion Exemption
-      // Dest: {T*, i32*} (Struct), RHS: T* (Pointer) -> Allow
-      if (isSharedLHS && destType->isStructTy() &&
-          rhsVal->getType()->isPointerTy()) {
-        typesMatch = true;
-      }
-    }
-
-    if (!typesMatch) {
-      if (destType) {
-        std::string s;
-        llvm::raw_string_ostream os(s);
-        destType->print(os);
-        llvm::errs() << "DEBUG: CodeGen DestType: " << os.str() << "\n";
-      } else {
-        llvm::errs() << "DEBUG: CodeGen DestType is NULL\n";
-      }
-      std::string s2;
-      llvm::raw_string_ostream os2(s2);
-      rhsVal->getType()->print(os2);
-      llvm::errs() << "DEBUG: CodeGen RHSType: " << os2.str() << "\n";
-
-      error(bin, "Type mismatch in assignment");
-      return nullptr;
-    }
-
-    // [Fix] Smart Pointer Assignment Strategy
-    // 1. Promote RHS if needed (Ptr -> SharedHandle)
-    // 2. Drop Old LHS Value (if Smart Pointer)
-
-    // [Refactor] Cleanup: Trace Unified Logic (Post-Check)
-    // Variables populated above.
-    llvm::errs() << "DEBUG: UnifiedCheck Name="
-                 << (foundInScope ? "Found" : "NotFound")
-                 << " IsShared=" << isSharedLHS << " IsUnique=" << isUniqueLHS
-                 << " LHS_ResType="
-                 << (bin->LHS->ResolvedType ? bin->LHS->ResolvedType->toString()
-                                            : "Null")
-                 << "\n";
-
-    if (foundInScope && (isSharedLHS || isUniqueLHS || hasRebindIntent)) {
-      llvm::Type *effectiveType = destType;
-
-      // [Fix] Distinguish Rebind (s = ...) vs Soul Mutation (s# = ...)
-      if (lhsAlloca && ptr != lhsAlloca && !hasRebindIntent) {
-        // If ptr is NOT alloca, and logic says NO rebind, we are modifying
-        // Soul. Except if we already decided above intended rebind.
-        isSharedLHS = false;
-        isUniqueLHS = false;
-      }
-
-      // Promotion: Unique/Raw Ptr -> Shared Handle
-      llvm::errs() << "DEBUG: SmartPtrLogic Enter. isShared=" << isSharedLHS
-                   << " RHS IsPtr=" << rhsVal->getType()->isPointerTy() << "\n";
-      if (isSharedLHS && rhsVal->getType()->isPointerTy()) {
-        llvm::Function *mallocFn = m_Module->getFunction("malloc");
-        if (!mallocFn) {
-          // Fallback decl
-          std::vector<llvm::Type *> args = {llvm::Type::getInt64Ty(m_Context)};
-          llvm::FunctionType *ft =
-              llvm::FunctionType::get(m_Builder.getPtrTy(), args, false);
-          mallocFn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
-                                            "malloc", m_Module.get());
-        }
-
-        // 1. Alloc RefCount
-        llvm::Value *rcSz =
-            llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 4);
-        llvm::Value *refPtr = m_Builder.CreateCall(mallocFn, rcSz);
-        refPtr = m_Builder.CreateBitCast(
-            refPtr,
-            llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context)));
-        m_Builder.CreateStore(
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1),
-            refPtr);
-
-        // 2. Alloc Data Ptr (if needed, or reuse if RHS is ptr)
-        // If RHS is compatible ptr, steal it.
-        // Assuming RHS is T* and Shared is {T*, i32*}
-        // destType might be i32 (invalid), need Struct Type
-        llvm::Type *handleType = effectiveType;
-
-        if (handleType && handleType->isStructTy()) {
-          llvm::Value *dataPtr = m_Builder.CreateBitCast(
-              rhsVal, handleType->getStructElementType(0));
-
-          // 3. Create Handle
-          llvm::Value *u = llvm::UndefValue::get(handleType);
-          rhsVal = m_Builder.CreateInsertValue(
-              m_Builder.CreateInsertValue(u, dataPtr, 0), refPtr, 1);
-          typesMatch = true; // Forced match
-        }
-      }
-
-      // Drop Old Value
-      if (ptr && effectiveType) {
-        // Load old value
-        llvm::Value *oldVal =
-            m_Builder.CreateLoad(effectiveType, ptr, "old_assign_val");
-
-        // Use same drop logic as Rebind (copied/refactored)
-        // For brevity, I'll inline specific Shared/Unique drop logic here or
-        // call helper if available. Since helpers aren't exposed, I inline.
-        if (isSharedLHS) {
-          llvm::Value *refPtr =
-              m_Builder.CreateExtractValue(oldVal, 1, "old_ref_ptr");
-          llvm::Value *refNN =
-              m_Builder.CreateIsNotNull(refPtr, "assign_sh_nn");
-
-          llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-          llvm::BasicBlock *decBB =
-              llvm::BasicBlock::Create(m_Context, "assign_dec", f);
-          llvm::BasicBlock *contBB =
-              llvm::BasicBlock::Create(m_Context, "assign_next", f);
-
-          m_Builder.CreateCondBr(refNN, decBB, contBB);
-          m_Builder.SetInsertPoint(decBB);
-
-          llvm::Value *cnt =
-              m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
-          llvm::Value *dec = m_Builder.CreateSub(
-              cnt,
-              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-          m_Builder.CreateStore(dec, refPtr);
-
-          llvm::Value *isZero = m_Builder.CreateICmpEQ(
-              dec,
-              llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
-          llvm::BasicBlock *freeBB =
-              llvm::BasicBlock::Create(m_Context, "assign_sh_free", f);
-
-          m_Builder.CreateCondBr(isZero, freeBB, contBB);
-          m_Builder.SetInsertPoint(freeBB);
-
-          llvm::Value *data =
-              m_Builder.CreateExtractValue(oldVal, 0, "old_data_ptr");
-          if (hasDropLHS && !dropFuncLHS.empty()) {
-            llvm::Function *dropFn = m_Module->getFunction(dropFuncLHS);
-            if (dropFn)
-              m_Builder.CreateCall(dropFn, {data});
-          }
-          llvm::Function *freeFunc = m_Module->getFunction("free");
-          if (freeFunc) {
-            m_Builder.CreateCall(
-                freeFunc, m_Builder.CreateBitCast(data, m_Builder.getPtrTy()));
-            m_Builder.CreateCall(freeFunc, m_Builder.CreateBitCast(
-                                               refPtr, m_Builder.getPtrTy()));
-          }
-          m_Builder.CreateBr(contBB);
-          m_Builder.SetInsertPoint(contBB);
-        } else if (isUniqueLHS) {
-          llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-          llvm::Value *notNull =
-              m_Builder.CreateIsNotNull(oldVal, "assign_u_nn");
-          llvm::BasicBlock *freeBB =
-              llvm::BasicBlock::Create(m_Context, "assign_u_free", f);
-          llvm::BasicBlock *contBB =
-              llvm::BasicBlock::Create(m_Context, "assign_u_cont", f);
-
-          m_Builder.CreateCondBr(notNull, freeBB, contBB);
-          m_Builder.SetInsertPoint(freeBB);
-
-          if (hasDropLHS && !dropFuncLHS.empty()) {
-            llvm::Function *dropFn = m_Module->getFunction(dropFuncLHS);
-            if (dropFn)
-              m_Builder.CreateCall(dropFn, {oldVal});
-          }
-          llvm::Function *freeFuncName = m_Module->getFunction("free");
-          if (freeFuncName) {
-            m_Builder.CreateCall(
-                freeFuncName,
-                m_Builder.CreateBitCast(oldVal, m_Builder.getPtrTy()));
-          }
-          m_Builder.CreateBr(contBB);
-          m_Builder.SetInsertPoint(contBB);
-        }
-      }
-    }
-
-    m_Builder.CreateStore(rhsVal, ptr);
-    return rhsVal;
+    m_Builder.CreateStore(res, soulAddr);
+    return res;
   }
 
   // Logical Operators (Short-circuiting)
@@ -1187,46 +972,25 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
   if (unary->Op == TokenType::Caret) {
     if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
       std::string vName = v->Name;
-      // Strip morphology just in case
       while (!vName.empty() && (vName.back() == '?' || vName.back() == '!'))
         vName.pop_back();
 
-      // std::cerr << "DEBUG: genUnaryExpr Caret Var=" << vName << "\n";
       llvm::Value *alloca = getIdentityAddr(vName);
-
       if (alloca) {
-        // Identity Found! Load the pointer value (The Soul)
         llvm::Value *val =
             m_Builder.CreateLoad(m_Builder.getPtrTy(), alloca, vName + ".move");
-
-        // Move Semantics: Null out the source (Destructive Move)
-        // Only if it is NOT a reference and IS a unique pointer (checked via
-        // Symbol Table ideally)
-        bool isUnique = false;
-        if (m_Symbols.count(vName))
-          isUnique = m_Symbols[vName].morphology == Morphology::Unique;
-
-        // Optimize: If it is indeed a unique pointer, we must null it out.
-        // For raw pointers using ^, we also allow it as "Move Pointer".
         m_Builder.CreateStore(
             llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), alloca);
-
         return val;
       } else {
-        // Fallback: If identity not found (e.g. global?), try standard
-        // genExpr This handles cases where 'v' might not be a simple local
-        // variable
         PhysEntity ent = genExpr(unary->RHS.get());
         return ent.load(m_Builder);
       }
     }
-    // Non-variable case (e.g. ^(expression))
     return genExpr(unary->RHS.get()).load(m_Builder);
   }
+
   if (unary->Op == TokenType::Tilde) {
-    // [Fix] Removed legacy manual load. genVariableExpr now correctly handles
-    // Shared Pointer Handles ({ptr, ptr}) as the "Soul" of a Shared Variable.
-    // Delegating to genExpr allows that logic to work.
     return genExpr(unary->RHS.get());
   }
 
@@ -1356,9 +1120,9 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
 
   // [Fix] Shared Pointer Handle Type Correction
   if (isShared && soulType) {
-    // If it is shared, the soulAddr is the address of the Handle {ptr, ref*}.
-    // But soulType from symbol is the Element Type.
-    // We must construct the Handle Type so the load is correct.
+    // If it is shared, the soulAddr is the address of the Handle {ptr,
+    // ref*}. But soulType from symbol is the Element Type. We must
+    // construct the Handle Type so the load is correct.
     llvm::Type *ptrTy = llvm::PointerType::getUnqual(soulType);
     llvm::Type *refTy =
         llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
@@ -1418,7 +1182,8 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
     shapeName = m_TypeToName[targetType];
   }
 
-  // Create result alloca (Assume i32 for now, ideally get from Sema or expr)
+  // Create result alloca (Assume i32 for now, ideally get from Sema or
+  // expr)
   llvm::Type *resultType = llvm::Type::getInt32Ty(m_Context);
   llvm::AllocaInst *resultAddr =
       m_Builder.CreateAlloca(resultType, nullptr, "match_result_addr");
@@ -1567,8 +1332,8 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
         m_Builder.CreateCondBr(cond, guardBB, nextArmBB);
         m_Builder.SetInsertPoint(guardBB);
 
-        // For guard check, we might need variable bindings if it's a variable
-        // pattern
+        // For guard check, we might need variable bindings if it's a
+        // variable pattern
         m_ScopeStack.push_back({});
         if (arm->Pat->PatternKind == MatchArm::Pattern::Variable) {
           genPatternBinding(arm->Pat.get(), targetAddr, targetType);
@@ -1611,8 +1376,8 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
   if (mergeBB->use_empty()) {
     mergeBB->eraseFromParent(); // Remove dead block
     // Return dummy value since we can't be here at runtime
-    // But we need to return something valid for the caller to not crash if it
-    // uses the value type. However, if we removed the block, we have no
+    // But we need to return something valid for the caller to not crash if
+    // it uses the value type. However, if we removed the block, we have no
     // insert point? Actually if we return nullptr, genStmt might handle it?
     // genExpr must return a Value*. Use Undef.
     return llvm::UndefValue::get(resultType);
@@ -2185,9 +1950,10 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
             spec = "%s";
             // If it's *char (Pointer to i8), printf %s works.
             // If it's String struct, we might need to extract data pointer?
-            // But currently String is likely passed as *char from c_str() or
-            // similar. If it is String struct, pVal is struct value. printf
-            // cannot take struct. But val_ent.load() loads the value.
+            // But currently String is likely passed as *char from c_str()
+            // or similar. If it is String struct, pVal is struct value.
+            // printf cannot take struct. But val_ent.load() loads the
+            // value.
           } else if (ty->isPointerTy()) {
             // Fallback for pointers
             spec = "%p";
@@ -2463,11 +2229,12 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
           val = genAddr(call->Args[i].get());
         }
 
-        // [Fix] Handle RValues for Captured Arguments (Temp Materialization)
+        // [Fix] Handle RValues for Captured Arguments (Temp
+        // Materialization)
         if (!val) {
           PhysEntity pe = genExpr(call->Args[i].get());
-          // If genAddr failed, it's likely an RValue (return from call, etc.)
-          // We must create a temporary alloca to pass its address.
+          // If genAddr failed, it's likely an RValue (return from call,
+          // etc.) We must create a temporary alloca to pass its address.
           llvm::Value *rVal = pe.load(m_Builder);
           if (rVal) {
             llvm::AllocaInst *tmp =
@@ -2490,9 +2257,9 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
     // [ABI Fix] Shared Pointer Argument Copy (Incref) REMOVED
     // We now pass Shared Pointers by "Single Pointer" (Address of Handle).
     // This implies Borrowing semantics (no transfer of ownership, no new
-    // reference). The Callee will see the Caller's handle via pointer. Explicit
-    // Incref/Decref is NOT needed for this ABI strategy unless we implement
-    // explicit cloning.
+    // reference). The Callee will see the Caller's handle via pointer.
+    // Explicit Incref/Decref is NOT needed for this ABI strategy unless we
+    // implement explicit cloning.
     if (funcDecl && i < funcDecl->Args.size() && funcDecl->Args[i].IsShared) {
       // No-op for Pass-By-Pointer
     }
@@ -2542,8 +2309,8 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
           }
           if (rt) {
             concreteName = rt->toString();
-            // Strip suffixes (#, ?, !) from the resulting name to match VTable
-            // expectation
+            // Strip suffixes (#, ?, !) from the resulting name to match
+            // VTable expectation
             while (!concreteName.empty() &&
                    (concreteName.back() == '#' || concreteName.back() == '?' ||
                     concreteName.back() == '!')) {
