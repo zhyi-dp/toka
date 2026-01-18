@@ -72,9 +72,13 @@ std::string Sema::checkUnaryExprStr(UnaryExpr *Unary) {
 std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
   if (!E)
     return nullptr;
-  m_LastInitMask = 1; // Default to fully set
+  m_LastInitMask = ~0ULL; // Default to fully set
   auto T = checkExprImpl(E);
   E->ResolvedType = T;
+
+  if (!dynamic_cast<UnsetExpr *>(E) && !dynamic_cast<InitStructExpr *>(E)) {
+    m_LastInitMask = ~0ULL;
+  }
   return T;
 }
 

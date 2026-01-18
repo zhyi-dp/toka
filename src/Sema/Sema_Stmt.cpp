@@ -345,6 +345,17 @@ void Sema::checkStmt(Stmt *S) {
     // [New] Annotated AST: Populate ResolvedType
     Var->ResolvedType = Info.TypeObj;
 
+    if (Var->Init) {
+      Info.InitMask = m_LastInitMask;
+    } else {
+      // No initializer -> potentially uninitialized, but verify language rules.
+      // For now, if no init, implicit default? or garbage?
+      // Default to unset if no init is provided?
+      // If it's a declaration without init (e.g. extern? or C-style?), usually
+      // considered uninit.
+      Info.InitMask = 0;
+    }
+
     CurrentScope->define(Var->Name, Info);
 
     // Move Logic: If initializing from a Unique Variable, move it.

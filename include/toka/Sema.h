@@ -28,7 +28,7 @@ struct SymbolInfo {
 
   bool Moved = false;
   uint64_t InitMask =
-      0; // 0=unset, 1=set. For shapes, each bit corresponds to a member.
+      ~0ULL; // 0=unset, 1=set. For shapes, each bit corresponds to a member.
 
   // Borrow Tracking
   int ImmutableBorrowCount = 0;
