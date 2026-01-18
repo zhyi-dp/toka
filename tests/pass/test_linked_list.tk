@@ -1,0 +1,28 @@
+
+import std/io::println
+import std/memory::assert
+
+shape Node(
+    val: i32,
+    ^?next: Node
+)
+
+pub fn main() -> i32 {
+    unsafe {
+        // User's logic + Print checks
+        auto ^head = new Node(val=0, ^?next=unset)  
+        // Push 1
+        head.^next = new Node(val=1, ^?next=nullptr)
+
+        auto &#iter = &head
+        loop {
+            println("iter: {}", iter.val)
+            if (iter.^next == nullptr) {
+                assert(iter.^next == nullptr)
+                break
+            }
+            &#iter = iter.^next
+        }
+    }
+    return 0
+}

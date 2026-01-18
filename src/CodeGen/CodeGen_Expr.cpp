@@ -253,13 +253,16 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
     }
 
     if (destTy) {
-      rhsVal = llvm::UndefValue::get(destTy);
+      if (destTy->isPointerTy()) {
+        rhsVal = llvm::Constant::getNullValue(destTy);
+      } else {
+        rhsVal = llvm::UndefValue::get(destTy);
+      }
     } else {
       // Cannot infer type for unset assignment. CodeGen error?
       // Sema should have caught this or we rely on explicit typing.
       return nullptr;
     }
-
   } else {
     // Normal Expr
     PhysEntity rhs_ent = genExpr(rhsExpr).load(m_Builder);
@@ -2579,8 +2582,21 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
       return nullptr;
     }
 
-    PhysEntity fieldVal_ent = genExpr(f.second.get()).load(m_Builder);
-    llvm::Value *fieldVal = fieldVal_ent.load(m_Builder);
+    llvm::Value *fieldVal = nullptr;
+
+    if (dynamic_cast<const UnsetExpr *>(f.second.get())) {
+      // [Fix] Handle UnsetExpr with context type
+      llvm::Type *elemTy = st->getElementType(idx);
+      if (elemTy->isPointerTy()) {
+        fieldVal = llvm::Constant::getNullValue(elemTy);
+      } else {
+        fieldVal = llvm::UndefValue::get(elemTy);
+      }
+    } else {
+      PhysEntity fieldVal_ent = genExpr(f.second.get()).load(m_Builder);
+      fieldVal = fieldVal_ent.load(m_Builder);
+    }
+
     if (!fieldVal)
       return nullptr;
 
