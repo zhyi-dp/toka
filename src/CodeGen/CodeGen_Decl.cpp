@@ -363,8 +363,6 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
 llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   std::string varName = Type::stripMorphology(var->Name);
-  std::cerr << "DEBUG: genVariableDecl: " << varName
-            << " (TypeName: " << var->TypeName << ")\n";
 
   llvm::Value *initVal = nullptr;
   llvm::Type *decayArrayType = nullptr;
@@ -421,8 +419,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       }
     }
   }
-  llvm::errs() << "DEBUG: PostInit Var=" << varName
-               << " InitVal=" << (initVal ? "Yes" : "No") << "\n";
 
   llvm::Type *type = nullptr;
   llvm::Type *elemTy = nullptr;
@@ -603,8 +599,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     error(var, "Cannot infer type for variable '" + varName + "'");
     return nullptr;
   }
-  llvm::errs() << "DEBUG: PostType Var=" << varName
-               << " Ty=" << (type ? "Yes" : "No") << "\n";
 
   if (var->Init && initVal) {
     // Move Semantics for Unique
@@ -717,7 +711,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       }
     }
   }
-  llvm::errs() << "DEBUG: PreAlloca Var=" << varName << "\n";
 
   llvm::AllocaInst *alloca = m_Builder.CreateAlloca(type, nullptr, varName);
 

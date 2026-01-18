@@ -1,3 +1,16 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "toka/Parser.h"
 #include <algorithm>
 #include <iostream>
@@ -10,9 +23,12 @@ namespace toka {
 std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
   bool isConst = match(TokenType::KwConst);
   if (!isConst) {
-    match(TokenType::KwLet);
-    if (previous().Kind != TokenType::KwLet)
+    if (match(TokenType::KwLet)) {
+      error(previous(),
+            "Deprecated keyword 'let'; use 'auto' for variable declarations.");
+    } else if (previous().Kind != TokenType::KwAuto) {
       match(TokenType::KwAuto);
+    }
   }
 
   bool isRef = match(TokenType::Ampersand);

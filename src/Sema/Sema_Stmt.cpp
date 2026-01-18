@@ -113,6 +113,53 @@ void Sema::checkStmt(Stmt *S) {
     for (auto &SubStmt : Block->Statements) {
       checkStmt(SubStmt.get());
     }
+
+    // SCOPE GUARD: Hot Potato Check
+    // Iterate over symbols in the current scope before exiting.
+    // If any symbol is a Reference with DirtyReferentMask != Full,
+    // we must ensure its Referent (BorrowedFrom) is now Clean.
+    // However, the Referent might be in a parent scope. We need to check the
+    // Referent's CURRENT state. Wait, simpler model first: If the Ref is marked
+    // Dirty, it means it TOOK responsibility. We check if the Ref *itself*
+    // thinks it's done? No, the Ref doesn't update its own DirtyMask
+    // automatically unless we implement flow sensitive updates to
+    // DirtyReferentMask on assignment. BETTER APPROACH based on plan: "Check if
+    // the referent (Source) has been fully initialized (Cleaned) within this
+    // scope."
+
+    // We need to iterate the Symbols in CurrentScope.
+    for (auto const &[name, info] : CurrentScope->Symbols) {
+      if (info.IsReference() && info.DirtyReferentMask != ~0ULL) {
+        // It was a dirty reference.
+        // Check if it's still dirty?
+        // Actually, we should check the SOURCE variable's current InitMask.
+        SymbolInfo *sourceInfo = nullptr;
+        if (!info.BorrowedFrom.empty() &&
+            CurrentScope->findSymbol(info.BorrowedFrom, sourceInfo)) {
+          bool referentIsShape =
+              (sourceInfo->TypeObj && sourceInfo->TypeObj->isShape());
+          uint64_t signature = ~0ULL;
+          if (referentIsShape) {
+            std::string soul = sourceInfo->TypeObj->getSoulName();
+            if (ShapeMap.count(soul)) {
+              ShapeDecl *SD = ShapeMap[soul];
+              signature = (1ULL << SD->Members.size()) - 1;
+              if (SD->Members.size() >= 64)
+                signature = ~0ULL;
+            }
+          }
+
+          // Check if Source is now fully initialized
+          if ((sourceInfo->InitMask & signature) != signature) {
+            DiagnosticEngine::report(getLoc(Block),
+                                     DiagID::ERR_DIRTY_REF_ESCAPE, name,
+                                     info.BorrowedFrom);
+            HasError = true;
+          }
+        }
+      }
+    }
+
     exitScope();
   } else if (auto *Ret = dynamic_cast<ReturnStmt *>(S)) {
     std::string ExprType = "void";
@@ -122,6 +169,18 @@ void Sema::checkStmt(Stmt *S) {
       auto RetTypeObj = checkExpr(Ret->ReturnValue.get());
       ExprType = RetTypeObj->toString();
       m_ControlFlowStack.pop_back();
+
+      // Escape Blockade: Check for Dirty Reference
+      if (auto *Var = dynamic_cast<VariableExpr *>(Ret->ReturnValue.get())) {
+        SymbolInfo *info = nullptr;
+        if (CurrentScope->findSymbol(Var->Name, info)) {
+          if (info->IsReference() && info->DirtyReferentMask != ~0ULL) {
+            DiagnosticEngine::report(getLoc(Ret), DiagID::ERR_ESCAPE_UNSET,
+                                     Var->Name);
+            HasError = true;
+          }
+        }
+      }
     }
     clearStmtBorrows();
 
@@ -169,10 +228,13 @@ void Sema::checkStmt(Stmt *S) {
   } else if (auto *Var = dynamic_cast<VariableDecl *>(S)) {
     std::string InitType = "";
     if (Var->Init) {
+      if (Var->IsReference)
+        m_AllowUnsetUsage = true;
       m_ControlFlowStack.push_back({Var->Name, "void", false, true});
       auto InitTypeObj = checkExpr(Var->Init.get());
       InitType = InitTypeObj->toString();
       m_ControlFlowStack.pop_back();
+      m_AllowUnsetUsage = false;
     }
 
     // If type not specified, infer from init
@@ -253,7 +315,7 @@ void Sema::checkStmt(Stmt *S) {
     }
 
     // Strict Morphology Check for Variable Declaration
-    if (Var->Init) {
+    if (Var->Init && !Var->IsReference) {
       MorphKind lhsMorph = MorphKind::None;
       if (Var->IsUnique)
         lhsMorph = MorphKind::Unique;
@@ -301,6 +363,33 @@ void Sema::checkStmt(Stmt *S) {
     // Borrow tracking logic using 'morph' local var
     if (morph == "&" && !m_LastBorrowSource.empty()) {
       Info.BorrowedFrom = m_LastBorrowSource;
+
+      // [Hot Potato] Propagate InitMask from Source to Reference
+      SymbolInfo *srcPtr = nullptr;
+      if (CurrentScope->findSymbol(m_LastBorrowSource, srcPtr)) {
+        // If source is not fully initialized, mark this reference as holding a
+        // Hot Potato We use the same 'signature' logic as elsewhere to
+        // determine "Full"
+        uint64_t fullMask = ~0ULL;
+        if (srcPtr->TypeObj && srcPtr->TypeObj->isShape()) {
+          std::string soul = srcPtr->TypeObj->getSoulName();
+          if (ShapeMap.count(soul)) {
+            ShapeDecl *SD = ShapeMap[soul];
+            uint64_t bits = (1ULL << SD->Members.size()) - 1;
+            if (SD->Members.size() >= 64)
+              bits = ~0ULL;
+            fullMask = bits;
+          }
+        }
+
+        if ((srcPtr->InitMask & fullMask) != fullMask) {
+          // It's Dirty!
+          Info.DirtyReferentMask = srcPtr->InitMask;
+        } else {
+          Info.DirtyReferentMask = ~0ULL; // Clean
+        }
+      }
+
       // Remove from temporary borrows since it's now persistent
       for (auto it = m_CurrentStmtBorrows.begin();
            it != m_CurrentStmtBorrows.end(); ++it) {

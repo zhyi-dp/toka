@@ -26,8 +26,7 @@
 namespace toka {
 
 bool Sema::checkModule(Module &M) {
-  llvm::errs() << "DEBUG: checkModule Enters. Functions: " << M.Functions.size()
-               << "\n";
+
   enterScope();       // Module-level global scope
   CurrentModule = &M; // Set context
   // 1. Register all globals (Functions, Structs, etc.)
@@ -37,7 +36,7 @@ bool Sema::checkModule(Module &M) {
   checkShapeSovereignty();
 
   // 2b. Check function bodies (reordered)
-  llvm::errs() << "DEBUG: checkModule Checking Functions...\n";
+
   for (auto &Fn : M.Functions) {
     checkFunction(Fn.get());
   }
@@ -388,112 +387,8 @@ void Sema::registerGlobals(Module &M) {
   }
 }
 
-void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
-                        bool SourceIsMutable) {
-  if (!Pat)
-    return;
-
-  std::string T = resolveType(TargetType);
-
-  switch (Pat->PatternKind) {
-  case MatchArm::Pattern::Literal:
-    // Literal patterns don't bind variables
-    break;
-
-  case MatchArm::Pattern::Wildcard:
-    break;
-
-  case MatchArm::Pattern::Variable: {
-    SymbolInfo Info;
-    // Type Migration Stage 1: Coexistence
-    // Construct type string to parse object. Pattern bindings infer type T.
-    // If Reference, it is &T.
-    std::string fullType = "";
-    if (Pat->IsReference)
-      fullType = "&";
-    fullType += T;
-    // Patterns usually don't have rebind/nullable sigils unless explicit?
-    // In match arms, we trust the inferred type T.
-    // But wait, T comes from resolveType(TargetType).
-    Info.TypeObj = toka::Type::fromString(fullType);
-
-    CurrentScope->define(Pat->Name, Info);
-    break;
-  }
-
-  case MatchArm::Pattern::Decons: {
-    // Pat->Name might be "Ok" or "Result::Ok"
-    std::string variantName = Pat->Name;
-    std::string shapeName = T;
-
-    size_t pos = variantName.find("::");
-    if (pos != std::string::npos) {
-      shapeName = variantName.substr(0, pos);
-      variantName = variantName.substr(pos + 2);
-    }
-
-    if (ShapeMap.count(shapeName)) {
-      ShapeDecl *SD = ShapeMap[shapeName];
-      ShapeMember *foundMemb = nullptr;
-      for (auto &Memb : SD->Members) {
-        if (Memb.Name == variantName) {
-          foundMemb = &Memb;
-          break;
-        }
-      }
-
-      if (foundMemb) {
-        if (Pat->SubPatterns.size() > 0) {
-          if (foundMemb->Type.empty() && foundMemb->SubMembers.empty()) {
-            DiagnosticEngine::report(
-                getLoc(Pat), DiagID::ERR_VARIANT_NO_PAYLOAD, variantName);
-            HasError = true;
-          } else {
-            if (!foundMemb->SubMembers.empty()) {
-              // Multi-field tuple variant
-              if (Pat->SubPatterns.size() != foundMemb->SubMembers.size()) {
-                DiagnosticEngine::report(
-                    getLoc(Pat), DiagID::ERR_VARIANT_ARG_MISMATCH, variantName,
-                    foundMemb->SubMembers.size(), Pat->SubPatterns.size());
-                HasError = true;
-              } else {
-                for (size_t i = 0; i < Pat->SubPatterns.size(); ++i) {
-                  // Rebind check
-                  checkPattern(Pat->SubPatterns[i].get(),
-                               foundMemb->SubMembers[i].Type, SourceIsMutable);
-                }
-              }
-            } else {
-              // Legacy single-field variant
-              if (Pat->SubPatterns.size() != 1) {
-                DiagnosticEngine::report(
-                    getLoc(Pat), DiagID::ERR_VARIANT_ARG_MISMATCH, variantName,
-                    1, Pat->SubPatterns.size());
-                HasError = true;
-              }
-              checkPattern(Pat->SubPatterns[0].get(), foundMemb->Type,
-                           SourceIsMutable);
-            }
-          }
-        }
-      } else {
-        DiagnosticEngine::report(
-            getLoc(Pat), DiagID::ERR_UNKNOWN_SHAPE_IN_PAT,
-            shapeName); // Actually variant not found in shape
-        HasError = true;
-      }
-    } else {
-      DiagnosticEngine::report(getLoc(Pat), DiagID::ERR_UNKNOWN_SHAPE_IN_PAT,
-                               shapeName);
-      HasError = true;
-    }
-    break;
-  }
-  }
-}
-
 void Sema::checkFunction(FunctionDecl *Fn) {
-  llvm::errs() << "DEBUG: Checking function: " << Fn->Name << "\n";
+
   CurrentFunctionReturnType = Fn->ReturnType;
   enterScope(); // Function scope
 

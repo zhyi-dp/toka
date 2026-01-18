@@ -1,0 +1,46 @@
+// tests/fail/test_unset_escape.tk
+
+// Case 1: Escape Dirty Reference via Return
+fn test_return_unset() -> &i32 {
+    auto x : i32 = unset
+    auto &ref = &x
+    return ref // EXPECT: Cannot escape an unset or dirty variable 'ref'
+}
+
+// Case 2: Escape Dirty Reference via Break
+fn test_break_unset() -> void {
+    auto y : i32 = unset
+    auto &refY = &y
+    
+    // We need a loop to break from
+    auto res = loop {
+        break refY // EXPECT: Cannot escape an unset or dirty variable 'refY'
+    }
+}
+
+// Case 3: Escape Dirty Reference via Pass (in If)
+fn test_pass_unset() -> void {
+    auto z : i32 = unset
+    auto &refZ = &z
+    
+    // Wrap in expression that yields
+    auto val = if true {
+        pass refZ // EXPECT: Cannot escape an unset or dirty variable 'refZ'
+    } else {
+        pass refZ
+    }
+}
+
+// Case 4: Scope Escape (Hot Potato not cleaned)
+fn test_scope_escape() -> void {
+    auto a : i32 = unset
+    {
+        auto &refA = &a
+        // refA goes out of scope, but 'a' is still unset!
+        // This should trigger ERR_DIRTY_REF_ESCAPE
+    } // EXPECT: Reference 'refA' to unset variable 'a' escapes scope without initialization
+}
+
+fn main() -> i32 {
+    return 0
+}

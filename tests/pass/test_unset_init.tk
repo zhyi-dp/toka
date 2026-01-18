@@ -1,0 +1,39 @@
+// tests/pass/test_unset_init.tk
+import std/io::println
+import std/memory::assert
+
+shape Point(
+    x: i32,
+    y: i32
+)
+
+fn main() -> i32 {
+    // Case 1: Simple Init via Ref
+    auto p : Point = unset
+    {
+        auto &refP = &p
+        refP.x = 10
+        refP.y = 20
+        // Now 'p' is fully initialized. 'refP' is clean.
+    } // Scope exit OK because 'p' is initialized.
+
+    println("p.x: {}", p.x)
+    assert(p.x == 10, "p.x check")
+    
+    // Case 2: Pass/Break with Clean Ref
+    auto q : i32 = unset
+    auto &refQ = &q
+    refQ = 100
+    // Now Ref is clean.
+    
+    // Using reference in Pass/If
+    auto val:i32 = if true {
+        pass refQ // OK because refQ is clean
+    } else {
+        pass refQ
+    }
+
+    assert(val == 100, "val check")
+    
+    return 0
+}

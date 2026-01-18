@@ -30,6 +30,13 @@ struct SymbolInfo {
   uint64_t InitMask =
       ~0ULL; // 0=unset, 1=set. For shapes, each bit corresponds to a member.
 
+  // "Hot Potato" Tracking
+  // If this symbol is a Reference (&T), this mask tracks the InitMask of the
+  // REFERENT. If a bit is 0, it means the referent's corresponding field is
+  // Unset, and THIS reference is responsible for initializing it (or passing
+  // the responsibility).
+  uint64_t DirtyReferentMask = ~0ULL; // Default to Clean
+
   // Borrow Tracking
   int ImmutableBorrowCount = 0;
   bool IsMutablyBorrowed = false;
@@ -141,6 +148,7 @@ private:
   bool HasError = false;
   uint64_t m_LastInitMask =
       1; // Default to fully initialized (1 for simple var)
+  bool m_AllowUnsetUsage = false;
   Scope *CurrentScope = nullptr;
   std::vector<FunctionDecl *>
       GlobalFunctions; // All functions across all modules

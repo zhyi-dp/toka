@@ -10,15 +10,25 @@ shape Node(
 pub fn main() -> i32 {
     unsafe {
         // User's logic + Print checks
-        auto ^head = new Node(val=0, ^?next=unset)  
+        auto ^head = new Node(val=101, ^?next=unset)  
+        //println("head: {}", head.val)
+        //assert(head.val == 101, "check head.val")
         // Push 1
-        head.^next = new Node(val=1, ^?next=nullptr)
+        {
+            auto &#iter = &head
+            for auto i in [1,2,3,4,5] {
+                iter.^next = new Node(val=i, ^?next=unset)
+                println("[{}]pushed: {}", i, iter.val)
+                &#iter = iter.^next
+            }
+            iter.^?next = nullptr
+        }
 
         auto &#iter = &head
         loop {
             println("iter: {}", iter.val)
             if (iter.^next == nullptr) {
-                assert(iter.^next == nullptr)
+                assert(iter.^next == nullptr, "check null")
                 break
             }
             &#iter = iter.^next

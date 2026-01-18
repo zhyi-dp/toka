@@ -1,3 +1,16 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "toka/AST.h"
 #include "toka/DiagnosticEngine.h"
 #include "toka/Sema.h"
@@ -207,6 +220,43 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     auto innerObj = checkExpr(Addr->Expression.get());
     if (innerObj->isUnknown())
       return toka::Type::fromString("unknown");
+
+    // Borrow Tracking
+    Expr *scan = Addr->Expression.get();
+    // Unwrap Postfix (like x#)
+    while (auto *post = dynamic_cast<PostfixExpr *>(scan)) {
+      scan = post->LHS.get();
+    }
+
+    if (auto *Var = dynamic_cast<VariableExpr *>(scan)) {
+      SymbolInfo *Info = nullptr;
+      if (CurrentScope->findSymbol(Var->Name, Info)) {
+        bool wantMutable = innerObj->IsWritable;
+
+        // Borrow Check Logic
+        if (wantMutable) {
+          if (!Info->IsMutable()) {
+            error(Addr, "cannot mutably borrow immutable variable '" +
+                            Var->Name + "' (# required)");
+          }
+          if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+            error(Addr, "cannot mutably borrow '" + Var->Name +
+                            "' because it is already borrowed");
+          }
+          Info->IsMutablyBorrowed = true;
+        } else {
+          if (Info->IsMutablyBorrowed) {
+            error(Addr, "cannot borrow '" + Var->Name +
+                            "' because it is mutably borrowed");
+          }
+          Info->ImmutableBorrowCount++;
+        }
+
+        m_LastBorrowSource = Var->Name;
+        m_CurrentStmtBorrows.push_back({Var->Name, wantMutable});
+      }
+    }
+
     auto refType = std::make_shared<toka::ReferenceType>(innerObj);
     return refType;
   } else if (auto *Idx = dynamic_cast<ArrayIndexExpr *>(E)) {
@@ -305,7 +355,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         }
       }
 
-      if (!isFullyInit) {
+      if (!isFullyInit && !m_AllowUnsetUsage) {
         DiagnosticEngine::report(getLoc(ve), DiagID::ERR_USE_UNSET, ve->Name);
         HasError = true;
       }
@@ -677,9 +727,22 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         error(pe, "Prefix 'pass' expects a value-yielding expression");
       }
     } else {
-      // 2. Leaf 'pass' - must have a receiver
       auto valTypeObj = checkExpr(pe->Value.get());
       valType = valTypeObj->toString();
+    }
+
+    // Escape Blockade: Check for Dirty Reference
+    if (pe->Value) {
+      if (auto *Var = dynamic_cast<VariableExpr *>(pe->Value.get())) {
+        SymbolInfo *info = nullptr;
+        if (CurrentScope->findSymbol(Var->Name, info)) {
+          if (info->IsReference() && info->DirtyReferentMask != ~0ULL) {
+            DiagnosticEngine::report(getLoc(pe), DiagID::ERR_ESCAPE_UNSET,
+                                     Var->Name);
+            HasError = true;
+          }
+        }
+      }
     }
 
     bool foundReceiver = false;
@@ -713,6 +776,18 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (be->Value) {
       auto valTypeObj = checkExpr(be->Value.get());
       valType = valTypeObj->toString();
+
+      // Escape Blockade: Check for Dirty Reference
+      if (auto *Var = dynamic_cast<VariableExpr *>(be->Value.get())) {
+        SymbolInfo *info = nullptr;
+        if (CurrentScope->findSymbol(Var->Name, info)) {
+          if (info->IsReference() && info->DirtyReferentMask != ~0ULL) {
+            DiagnosticEngine::report(getLoc(be), DiagID::ERR_ESCAPE_UNSET,
+                                     Var->Name);
+            HasError = true;
+          }
+        }
+      }
     }
 
     ControlFlowInfo *target = nullptr;
@@ -1054,12 +1129,19 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         SymbolInfo Info;
         if (CurrentScope->lookup(objVar->Name, Info)) {
           if (Info.TypeObj && Info.TypeObj->isShape()) {
+            // Determine which mask to check: InitMask (for values) or
+            // DirtyReferentMask (for references)
+            uint64_t maskToCheck = Info.InitMask;
+            if (Info.IsReference()) {
+              maskToCheck = Info.DirtyReferentMask;
+            }
+
             std::string soul = Info.TypeObj->getSoulName();
             if (ShapeMap.count(soul)) {
               ShapeDecl *SD = ShapeMap[soul];
               for (int i = 0; i < (int)SD->Members.size(); ++i) {
                 if (SD->Members[i].Name == Memb->Member) {
-                  if (i < 64 && !(Info.InitMask & (1ULL << i))) {
+                  if (i < 64 && !(maskToCheck & (1ULL << i))) {
                     DiagnosticEngine::report(getLoc(Memb),
                                              DiagID::ERR_USE_UNSET,
                                              objVar->Name + "." + Memb->Member);
@@ -1654,8 +1736,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
               error(Bin, "assignment type mismatch (ref): cannot assign '" +
                              RHS + "' to '" + inner->toString() + "'");
             }
-            return inner; // Assign returns value? Or void? Spec says
-                          // void/unit usually but legacy returns type.
+            // return inner; // [Fix] FALLTHROUGH to back-propagation logic
           }
           isRefAssign = true;
         }
@@ -1713,6 +1794,16 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         }
         if (InfoPtr->IsMutable() || Var->IsValueMutable)
           isLHSWritable = true;
+
+        // [Unset Safety] Allow writing to immutable variables if they are unset
+        // (Initializing)
+        if (InfoPtr->IsReference()) {
+          if (InfoPtr->DirtyReferentMask != ~0ULL)
+            isLHSWritable = true;
+        } else {
+          if (InfoPtr->InitMask != ~0ULL)
+            isLHSWritable = true;
+        }
       }
     } else if (auto *Un = dynamic_cast<UnaryExpr *>(Traverse)) {
       if (Un->Op == TokenType::Star || Un->Op == TokenType::Caret ||
@@ -1789,27 +1880,92 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
     // [Fix] Update InitMask logic for 'unset' variables
     Expr *LHSExpr = Bin->LHS.get();
-    // Unwrap mutation suffix/prefix if any (e.g. x#) -> handled by VariableExpr
-    // IsValueMutable? If LHS is VariableExpr, update mask.
+
+    // Helper lambda for back-propagation
+    auto propagateInit = [&](std::string startVar, uint64_t updateBits,
+                             bool isPartial) {
+      std::string current = startVar;
+      // Limit depth to avoid infinite loops in circular refs (though illegal in
+      // Toka)
+      int depth = 0;
+      while (!current.empty() && depth < 20) {
+        SymbolInfo *Sym = nullptr;
+        if (!CurrentScope->findSymbol(current, Sym))
+          break;
+
+        // Update the symbol itself (if it's the source or a ref in chain)
+        if (Sym->IsReference()) {
+          if (isPartial)
+            Sym->DirtyReferentMask |= updateBits;
+          else
+            Sym->DirtyReferentMask = ~0ULL;
+        } else {
+          if (isPartial)
+            Sym->InitMask |= updateBits;
+          else
+            Sym->InitMask = ~0ULL;
+        }
+
+        // Move to next upstream source
+        if (Sym->IsReference()) {
+          current = Sym->BorrowedFrom;
+        } else {
+          break; // Reached root
+        }
+        depth++;
+      }
+    };
+
     if (auto *Var = dynamic_cast<VariableExpr *>(LHSExpr)) {
       SymbolInfo *Info = nullptr;
       if (CurrentScope->findSymbol(Var->Name, Info)) {
-        Info->InitMask = ~0ULL; // Fully initialized
+        // Full Assignment to Variable (or Reference)
+        // If it's a reference, we propagate Cleanliness to Source
+        if (Info->IsReference()) {
+          Info->DirtyReferentMask = ~0ULL;
+          if (!Info->BorrowedFrom.empty()) {
+            propagateInit(Info->BorrowedFrom, ~0ULL, false);
+          }
+        } else {
+          Info->InitMask = ~0ULL;
+        }
       }
     } else if (auto *Memb = dynamic_cast<MemberExpr *>(LHSExpr)) {
-      // Handle Partial Initialization
+      // Partial Initialization via Member
       Expr *Obj = Memb->Object.get();
       if (auto *Var = dynamic_cast<VariableExpr *>(Obj)) {
         SymbolInfo *Info = nullptr;
         if (CurrentScope->findSymbol(Var->Name, Info)) {
-          if (Info->TypeObj && Info->TypeObj->isShape()) {
-            std::string sName = Info->TypeObj->getSoulName();
+          std::shared_ptr<toka::Type> actualType = Info->TypeObj;
+          // If reference, peel to find Shape
+          if (actualType && actualType->isReference()) {
+            actualType = actualType->getPointeeType();
+          }
+
+          if (actualType && actualType->isShape()) {
+            std::string sName = actualType->getSoulName();
             if (ShapeMap.count(sName)) {
               ShapeDecl *SD = ShapeMap[sName];
+
+              // Find which bit to set
+              uint64_t bitsToSet = 0;
               for (int i = 0; i < (int)SD->Members.size(); ++i) {
                 if (SD->Members[i].Name == Memb->Member) {
-                  Info->InitMask |= (1ULL << i);
+                  bitsToSet = (1ULL << i);
                   break;
+                }
+              }
+
+              if (bitsToSet != 0) {
+                // Apply locally
+                if (Info->IsReference()) {
+                  Info->DirtyReferentMask |= bitsToSet;
+                  // Propagate Up
+                  if (!Info->BorrowedFrom.empty()) {
+                    propagateInit(Info->BorrowedFrom, bitsToSet, true);
+                  }
+                } else {
+                  Info->InitMask |= bitsToSet;
                 }
               }
             }
@@ -1940,7 +2096,6 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
 // Stage 5c: Object-Oriented Call Expression Check
 std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   std::string CallName = Call->Callee;
-  llvm::errs() << "DEBUG: checkCallExpr Entry: " << CallName << "\n";
 
   // 1. Primitives (Constructors/Casts) e.g. i32(42)
   if (CallName == "i32" || CallName == "u32" || CallName == "i64" ||
@@ -2026,8 +2181,6 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
     SymbolInfo modSpec;
     if (CurrentScope->lookup(ModName, modSpec) && modSpec.ReferencedModule) {
       ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
-      llvm::errs() << "DEBUG: Looking up '" << FuncName << "' in module '"
-                   << target->Name << "'\n";
       if (target->Functions.count(FuncName))
         Fn = target->Functions[FuncName];
       else if (target->Externs.count(FuncName))
@@ -2036,11 +2189,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         Sh = target->Shapes[FuncName];
 
       if (!Fn && !Ext && !Sh) {
-        llvm::errs() << "DEBUG: Symbol not found. Available functions:\n";
-        for (auto const &[n, f] : target->Functions)
-          llvm::errs() << "  Fn: " << n << "\n";
-        for (auto const &[n, f] : target->Externs)
-          llvm::errs() << "  Ext: " << n << "\n";
+        // No debug prints
       }
     } else {
       error(Call, "Module '" + ModName + "' not found or not imported");
@@ -2259,6 +2408,110 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   }
 
   return ReturnType;
+}
+
+void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
+                        bool SourceIsMutable) {
+  if (!Pat)
+    return;
+
+  std::string T = resolveType(TargetType);
+
+  switch (Pat->PatternKind) {
+  case MatchArm::Pattern::Literal:
+    // Literal patterns don't bind variables
+    break;
+
+  case MatchArm::Pattern::Wildcard:
+    break;
+
+  case MatchArm::Pattern::Variable: {
+    SymbolInfo Info;
+    // Type Migration Stage 1: Coexistence
+    // Construct type string to parse object. Pattern bindings infer type T.
+    // If Reference, it is &T.
+    std::string fullType = "";
+    if (Pat->IsReference)
+      fullType = "&";
+    fullType += T;
+    // Patterns usually don't have rebind/nullable sigils unless explicit?
+    // In match arms, we trust the inferred type T.
+    // But wait, T comes from resolveType(TargetType).
+    Info.TypeObj = toka::Type::fromString(fullType);
+
+    CurrentScope->define(Pat->Name, Info);
+    break;
+  }
+
+  case MatchArm::Pattern::Decons: {
+    // Pat->Name might be "Ok" or "Result::Ok"
+    std::string variantName = Pat->Name;
+    std::string shapeName = T;
+
+    size_t pos = variantName.find("::");
+    if (pos != std::string::npos) {
+      shapeName = variantName.substr(0, pos);
+      variantName = variantName.substr(pos + 2);
+    }
+
+    if (ShapeMap.count(shapeName)) {
+      ShapeDecl *SD = ShapeMap[shapeName];
+      ShapeMember *foundMemb = nullptr;
+      for (auto &Memb : SD->Members) {
+        if (Memb.Name == variantName) {
+          foundMemb = &Memb;
+          break;
+        }
+      }
+
+      if (foundMemb) {
+        if (Pat->SubPatterns.size() > 0) {
+          if (foundMemb->Type.empty() && foundMemb->SubMembers.empty()) {
+            DiagnosticEngine::report(
+                getLoc(Pat), DiagID::ERR_VARIANT_NO_PAYLOAD, variantName);
+            HasError = true;
+          } else {
+            if (!foundMemb->SubMembers.empty()) {
+              // Multi-field tuple variant
+              if (Pat->SubPatterns.size() != foundMemb->SubMembers.size()) {
+                DiagnosticEngine::report(
+                    getLoc(Pat), DiagID::ERR_VARIANT_ARG_MISMATCH, variantName,
+                    foundMemb->SubMembers.size(), Pat->SubPatterns.size());
+                HasError = true;
+              } else {
+                for (size_t i = 0; i < Pat->SubPatterns.size(); ++i) {
+                  // Rebind check
+                  checkPattern(Pat->SubPatterns[i].get(),
+                               foundMemb->SubMembers[i].Type, SourceIsMutable);
+                }
+              }
+            } else {
+              // Legacy single-field variant
+              if (Pat->SubPatterns.size() != 1) {
+                DiagnosticEngine::report(
+                    getLoc(Pat), DiagID::ERR_VARIANT_ARG_MISMATCH, variantName,
+                    1, Pat->SubPatterns.size());
+                HasError = true;
+              }
+              checkPattern(Pat->SubPatterns[0].get(), foundMemb->Type,
+                           SourceIsMutable);
+            }
+          }
+        }
+      } else {
+        DiagnosticEngine::report(
+            getLoc(Pat), DiagID::ERR_UNKNOWN_SHAPE_IN_PAT,
+            shapeName); // Actually variant not found in shape
+        HasError = true;
+      }
+    } else {
+      DiagnosticEngine::report(getLoc(Pat), DiagID::ERR_UNKNOWN_SHAPE_IN_PAT,
+                               shapeName);
+      HasError = true;
+    }
+    break;
+  }
+  }
 }
 
 } // namespace toka

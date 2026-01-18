@@ -94,11 +94,7 @@ PhysEntity CodeGen::genAllocExpr(const AllocExpr *ae) {
 
 llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
   llvm::Function *freeHook = m_Module->getFunction("__toka_free");
-  if (!freeHook)
-    std::cerr << "DEBUG: __toka_free NOT FOUND in module\n";
-  else
-    std::cerr << "DEBUG: __toka_free FOUND: " << freeHook->getName().str()
-              << "\n";
+
   llvm::Value *ptrAddr = nullptr;
   if (auto *unary = dynamic_cast<const UnaryExpr *>(fs->Expression.get())) {
     // TokenType::Star is explicitly the Soul (Pointer Value), so we let it fall
@@ -132,12 +128,6 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
 
     if (auto *ve = dynamic_cast<const VariableExpr *>(rawExpr)) {
       std::string varName = Type::stripMorphology(ve->Name);
-
-      // Debug Lookup
-      // llvm::errs() << "DEBUG: genFreeStmt lookup varName='" << varName
-      //              << "' count=" << m_ValueTypeNames.count(varName) << "
-      //              val='"
-      //              << m_ValueTypeNames[varName] << "'\n";
 
       if (m_Symbols.count(varName)) {
         std::string vType = m_Symbols[varName].typeName;
