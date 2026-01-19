@@ -333,6 +333,17 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
   } else if (auto *ve = dynamic_cast<VariableExpr *>(E)) {
     SymbolInfo Info;
     if (!CurrentScope->lookup(ve->Name, Info)) {
+      // [NEW] Surgical Plan: Try resolving as a type (handles Option<i32>)
+      auto possible = toka::Type::fromString(ve->Name);
+      if (possible && !possible->isUnknown()) {
+        auto resolved = resolveType(possible);
+        if (auto shapeT =
+                std::dynamic_pointer_cast<toka::ShapeType>(resolved)) {
+          // Success: Resolved to a type name (e.g. Option_M_i32)
+          return shapeT;
+        }
+      }
+
       DiagnosticEngine::report(getLoc(ve), DiagID::ERR_UNDECLARED, ve->Name);
       HasError = true;
       return toka::Type::fromString("unknown");
@@ -2283,18 +2294,19 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   // 3. Resolve Static Methods / Enum Variants
   size_t pos = CallName.find("::");
   if (pos != std::string::npos) {
-    std::string ShapeName = Type::stripMorphology(CallName.substr(0, pos));
+    std::string RawPrefix = CallName.substr(0, pos);
+    // [NEW] Resolve prefix as a type (handles Option<i32> -> Option_M_i32)
+    std::string ShapeName = resolveType(RawPrefix);
     std::string VariantName = CallName.substr(pos + 2);
 
     if (ShapeMap.count(ShapeName)) {
+      // Update CallName and Callee for subsequent lookup and CodeGen
+      CallName = ShapeName + "::" + VariantName;
+      Call->Callee = CallName;
+
       // Static Method
       if (MethodMap.count(ShapeName) &&
           MethodMap[ShapeName].count(VariantName)) {
-        // We don't have full signature for static methods in MethodMap
-        // (just return string) For Stage 5, we check args as expressions
-        // but CANNOT verify arity/types strictly yet unless we store Method
-        // Decl via visitShapeDecl. Existing legacy logic just returned
-        // MethodMap[ShapeName][VariantName].
         for (auto &Arg : Call->Args)
           checkExpr(Arg.get());
         return toka::Type::fromString(MethodMap[ShapeName][VariantName]);
@@ -2305,11 +2317,12 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         for (auto &Memb : SD->Members) {
           if (Memb.Name == VariantName) {
             // Enum Variant Constructor: Variant(Args...) -> ShapeName
-            // We need Memb's type to verify arg?
-            // Members in Enum are Variants. If Variant has payload, its
-            // Type is the payload type? Checking args...
             for (auto &Arg : Call->Args)
               checkExpr(Arg.get());
+
+            // Set ResolvedShape for CodeGen
+            Call->ResolvedShape = SD;
+
             return toka::Type::fromString(ShapeName);
           }
         }
@@ -2792,7 +2805,7 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
 
     size_t pos = variantName.find("::");
     if (pos != std::string::npos) {
-      shapeName = variantName.substr(0, pos);
+      shapeName = resolveType(variantName.substr(0, pos));
       variantName = variantName.substr(pos + 2);
     }
 

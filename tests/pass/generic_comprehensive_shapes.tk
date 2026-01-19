@@ -1,0 +1,82 @@
+import std/memory::assert
+import std/io::println
+
+// 1. Generic Struct (Named Fields)
+shape Box<T> (
+    val: T
+)
+
+// 2. Generic Tuple (Unnamed Fields)
+shape Pair<T, U> (
+    T,
+    U
+)
+
+// 3. Generic Enum (Tagged Union)
+shape Option<T> (
+    None |
+    Some(T)
+)
+
+// 4. Generic Array Wrapper (Struct containing Array)
+shape Buffer<T, N_: usize> (
+    data: [T; N_],
+    len: usize
+)
+
+fn test_struct() {
+    auto b = Box<i32>(val = 42)
+    assert(b.val == 42, "Struct<i32> val failed")
+    
+    auto b_f = Box<f64>(val = 3.14)
+    assert(b_f.val > 3.13, "Struct<f64> val too low")
+    assert(b_f.val < 3.15, "Struct<f64> val too high")
+}
+
+fn test_tuple() {
+    auto p = Pair<i32, f64>(10, 2.5)
+    assert(p.0 == 10, "Tuple.0 failed")
+    assert(p.1 == 2.5, "Tuple.1 failed")
+}
+
+fn test_enum() {
+    auto some = Option<i32>::Some(100)
+    
+    match some {
+        auto Option<i32>::Some(v) => {
+            assert(v == 100, "Enum Some value match failed")
+        }
+        auto Option<i32>::None => {
+            assert(false, "Enum match hit None improperly")
+        }
+    }
+    
+    auto none_val = Option<i32>::None
+    match none_val {
+        auto Option<i32>::None => {
+            assert(true, "Enum None matched")
+        }
+        _ => assert(false, "Enum None match failed")
+    }
+}
+
+fn test_array_wrapper() {
+    auto buf = Buffer<i32, 3>(
+        data = [1, 2, 3],
+        len = 3
+    )
+    assert(buf.data[0] == 1, "Buffer[0] failed")
+    assert(buf.data[2] == 3, "Buffer[2] failed")
+}
+
+fn main() -> i32 {
+    println("Testing Generic Shapes...")
+    
+    test_struct()
+    test_tuple()
+    test_enum()
+    test_array_wrapper()
+    
+    println("All Generic Shape tests passed!")
+    return 0
+}

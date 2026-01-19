@@ -253,39 +253,37 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
       newM.Type = memberTypeStr;
     }
 
-    newMembers.push_back(newM);
+    newMembers.push_back(std::move(newM));
   }
 
   // Update members of the already-registered decl
-  storedDecl->Members = newMembers;
+  storedDecl->Members = std::move(newMembers);
 
   // Recursively analyze the new shape (resolve members fully)
   // We manually run the resolution logic that analyzeShapes does
   for (auto &member : storedDecl->Members) {
-    if (!member.ResolvedType) {
-      // Same logic as analyzeShapes...
+    auto resolveMember = [&](ShapeMember &m) {
+      if (m.ResolvedType)
+        return;
+
       std::string prefix = "";
-      if (member.IsShared)
+      if (m.IsShared)
         prefix += "~";
-      else if (member.IsUnique)
+      else if (m.IsUnique)
         prefix += "^";
-      else if (member.IsReference)
+      else if (m.IsReference)
         prefix += "&";
-      else if (member.HasPointer)
+      else if (m.HasPointer)
         prefix += "*";
 
-      std::string fullTypeStr = prefix + member.Type;
+      std::string fullTypeStr = prefix + m.Type;
       // [NEW] If it's an array with a symbolic size that's one of our generic
       // params, replace it before resolution.
       auto memberTypeObj = toka::Type::fromString(fullTypeStr);
       if (auto arr =
               std::dynamic_pointer_cast<toka::ArrayType>(memberTypeObj)) {
         if (!arr->SymbolicSize.empty() && substMap.count(arr->SymbolicSize)) {
-          // Replace symbolic size (const generic)
           std::string valStr = substMap.at(arr->SymbolicSize)->toString();
-          // We can't easily change the string, so we recreate the type string.
-          // Or just update the ResolvedType later.
-          // Let's re-parse with the value.
           size_t semi = fullTypeStr.find(';');
           size_t close = fullTypeStr.find(']', semi);
           if (semi != std::string::npos && close != std::string::npos) {
@@ -297,8 +295,40 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
       }
 
       std::string resolvedName = resolveType(fullTypeStr);
-      member.ResolvedType = toka::Type::fromString(resolvedName);
+      m.ResolvedType = toka::Type::fromString(resolvedName);
+    };
+
+    // [NEW] Handle Nested Substitution for SubMembers (Variants)
+    for (auto &sub : member.SubMembers) {
+      if (substMap.count(sub.Type)) {
+        sub.ResolvedType = substMap[sub.Type];
+        sub.Type = sub.ResolvedType->toString();
+      } else {
+        std::string subTypeStr = sub.Type;
+        for (auto const &[K, V] : substMap) {
+          size_t pos = 0;
+          while ((pos = subTypeStr.find(K, pos)) != std::string::npos) {
+            auto isWordChar = [](char c) {
+              return std::isalnum(c) || c == '_';
+            };
+            bool startOk = (pos == 0) || !isWordChar(subTypeStr[pos - 1]);
+            bool endOk = (pos + K.size() == subTypeStr.size()) ||
+                         !isWordChar(subTypeStr[pos + K.size()]);
+            if (startOk && endOk) {
+              std::string valStr = V->toString();
+              subTypeStr.replace(pos, K.size(), valStr);
+              pos += valStr.size();
+            } else {
+              pos += K.size();
+            }
+          }
+        }
+        sub.Type = subTypeStr;
+      }
+      resolveMember(sub);
     }
+
+    resolveMember(member);
   }
 
   auto instance = std::make_shared<ShapeType>(mangledName);

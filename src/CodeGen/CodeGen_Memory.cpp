@@ -252,6 +252,9 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
     std::string typeName = "";
     if (auto *ve = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
       typeName = ve->Name;
+      if (ve->ResolvedType && ve->ResolvedType->isShape()) {
+        typeName = ve->ResolvedType->getSoulName();
+      }
     }
     // 2. Check if Enum Variant
     if (m_Shapes.count(typeName) &&
@@ -327,22 +330,43 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   }
 
   llvm::Type *objType = nullptr;
-  if (auto *ptrTy = llvm::dyn_cast<llvm::PointerType>(objAddr->getType())) {
-    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
-      objType = alloca->getAllocatedType();
-    } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
-      objType = gep->getResultElementType();
-    } else if (auto *load = llvm::dyn_cast<llvm::LoadInst>(objAddr)) {
-      objType = load->getType();
-    } else {
-      // Fallback: try element type discovery
-      if (auto *ve = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
-        std::string baseName = ve->Name;
-        while (!baseName.empty() &&
-               (baseName[0] == '*' || baseName[0] == '&' || baseName[0] == '#'))
-          baseName = baseName.substr(1);
-        if (m_Symbols.count(baseName))
-          objType = m_Symbols[baseName].soulType;
+  if (mem->Object->ResolvedType) {
+    auto base = mem->Object->ResolvedType;
+    // Unwrap pointers/references to get the underlying Shape/Struct type
+    while (base && (base->isPointer() || base->isReference() ||
+                    base->isSmartPointer())) {
+      auto next = base->getPointeeType();
+      if (!next)
+        break;
+      base = next;
+    }
+    if (base) {
+      objType = getLLVMType(base);
+    }
+  }
+
+  // Fallback for cases without ResolvedType (unlikely in modern Toka Sema)
+  if (!objType) {
+    if (auto *ptrTy = llvm::dyn_cast<llvm::PointerType>(objAddr->getType())) {
+      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objAddr)) {
+        objType = alloca->getAllocatedType();
+      } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objAddr)) {
+        objType = gep->getResultElementType();
+      } else if (auto *load = llvm::dyn_cast<llvm::LoadInst>(objAddr)) {
+        objType = load->getType();
+      }
+    }
+  }
+
+  // Final fallback: Contextual Symbol Table (for 'self', globals, etc)
+  if (!objType || !objType->isStructTy()) {
+    if (auto *ve = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
+      std::string baseName = ve->Name;
+      while (!baseName.empty() &&
+             (baseName[0] == '*' || baseName[0] == '&' || baseName[0] == '#'))
+        baseName = baseName.substr(1);
+      if (m_Symbols.count(baseName)) {
+        objType = m_Symbols[baseName].soulType;
       }
     }
   }
@@ -391,17 +415,18 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   if (!st)
     return nullptr;
 
-  // Try to find index in st if still -1
-  if (idx == -1) {
-    std::string stName = m_TypeToName[st];
-    if (stName.empty()) {
-      for (const auto &pair : m_StructTypes) {
-        if (pair.second == st) {
-          stName = pair.first;
-          break;
-        }
+  std::string stName = m_TypeToName[st];
+  if (stName.empty()) {
+    for (const auto &pair : m_StructTypes) {
+      if (pair.second == st) {
+        stName = pair.first;
+        break;
       }
     }
+  }
+
+  // Try to find index in st if still -1
+  if (idx == -1) {
     if (!stName.empty()) {
       auto &fields = m_StructFieldNames[stName];
       for (int i = 0; i < (int)fields.size(); ++i) {
@@ -440,16 +465,6 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   // Resolve Metadata
   std::string memberTypeName = "";
   llvm::Type *irTy = st->getElementType(idx); // Base type from struct def
-
-  std::string stName = m_TypeToName[st];
-  if (stName.empty()) { // Reverse lookup fallback
-    for (const auto &pair : m_StructTypes) {
-      if (pair.second == st) {
-        stName = pair.first;
-        break;
-      }
-    }
-  }
   if (!stName.empty() && m_Shapes.count(stName)) {
     const ShapeDecl *sh = m_Shapes[stName];
     // Need correct index relative to Shape Members (usually matches)

@@ -54,6 +54,23 @@ std::unique_ptr<MatchArm::Pattern> Parser::parsePattern() {
     Token nameTok = advance();
     std::string name = nameTok.Text;
 
+    if (match(TokenType::Less) || match(TokenType::GenericLT)) {
+      name += "<";
+      // Manually parse type args simple way or use parseTypeString?
+      // parseTypeString consumes identifiers.
+      // Let's loop.
+      while (true) {
+        name += parseTypeString();
+        if (match(TokenType::Comma)) {
+          name += ",";
+        } else {
+          break;
+        }
+      }
+      consume(TokenType::Greater, "Expected '>'");
+      name += ">";
+    }
+
     // Handle Path::Variant
     if (check(TokenType::Colon) && checkAt(1, TokenType::Colon)) {
       consume(TokenType::Colon, "");
@@ -128,25 +145,37 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
       std::string typeName = "";
       int depth = 0;
       while (true) {
+        Token t = peek();
         if (depth == 0) {
+          bool shouldBreak = false;
+
+          if (check(TokenType::Greater) && depth == 0)
+            shouldBreak = true;
+          if (check(TokenType::Less) && depth == 0)
+            shouldBreak = true;
+
           if (check(TokenType::Comma) || check(TokenType::RParen) ||
               check(TokenType::RBrace) || isEndOfStatement() ||
+              check(TokenType::Equal) || check(TokenType::DoubleEqual) ||
+              check(TokenType::Neq) || check(TokenType::KwIs) ||
+              check(TokenType::LBrace) || check(TokenType::EndOfFile) ||
               check(TokenType::Plus) || check(TokenType::Minus) ||
-              // check(TokenType::Star) || // Don't break on * for types
-              check(TokenType::Slash) || check(TokenType::Equal) ||
-              check(TokenType::DoubleEqual) || check(TokenType::Neq) ||
-              check(TokenType::Less) || check(TokenType::Greater) ||
-              check(TokenType::KwIs) || check(TokenType::And) ||
-              check(TokenType::Or) || check(TokenType::LBrace) ||
-              check(TokenType::EndOfFile)) {
-            break;
+              check(TokenType::Slash) || check(TokenType::And) ||
+              check(TokenType::Or)) {
+            shouldBreak = true;
           }
+
+          if (shouldBreak)
+            break;
         }
-        Token t = advance();
+
+        t = advance();
         typeName += t.Text;
-        if (t.Kind == TokenType::LBracket || t.Kind == TokenType::LParen)
+        if (t.Kind == TokenType::LBracket || t.Kind == TokenType::LParen ||
+            t.Kind == TokenType::GenericLT)
           depth++;
-        else if (t.Kind == TokenType::RBracket || t.Kind == TokenType::RParen)
+        else if (t.Kind == TokenType::RBracket || t.Kind == TokenType::RParen ||
+                 t.Kind == TokenType::Greater)
           depth--;
       }
       Token tok = previous();
@@ -154,7 +183,7 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
       node->setLocation(tok, m_CurrentFile);
       lhs = std::move(node);
       continue;
-    }
+    } // Closes if (check(KwAs))
 
     int prec = getPrecedence(peek().Kind);
     if (prec < minPrec)
