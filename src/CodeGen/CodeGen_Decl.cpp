@@ -552,8 +552,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   }
 
   // Ensure m_ValueElementTypes is set early
-  // m_ValueElementTypes[varName] = elemTy; // LEGACY REMOVED
-  // m_ValueTypeNames[varName] = var->TypeName; // LEGACY REMOVED
 
   // The Form (Identity) is always what resolveType returns for the full name
   if (!type) { // Only try to resolve if type hasn't been determined yet
@@ -581,7 +579,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   // to the ELEMENT type (e.g. i32), not the ARRAY type ([N]i32).
   if (decayArrayType) {
     elemTy = decayArrayType->getArrayElementType();
-    // m_ValueElementTypes[varName] = elemTy; // LEGACY REMOVED
   }
 
   // CRITICAL: For Shared variables, ALWAYS use the handle struct { ptr, ptr
@@ -734,12 +731,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   m_Symbols[varName] = sym;
 
   m_NamedValues[varName] = alloca;
-  // m_ValueTypes[varName] = type; // LEGACY REMOVED
-  // LEGACY MAPS REMOVED
-  // m_ValueIsUnique[varName] = var->IsUnique;
-  // m_ValueIsShared[varName] = var->IsShared;
-  // m_ValueIsReference[varName] = var->IsReference;
-  // m_ValueIsMutable[varName] = var->IsValueMutable;
 
   // [Fix] Shared Pointer Init RC Logic
   // Distinguish Copy (LValue) vs Transfer (RValue)
@@ -831,7 +822,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   if (initVal) {
     m_Builder.CreateStore(initVal, alloca);
   }
-  llvm::errs() << "DEBUG: PostStore Var=" << varName << "\n";
 
   // Automatic Drop Registration
   if (!m_ScopeStack.empty()) {
@@ -881,12 +871,6 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       }
     }
 
-    llvm::errs() << "DEBUG: PrePushCheck Var=" << varName
-                 << " IsRef=" << var->IsReference
-                 << " HasPtr=" << var->HasPointer
-                 << " IsUnique=" << var->IsUnique
-                 << " IsShared=" << var->IsShared << "\n";
-
     // [Fix] Scope Registration Logic
     // We must register ALL variables (including references and raw pointers) so
     // they can be looked up for Identity Rebinds.
@@ -915,17 +899,11 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       m_Symbols[varName].hasDrop = hasDrop;
       m_Symbols[varName].dropFunc = dropFunc;
     }
-    // Debug Lookup
-    // llvm::errs() << "DEBUG: genFreeStmt lookup varName='" << varName
-    //              << "' count=" << m_ValueTypeNames.count(varName) << " val='"
-    //              << m_ValueTypeNames[varName] << "'\n";
+
   } else {
-    llvm::errs() << "DEBUG: ScopeStack Empty! Var=" << varName << "\n";
+
+    return nullptr;
   }
-  // Debug
-  // llvm::errs() << "DEBUG: genVariableDecl varName=" << varName
-  //              << " TypeName=" << m_ValueTypeNames[varName] << "\n";
-  llvm::errs() << "DEBUG: EndVarDecl Var=" << varName << "\n";
   return nullptr;
 }
 
@@ -957,13 +935,10 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     m_Builder.CreateStore(val, alloca);
 
     m_NamedValues[vName] = alloca;
-    // m_ValueTypes[vName] = ty; // LEGACY REMOVED
-    // m_ValueElementTypes[vName] = ty; // fallback for basic types // LEGACY
-    // REMOVED LEGACY MAPS REMOVED m_ValueIsMutable[vName] = v.IsMutable;
-    // m_ValueIsNullable[vName] = v.IsNullable;
 
     // [Fix] Register Type Name for Lookup (Auto Deduction)
-    // We attempt to extract the user-written type from AST (AllocExpr/NewExpr).
+    // We attempt to extract the user-written type from AST
+    // (AllocExpr/NewExpr).
     std::string deducedType = "";
     Expr *rawInit = dest->Init.get();
 
@@ -980,9 +955,6 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
 
     // Strip decorators if present
     deducedType = Type::stripMorphology(deducedType);
-
-    llvm::errs() << "DEBUG: genDestructuringDecl vName=" << vName
-                 << " deducedType='" << deducedType << "'\n";
 
     TokaSymbol sym;
     sym.allocaPtr = alloca;
@@ -1058,7 +1030,6 @@ void CodeGen::genGlobal(const Stmt *stmt) {
     }
 
     m_NamedValues[var->Name] = globalVar;
-    // m_ValueTypes[var->Name] = type; // LEGACY REMOVED
 
     TokaSymbol sym;
     sym.allocaPtr = globalVar;
@@ -1853,8 +1824,8 @@ llvm::Type *CodeGen::getLLVMType(std::shared_ptr<Type> type) {
     return resolveType(shapeType->Name, false);
   }
 
-  // Fallback to string based resolution if we have an Unresolved type wrapping
-  // a string
+  // Fallback to string based resolution if we have an Unresolved type
+  // wrapping a string
   if (type->typeKind == Type::Unresolved) {
     auto unresolved = std::static_pointer_cast<UnresolvedType>(type);
     return resolveType(unresolved->Name, false);
@@ -1880,8 +1851,9 @@ void CodeGen::fillSymbolMetadata(TokaSymbol &sym, std::shared_ptr<Type> typeObj,
   std::shared_ptr<Type> current = typeObj;
 
   // Unseal wrappers to find "Soul"
-  // We loop to peel of layers if needed, or just switch on the top layer logic.
-  // But TokaSymbol logic expects 'soulType' to be the underlying data type.
+  // We loop to peel of layers if needed, or just switch on the top layer
+  // logic. But TokaSymbol logic expects 'soulType' to be the underlying data
+  // type.
 
   // Handle Reference
   if (typeObj->isReference()) {
@@ -1937,9 +1909,10 @@ void CodeGen::fillSymbolMetadata(TokaSymbol &sym, std::shared_ptr<Type> typeObj,
 
   // Rebindable? usually strict to the variable decl itself, not the type
   // always, but we can check if the top level pointer was rebindable if we
-  // stored it in Type? Currently Type has IsWritable. IsRebindable is typically
-  // a property of the binding, not the type (like `mut` binding in Rust). So
-  // we'll leave sym.isRebindable to be set by the caller (Declaration).
+  // stored it in Type? Currently Type has IsWritable. IsRebindable is
+  // typically a property of the binding, not the type (like `mut` binding in
+  // Rust). So we'll leave sym.isRebindable to be set by the caller
+  // (Declaration).
 
   // Drop logic placeholder (caller should refine if needed)
   sym.hasDrop = false;
