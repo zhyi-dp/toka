@@ -196,7 +196,8 @@ std::unique_ptr<Module> Parser::parseModule() {
       module->Impls.push_back(parseImpl());
     } else if (check(TokenType::KwTrait)) {
       module->Traits.push_back(parseTrait(isPub));
-    } else if (check(TokenType::KwShape) || check(TokenType::KwPacked)) {
+    } else if (check(TokenType::KwShape) || check(TokenType::KwPacked) ||
+               check(TokenType::KwUnion)) {
       module->Shapes.push_back(parseShape(isPub));
     } else if (check(TokenType::Identifier) && checkAt(1, TokenType::Equal)) {
       // Legacy or alternate struct init?

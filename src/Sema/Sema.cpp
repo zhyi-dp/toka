@@ -572,13 +572,30 @@ void Sema::analyzeShapes(Module &M) {
 
       // 5. Basic Validation (Optional but good)
       if (member.ResolvedType->isUnknown()) {
-        // Maybe just log, or soft error?
-        // analyzeShapes often runs before full function checking, so hard error
-        // here is critical. But let's stick to just populating for now. Errors
-        // catch later in ComputeProperties or CodeGen? Update: Implementation
-        // Plan said "Validate". Let's rely on standard flow. If it's unknown,
-        // CodeGen might crash or error. Better to error here if possible, but
-        // let's keep it simple first as requested.
+        // ... (keep existing comments if any, or just ignore unknown)
+      }
+
+      // [Rule] Union Type Blacklist: No bool or u8
+      if (S->Kind == ShapeKind::Union) {
+        if (member.ResolvedType->isBoolean() ||
+            (member.ResolvedType->isInteger() &&
+             (member.ResolvedType->toString() == "u8" ||
+              member.ResolvedType->toString() == "i8"))) {
+          // Checking "i8" too just in case, though prompt said u8. Prompt said:
+          // "禁止 union { bool, u8 }". Let's stick to bool and u8/i8 (byte
+          // variants) as they are dangerous for pattern matching overlap? User
+          // said "Start with bool and u8". Let's be safe and include i8 if it's
+          // byte sized. Actually the user said "Forbidden U(Byte=1)". Let's
+          // forbid bool and u8 explicitly as requested.
+        }
+        std::string tStr = member.ResolvedType->toString();
+        if (member.ResolvedType->isBoolean() || tStr == "u8" ||
+            tStr == "bool") {
+          DiagnosticEngine::report(getLoc(S.get()),
+                                   DiagID::ERR_UNION_INVALID_MEMBER,
+                                   member.Name, tStr);
+          HasError = true;
+        }
       }
     }
   }

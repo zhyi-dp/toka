@@ -21,9 +21,15 @@
 namespace toka {
 
 std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
-  match(TokenType::KwShape); // Optional
-  match(TokenType::KwPacked);
-  bool packed = previous().Kind == TokenType::KwPacked;
+  bool isUnion = false;
+  if (match(TokenType::KwUnion)) {
+    isUnion = true;
+  } else {
+    match(TokenType::KwShape); // Optional if packed
+    match(TokenType::KwPacked);
+  }
+
+  bool packed = !isUnion && previous().Kind == TokenType::KwPacked;
   if (packed)
     consume(TokenType::KwShape, "Expected 'shape' after 'packed'");
 
@@ -46,7 +52,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
     consume(TokenType::Greater, "Expected '>' to close generic parameters");
   }
 
-  ShapeKind kind = ShapeKind::Struct;
+  ShapeKind kind = isUnion ? ShapeKind::Union : ShapeKind::Struct;
   std::vector<ShapeMember> members;
   int64_t arraySize = 0;
 

@@ -1,0 +1,11 @@
+union BadBool {
+    b: bool,
+    val: u64
+}
+
+union BadU8 {
+    b: u8,
+    val: u64
+}
+
+fn main() {}

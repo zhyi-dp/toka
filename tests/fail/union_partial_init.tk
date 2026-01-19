@@ -1,0 +1,8 @@
+union U {
+    full: u64,
+    part: u32
+}
+
+fn main() {
+    auto u = U(part = 100);
+}

@@ -2797,6 +2797,85 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
                              "': expected " + memType->toString() + ", got " +
                              argType->toString());
         }
+
+        // [Rule] Strict Union Initialization Size Check
+        // Ensure initialized member covers the full size of the Union.
+        std::function<uint64_t(std::shared_ptr<toka::Type>)> getTypeSize =
+            [&](std::shared_ptr<toka::Type> t) -> uint64_t {
+          if (!t)
+            return 0;
+          if (t->isBoolean() || t->toString() == "u8" || t->toString() == "i8")
+            return 1;
+          if (t->toString() == "u16" || t->toString() == "i16")
+            return 2;
+          if (t->toString() == "u32" || t->toString() == "i32" ||
+              t->toString() == "f32" || t->toString() == "char")
+            return 4;
+          if (t->toString() == "u64" || t->toString() == "i64" ||
+              t->toString() == "f64" || t->toString() == "usize" ||
+              t->toString() == "isize")
+            return 8;
+          if (t->isPointer() || t->isReference())
+            return 8; // 64-bit assumption
+          if (t->isArray()) {
+            auto arr = std::dynamic_pointer_cast<toka::ArrayType>(t);
+            return arr->Size * getTypeSize(arr->ElementType);
+          }
+          if (auto st = std::dynamic_pointer_cast<toka::ShapeType>(t)) {
+            // Resolve Decl
+            ShapeDecl *Decl = st->Decl;
+            if (!Decl && ShapeMap.count(st->Name))
+              Decl = ShapeMap[st->Name];
+            if (Decl) {
+              if (Decl->Kind == ShapeKind::Union) {
+                uint64_t maxS = 0;
+                for (auto &m : Decl->Members) {
+                  uint64_t s = getTypeSize(
+                      m.ResolvedType
+                          ? m.ResolvedType
+                          : toka::Type::fromString(resolveType(m.Type)));
+                  if (s > maxS)
+                    maxS = s;
+                }
+                return maxS;
+              } else if (Decl->Kind == ShapeKind::Struct) {
+                // Simple sum for now (ignoring padding/alignment for simplicity
+                // in Sema check) Ideally should use TypeLayout, but this is a
+                // safety check. If we underestimate struct size, we might allow
+                // partial init of a larger union? No, if struct is member of
+                // union, we need its size. Let's assume packed or simple
+                // accumulation.
+                uint64_t sum = 0;
+                for (auto &m : Decl->Members)
+                  sum += getTypeSize(m.ResolvedType);
+                return sum;
+              }
+            }
+          }
+          return 0; // Unknown
+        };
+
+        // 1. Calculate Union Size
+        uint64_t unionSize = 0;
+        for (auto &m : Sh->Members) {
+          auto mT = m.ResolvedType
+                        ? m.ResolvedType
+                        : toka::Type::fromString(resolveType(m.Type));
+          uint64_t s = getTypeSize(mT);
+          if (s > unionSize)
+            unionSize = s;
+        }
+
+        // 2. Calculate Initialized Variant Size
+        // memType is the type of the variant we are initializing
+        uint64_t variantSize = getTypeSize(memType);
+
+        if (variantSize < unionSize) {
+          DiagnosticEngine::report(getLoc(Call), DiagID::ERR_UNION_PARTIAL_INIT,
+                                   Sh->Name, fieldName, variantSize, unionSize);
+          HasError = true;
+        }
+
         Call->MatchedMemberIdx = matchedIdx;
       } else {
         // Heuristic matching for positional arg

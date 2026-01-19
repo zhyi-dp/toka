@@ -40,6 +40,8 @@ DIAG(ERR_NO_SUCH_MEMBER,     Error, "Shape '{}' has no member named '{}'")
 DIAG(ERR_MEMBER_TYPE_MISMATCH, Error, "Type mismatch for member '{}': expected '{}', but got '{}'")
 DIAG(ERR_MISSING_MEMBER,     Error, "Missing initialization for member '{}' of shape '{}'")
 DIAG(ERR_DUPLICATE_FIELD,    Error, "Duplicate field '{}' in shape initialization")
+DIAG(ERR_UNION_PARTIAL_INIT, Error, "Partial initialization of Union '{}': variant '{}' size {} is smaller than Union size {}")
+DIAG(ERR_UNION_INVALID_MEMBER, Error, "Union member '{}' cannot be type '{}'; bool and u8 are too small for safe union storage")
 
 // --- Sema: Traits & Interfaces ---
 DIAG(ERR_SIGNATURE_MISMATCH, Error, "Method signature mismatch: trait defines '{}' as {}, but implementation is {}")

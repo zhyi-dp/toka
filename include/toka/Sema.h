@@ -245,6 +245,7 @@ private:
   // Helpers
   std::string resolveType(const std::string &Type);
   std::shared_ptr<toka::Type> resolveType(std::shared_ptr<toka::Type> Type);
+  uint64_t getTypeSize(std::shared_ptr<toka::Type> Type);
   bool isTypeCompatible(const std::string &Target, const std::string &Source);
   bool isTypeCompatible(std::shared_ptr<toka::Type> Target,
                         std::shared_ptr<toka::Type> Source);
