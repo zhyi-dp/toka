@@ -452,8 +452,28 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   if (idx == -1)
     return nullptr;
 
-  llvm::Value *fieldAddr =
-      m_Builder.CreateStructGEP(st, objAddr, idx, memberName);
+  llvm::Value *fieldAddr = nullptr;
+  if (stName.empty() || !m_Shapes.count(stName) ||
+      m_Shapes[stName]->Kind != ShapeKind::Union) {
+    fieldAddr = m_Builder.CreateStructGEP(st, objAddr, idx, memberName);
+  } else {
+    // Union: bitcast base address to the desired member's type.
+    // The physical struct 'st' has only one element: [maxSize x i8].
+    llvm::Type *destTy = nullptr;
+    const ShapeDecl *sh = m_Shapes[stName];
+    if (idx >= 0 && idx < (int)sh->Members.size()) {
+      if (sh->Members[idx].ResolvedType) {
+        destTy = getLLVMType(sh->Members[idx].ResolvedType);
+      } else {
+        destTy = resolveType(sh->Members[idx].Type, false);
+      }
+    }
+    if (!destTy)
+      destTy = llvm::Type::getInt8Ty(m_Context);
+
+    fieldAddr =
+        m_Builder.CreateBitCast(objAddr, llvm::PointerType::getUnqual(destTy));
+  }
 
   llvm::Value *finalAddr = fieldAddr;
   bool isPointerField = st->getElementType(idx)->isPointerTy();

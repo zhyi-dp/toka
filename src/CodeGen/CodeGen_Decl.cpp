@@ -198,6 +198,22 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     } else {
       llvm::AllocaInst *alloca =
           m_Builder.CreateAlloca(allocaType, nullptr, argName + ".addr");
+
+      // [Fix] Union Alignment
+      if (argDecl.ResolvedType) {
+        auto soul = argDecl.ResolvedType;
+        while (soul && (soul->isPointer() || soul->isReference() ||
+                        soul->isSmartPointer())) {
+          soul = soul->getPointeeType();
+        }
+        if (soul && soul->isShape()) {
+          auto st = std::dynamic_pointer_cast<ShapeType>(soul);
+          if (st->Decl && st->Decl->Kind == ShapeKind::Union) {
+            alloca->setAlignment(llvm::Align(st->Decl->MaxAlign));
+          }
+        }
+      }
+
       m_Builder.CreateStore(&arg, alloca);
       finalStorage = alloca;
     }
@@ -716,6 +732,21 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
 
   llvm::AllocaInst *alloca = m_Builder.CreateAlloca(type, nullptr, varName);
 
+  // [Fix] Union Alignment
+  if (var->ResolvedType) {
+    auto soul = var->ResolvedType;
+    while (soul && (soul->isPointer() || soul->isReference() ||
+                    soul->isSmartPointer())) {
+      soul = soul->getPointeeType();
+    }
+    if (soul && soul->isShape()) {
+      auto st = std::dynamic_pointer_cast<ShapeType>(soul);
+      if (st->Decl && st->Decl->Kind == ShapeKind::Union) {
+        alloca->setAlignment(llvm::Align(st->Decl->MaxAlign));
+      }
+    }
+  }
+
   TokaSymbol sym;
   sym.allocaPtr = alloca;
   fillSymbolMetadata(sym, var->TypeName, var->HasPointer, var->IsUnique,
@@ -1127,6 +1158,11 @@ void CodeGen::genShape(const ShapeDecl *sh) {
       maxAlign = std::max(maxAlign, (uint64_t)DL.getABITypeAlign(t).value());
     }
     // Model as [maxSize x i8]
+    if (maxSize % maxAlign != 0) {
+      maxSize = ((maxSize / maxAlign) + 1) * maxAlign;
+    }
+    const_cast<ShapeDecl *>(sh)->MaxAlign = maxAlign;
+
     body.push_back(
         llvm::ArrayType::get(llvm::Type::getInt8Ty(m_Context), maxSize));
     st->setBody(body, sh->IsPacked);

@@ -967,6 +967,7 @@ public:
   ShapeKind Kind;
   std::vector<ShapeMember> Members;
   int64_t ArraySize = 0; // For Array kind
+  uint64_t MaxAlign = 1; // For Union/Enum alignment persistence
 
   ShapeDecl(bool isPub, const std::string &name,
             std::vector<GenericParam> generics, ShapeKind kind,

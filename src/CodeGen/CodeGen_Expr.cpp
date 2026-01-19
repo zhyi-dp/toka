@@ -1864,10 +1864,15 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
   }
 
   if (sh) {
-    if (sh->Kind == ShapeKind::Struct || sh->Kind == ShapeKind::Tuple) {
+    if (sh->Kind == ShapeKind::Struct || sh->Kind == ShapeKind::Tuple ||
+        sh->Kind == ShapeKind::Union) {
       llvm::StructType *st = m_StructTypes[sh->Name];
-      llvm::Value *alloca =
-          m_Builder.CreateAlloca(st, nullptr, sh->Name + "_ctor");
+      auto *alloca = m_Builder.CreateAlloca(st, nullptr, sh->Name + "_ctor");
+
+      // [Fix] Union Alignment
+      if (sh->Kind == ShapeKind::Union) {
+        alloca->setAlignment(llvm::Align(sh->MaxAlign));
+      }
 
       size_t argIdx = 0;
       for (const auto &arg : call->Args) {
@@ -1923,7 +1928,16 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
             }
           }
 
-          llvm::Value *ptr = m_Builder.CreateStructGEP(st, alloca, memberIdx);
+          llvm::Value *ptr = nullptr;
+          if (sh->Kind == ShapeKind::Union) {
+            // [CRITICAL] Union physically has only one element: the storage
+            // array. We bitcast the base address to the actual member type we
+            // matched.
+            ptr = m_Builder.CreateBitCast(alloca,
+                                          llvm::PointerType::getUnqual(destTy));
+          } else {
+            ptr = m_Builder.CreateStructGEP(st, alloca, memberIdx);
+          }
           m_Builder.CreateStore(val, ptr);
         }
         argIdx++;
