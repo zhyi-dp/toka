@@ -141,7 +141,8 @@ std::string Parser::parseTypeString() {
 
     if (balance == 0 && (check(TokenType::Comma) || check(TokenType::RParen) ||
                          check(TokenType::Equal) || isEndOfStatement() ||
-                         check(TokenType::LBrace) || check(TokenType::Greater)))
+                         check(TokenType::LBrace) ||
+                         check(TokenType::Greater) || check(TokenType::Pipe)))
       break;
 
     if (t == TokenType::RBracket || t == TokenType::RParen ||

@@ -1,0 +1,12 @@
+import std/io::println
+
+shape Bytes4(
+    as u32 |
+    as (u8, u8, u8, u8) |
+    as (head: u16, mid: u8, tail: u8)
+)
+
+fn main() -> i32 {
+    println("Testing Union...")
+    return 0
+}

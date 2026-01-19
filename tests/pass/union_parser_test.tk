@@ -1,0 +1,22 @@
+import std/io::println
+
+// Syntax 1: Parentheses with 'as'
+shape Union1(
+    as u32 |
+    as (u8, u8, u8, u8)
+)
+
+// Syntax 2: 'as variant' outside parentheses
+shape Union2 as variant
+    | as u32
+    | as (u8, u8, u8, u8)
+
+// Syntax 3: 'as variant' with member names
+shape Union3 as variant
+    | val: u32
+    | vec: (u8, u8, u8, u8)
+
+fn main() -> i32 {
+    println("Parser Test Passed")
+    return 0
+}

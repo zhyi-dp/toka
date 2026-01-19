@@ -63,16 +63,38 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
     m.Name = "0";
     m.Type = elemTy;
     members.push_back(std::move(m));
+  } else if (match(TokenType::KwAs)) {
+    consume(TokenType::KwVariant, "Expected 'variant' after 'as'");
+    kind = ShapeKind::Union;
+    while (match(TokenType::Pipe)) {
+      ShapeMember m;
+      match(TokenType::KwAs); // Optional 'as' in this syntax
+      if (check(TokenType::Identifier) && checkAt(1, TokenType::Colon)) {
+        m.Name = advance().Text;
+        consume(TokenType::Colon, "Expected ':'");
+        m.Type = parseTypeString();
+      } else {
+        m.Type = parseTypeString();
+      }
+      members.push_back(std::move(m));
+    }
   } else if (match(TokenType::LParen)) {
     bool isEnum = false;
+    bool isUnion = false;
     int depth = 0;
     for (int i = 0;; ++i) {
       TokenType t = peekAt(i).Kind;
       if (t == TokenType::EndOfFile || (t == TokenType::RParen && depth == 0))
         break;
-      if (depth == 0 && (t == TokenType::Pipe || t == TokenType::Equal)) {
-        isEnum = true;
-        break;
+      if (depth == 0) {
+        if (t == TokenType::KwAs) {
+          isUnion = true;
+          break;
+        }
+        if (t == TokenType::Pipe || t == TokenType::Equal) {
+          isEnum = true;
+          break;
+        }
       }
       if (t == TokenType::LParen)
         depth++;
@@ -80,7 +102,23 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
         depth--;
     }
 
-    if (isEnum) {
+    if (isUnion) {
+      kind = ShapeKind::Union;
+      while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+        consume(TokenType::KwAs, "Expected 'as' for union variant");
+        ShapeMember v;
+        if (check(TokenType::Identifier) && checkAt(1, TokenType::Colon)) {
+          v.Name = advance().Text;
+          consume(TokenType::Colon, "Expected ':'");
+          v.Type = parseTypeString();
+        } else {
+          v.Type = parseTypeString();
+        }
+        members.push_back(std::move(v));
+        if (!check(TokenType::RParen))
+          match(TokenType::Pipe);
+      }
+    } else if (isEnum) {
       kind = ShapeKind::Enum;
       while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
         ShapeMember v;

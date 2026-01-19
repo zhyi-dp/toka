@@ -1,0 +1,28 @@
+import std/io::println
+
+shape U (
+    as u32 |
+    as (u8, u8, u8, u8)
+)
+
+fn main() -> i32 {
+    println("Start Union Test")
+    auto u# = U(0xAABBCCDD)
+    
+    // Test Cast
+    auto (a, b, c, d) = u as (u8, u8, u8, u8) // Implicitly destructuring the tuple view
+    if a == 0xDD { 
+        println("a OK") 
+    }
+    
+    // Test L-Value
+    auto (&r, &g#, &x, &y) = u# as (u8, u8, u8, u8)
+    g# = 0xFF
+    
+    auto (a2, b2, c2, d2) = u as (u8, u8, u8, u8)
+    if b2 == 0xFF {
+        println("Mutation OK") 
+    }
+    
+    return 0
+}
