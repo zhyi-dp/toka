@@ -15,6 +15,7 @@
 #include "toka/Sema.h"
 #include "toka/Type.h"
 #include <cctype>
+#include <iostream>
 #include <set>
 #include <string>
 
@@ -139,6 +140,7 @@ Sema::resolveType(std::shared_ptr<toka::Type> type) {
       shape->resolve(ShapeMap[shape->Name]);
     }
   }
+
   // Primitives can also be aliased potentially? Or just shapes.
   // currently Type::fromString parses unknown as ShapeType so this covers
   // aliases.

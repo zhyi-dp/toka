@@ -2575,6 +2575,23 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
     ReturnType = toka::Type::fromString(Ext->ReturnType);
     IsVariadic = Ext->IsVariadic;
   } else if (Sh) {
+    // [NEW] Instantiate Generic Shape Constructor
+    if (!Sh->GenericParams.empty() && !Call->GenericArgs.empty()) {
+      std::vector<std::shared_ptr<toka::Type>> typeArgs;
+      for (const auto &s : Call->GenericArgs) {
+        typeArgs.push_back(toka::Type::fromString(resolveType(s)));
+      }
+      auto genericShape = std::make_shared<toka::ShapeType>(Sh->Name, typeArgs);
+      auto resolved = resolveType(genericShape);
+      if (auto rs = std::dynamic_pointer_cast<toka::ShapeType>(resolved)) {
+        if (rs->Decl) {
+          Sh = rs->Decl;
+          Call->ResolvedShape = Sh;
+          Call->Callee = rs->Name; // Update for CodeGen lookup
+        }
+      }
+    }
+
     // Constructor: Params = Members, Return = ShapeName
     if (Sh->Kind == ShapeKind::Struct) {
       // Shape Constructor Logic (Named or Positional)

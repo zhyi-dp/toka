@@ -3,12 +3,12 @@ shape Buffer<T, N_: usize>(
     len: usize
 )
 
-fn process(buf: Buffer<i32, 16>) -> i32 {
-    return buf.len as i32
+fn buf_len(buf: Buffer<i32, 16>) -> usize {
+    return buf.len
 }
 
 fn main() -> i32 {
     auto b = Buffer<i32, 16>(data = [0; 16], len = 0)
-    process(b)
+    buf_len(b)
     return 0
 }

@@ -1,0 +1,20 @@
+
+import std/io::println
+
+fn check(arr: [i32; 4]) {
+    println("Array: {}, {}, {}, {}", arr[0], arr[1], arr[2], arr[3]);
+}
+
+fn main() -> i32 {
+    auto zero_arr = [0; 16];
+    println("Zero Array[0]: {}", zero_arr[0]);
+    println("Zero Array[15]: {}", zero_arr[15]);
+
+    auto x = 42;
+    auto var_arr = [x; 4];
+    check(var_arr);
+
+    auto float_arr = [1.5; 2];
+    println("Float: {}", float_arr[0]);
+    return 0
+}

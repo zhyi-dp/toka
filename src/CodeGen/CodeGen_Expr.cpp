@@ -2898,7 +2898,10 @@ PhysEntity CodeGen::genRepeatedArrayExpr(const RepeatedArrayExpr *expr) {
   llvm::Value *alloca =
       m_Builder.CreateAlloca(arrTy, nullptr, "repeated_array");
   for (uint64_t i = 0; i < count; ++i) {
-    llvm::Value *ptr = m_Builder.CreateStructGEP(arrTy, alloca, i);
+    llvm::Value *ptr = m_Builder.CreateInBoundsGEP(
+        arrTy, alloca,
+        {m_Builder.getInt32(0),
+         llvm::ConstantInt::get(m_Builder.getInt64Ty(), i)});
     m_Builder.CreateStore(val, ptr);
   }
   std::string arrayTypeName =
