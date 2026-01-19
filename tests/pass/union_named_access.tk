@@ -1,0 +1,53 @@
+import std/io::println
+
+shape U (
+    as Int: i32
+    | as Float: f32
+    | as Byte: u8
+)
+
+fn main() -> i32 {
+    println("--- Test 1: Named Constructor ---")
+    // 1. 初始化满尺寸成员 (4 bytes) -> 合法
+    auto u# = U(Int = 42) 
+    println("u.Int = {}", u.Int)
+
+    if (u.Int != 42) {
+        println("FAIL: u.Int init mismatch")
+        return 1
+    }
+
+    println("--- Test 2: Bitcast View ---")
+    // 2. 写入 Float
+    u#.Float = 3.14:f32
+    // 3.14f 的位模式是 0x4048F5C3 (1078523331)
+    
+    // 读取 Int 视图
+    auto i = u.Int
+    println("u.Int (from Float) = {}", i)
+    
+    if (i != 1078523331) {
+        println("FAIL: Float to Int bitcast error. Expected 1078523331, got {}", i)
+        return 1
+    }
+
+    println("--- Test 3: Partial Update (Surgical Strike) ---")
+    // 3. 局部更新：只改低 8 位
+    // 原始内存 (LE): C3 F5 48 40
+    // 修改后 (LE):   FF F5 48 40  <-- u.Byte = 0xFF
+    // 预期结果 (Hex): 0x4048F5FF
+    // 预期结果 (Dec): 1078523391
+    
+    u#.Byte = 255:u8
+    println("u.Byte = {}", u.Byte)
+    println("u.Int adjusted = {}", u.Int)
+
+    if (u.Int != 1078523391) {
+        println("FAIL: Partial update failed. Expected 1078523391 (0x4048F5FF), got {}", u.Int)
+        println("Hint: If result is huge, maybe Big Endian issue?")
+        return  1
+    }
+
+    println("SUCCESS")
+    return 0
+}

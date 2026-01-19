@@ -476,21 +476,43 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   }
 
   llvm::Value *finalAddr = fieldAddr;
-  bool isPointerField = st->getElementType(idx)->isPointerTy();
+
+  // Resolve Metadata & IR Type safely
+  std::string memberTypeName = "";
+  llvm::Type *irTy = nullptr;
+  bool isUnion = (!stName.empty() && m_Shapes.count(stName) &&
+                  m_Shapes[stName]->Kind == ShapeKind::Union);
+
+  if (!stName.empty() && m_Shapes.count(stName)) {
+    const ShapeDecl *sh = m_Shapes[stName];
+    if (idx >= 0 && idx < (int)sh->Members.size()) {
+      memberTypeName = sh->Members[idx].Type;
+      // For Union, explicitly get logical type
+      if (isUnion) {
+        if (sh->Members[idx].ResolvedType)
+          irTy = getLLVMType(sh->Members[idx].ResolvedType);
+        else
+          irTy = resolveType(memberTypeName, false);
+      }
+    }
+  }
+
+  // Fallback / Struct Type
+  if (!irTy) {
+    // Safe for Struct/Tuple, UNSAFE for Union with idx > 0
+    if (isUnion && idx > 0) {
+      // Should have been handled above or is invalid state (Union LLVM struct
+      // has only 1 element) Default to i8 if something failed
+      irTy = llvm::Type::getInt8Ty(m_Context);
+    } else {
+      irTy = st->getElementType(idx);
+    }
+  }
+
+  bool isPointerField = irTy->isPointerTy();
 
   if (!mem->Member.empty() && mem->Member[0] == '*') {
     finalAddr = fieldAddr;
-  }
-
-  // Resolve Metadata
-  std::string memberTypeName = "";
-  llvm::Type *irTy = st->getElementType(idx); // Base type from struct def
-  if (!stName.empty() && m_Shapes.count(stName)) {
-    const ShapeDecl *sh = m_Shapes[stName];
-    // Need correct index relative to Shape Members (usually matches)
-    if (idx < (int)sh->Members.size()) {
-      memberTypeName = sh->Members[idx].Type;
-    }
   }
 
   return PhysEntity(finalAddr, memberTypeName, irTy, true);

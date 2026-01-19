@@ -1195,6 +1195,12 @@ void CodeGen::genShape(const ShapeDecl *sh) {
     body.push_back(
         llvm::ArrayType::get(llvm::Type::getInt8Ty(m_Context), maxSize));
     st->setBody(body, sh->IsPacked);
+
+    std::vector<std::string> fieldNames;
+    for (const auto &member : sh->Members) {
+      fieldNames.push_back(member.Name);
+    }
+    m_StructFieldNames[sh->Name] = fieldNames;
   } else if (sh->Kind == ShapeKind::Enum) {
     // Tagged Union: { i8 tag, [Payload] }
     uint64_t maxPayloadSize = 0;

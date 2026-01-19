@@ -66,6 +66,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
   } else if (match(TokenType::KwAs)) {
     consume(TokenType::KwVariant, "Expected 'variant' after 'as'");
     kind = ShapeKind::Union;
+    int idx = 0;
     while (match(TokenType::Pipe)) {
       ShapeMember m;
       match(TokenType::KwAs); // Optional 'as' in this syntax
@@ -74,8 +75,10 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
         consume(TokenType::Colon, "Expected ':'");
         m.Type = parseTypeString();
       } else {
+        m.Name = std::to_string(idx);
         m.Type = parseTypeString();
       }
+      idx++;
       members.push_back(std::move(m));
     }
   } else if (match(TokenType::LParen)) {
@@ -104,6 +107,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
 
     if (isUnion) {
       kind = ShapeKind::Union;
+      int idx = 0;
       while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
         consume(TokenType::KwAs, "Expected 'as' for union variant");
         ShapeMember v;
@@ -112,8 +116,10 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           consume(TokenType::Colon, "Expected ':'");
           v.Type = parseTypeString();
         } else {
+          v.Name = std::to_string(idx);
           v.Type = parseTypeString();
         }
+        idx++;
         members.push_back(std::move(v));
         if (!check(TokenType::RParen))
           match(TokenType::Pipe);

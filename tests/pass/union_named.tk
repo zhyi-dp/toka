@@ -1,0 +1,41 @@
+import std/io::println
+
+shape Register (
+    as full: u32 |
+    as low:  u16 |
+    as bits: (u8, u8, u8, u8)
+)
+
+fn main() -> i32 {
+    println("Start Named Union Test")
+    
+    // 1. Initializer with Named Argument
+    auto r# = Register(full = 0xAABBCCDD)
+    
+    // 2. Load via dot-access
+    println("full: {}", r.full)
+    println("low: {}", r.low)
+    
+    if r.full == 0xAABBCCDD {
+        println("full OK")
+    }
+    
+    // 3. Store via dot-access (L-Value)
+    r.low = 0xFFFF
+    println("after modifying low, full: {}", r.full)
+    
+    if r.full == 0xAABBFFFF {
+        println("mutation OK")
+    }
+    
+    // 4. Anonymous/Positional Access (if unnamed variants were used, but here they are named)
+    // We can also test the tuple view
+    println("bits.0: {}", r.bits.0)
+    
+    r.bits.0 = 0xAA
+    if r.bits.0 == 0xAA {
+        println("bits OK")
+    }
+
+    return 0
+}

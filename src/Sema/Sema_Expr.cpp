@@ -1466,7 +1466,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           return toka::Type::fromString(fullType);
         }
       }
-      error(Memb, "struct '" + ObjType + "' has no member named '" +
+      error(Memb, "struct/union '" + ObjType + "' has no member named '" +
                       Memb->Member + "'");
     } else if (ObjType == "tuple" || ObjType.find("(") == 0) {
       // Tuple access: .0, .1
@@ -2357,7 +2357,6 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       }
     }
   }
-
   // 4. Regular Function Lookup
   FunctionDecl *Fn = nullptr;
   ExternDecl *Ext = nullptr;
@@ -2377,6 +2376,21 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
               shapeT->Name; // Update Call Name to Mangled Name for CodeGen!
           CallName =
               shapeT->Name; // Update local var for verification logic below
+
+          // [NEW] Union Constructor: Check member name if provided
+          if (Sh->Kind == ShapeKind::Union) {
+            if (Call->Args.size() == 1) {
+              // Check if the argument is a named argument
+              // Actually the Parser produces named args as BinaryExpr with "="?
+              // Wait, Toka syntax for named args is `Func(name = val)`.
+              // In CallExpr::Args, this is parsed as BinaryExpr("=", Var(name),
+              // Val). But checkCallExpr usually iterates args and checks them.
+              // We need to peek at the arg structure.
+
+              // Moved logic to "4. Regular Function Lookup" section below
+              // because Sh might be found there too.
+            }
+          }
         }
       }
     }
@@ -2616,6 +2630,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
     ReturnType = toka::Type::fromString(Ext->ReturnType);
     IsVariadic = Ext->IsVariadic;
   } else if (Sh) {
+
     // [NEW] Instantiate Generic Shape Constructor
     if (!Sh->GenericParams.empty() && !Call->GenericArgs.empty()) {
       std::vector<std::shared_ptr<toka::Type>> typeArgs;
@@ -2735,76 +2750,115 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         argIdx++;
       }
       return toka::Type::fromString(Sh->Name);
-
     } else if (Sh->Kind == ShapeKind::Union) {
-      // Union Constructor Matching (Literal Safe Fit)
-      Call->ResolvedShape = Sh;
+
       if (Call->Args.size() != 1) {
-        DiagnosticEngine::report(
-            getLoc(Call), DiagID::ERR_GENERIC_PARSE,
-            "Union constructor expects exactly 1 argument (positional)");
-        HasError = true;
-        return toka::Type::fromString("unknown");
+        error(Call, "Union '" + CallName + "' requires exactly one argument");
+        return toka::Type::fromString("void");
       }
+      Expr *argExpr = Call->Args[0].get();
+      Expr *valExpr = argExpr;
+      std::string fieldName = "";
+      bool isNamed = false;
 
-      auto argType = checkExpr(Call->Args[0].get());
-      int exactMatchIdx = -1;
-      int exactMatchCount = 0;
-      int fitMatchIdx = -1;
-      int fitMatchCount = 0;
-
-      for (int i = 0; i < (int)Sh->Members.size(); ++i) {
-        auto memType =
-            Sh->Members[i].ResolvedType
-                ? Sh->Members[i].ResolvedType
-                : toka::Type::fromString(resolveType(Sh->Members[i].Type));
-        if (!memType)
-          continue;
-
-        if (argType->equals(*memType)) {
-          exactMatchCount++;
-          if (exactMatchIdx == -1)
-            exactMatchIdx = i;
-        } else if (isTypeCompatible(memType, argType)) {
-          fitMatchCount++;
-          if (fitMatchIdx == -1)
-            fitMatchIdx = i;
+      // Detect Named Arg: variant = value
+      if (auto *bin = dynamic_cast<BinaryExpr *>(argExpr)) {
+        if (bin->Op == "=") {
+          if (auto *var = dynamic_cast<VariableExpr *>(bin->LHS.get())) {
+            fieldName = var->Name;
+            valExpr = bin->RHS.get();
+            isNamed = true;
+          }
         }
       }
 
-      if (exactMatchCount == 1) {
-        Call->MatchedMemberIdx = exactMatchIdx;
-      } else if (exactMatchCount > 1) {
-        DiagnosticEngine::report(
-            getLoc(Call), DiagID::ERR_GENERIC_PARSE,
-            "Ambiguous Union constructor: multiple exact matches found for "
-            "type " +
-                argType->toString());
-        HasError = true;
-        return toka::Type::fromString("unknown");
-      } else if (fitMatchCount == 1) {
-        Call->MatchedMemberIdx = fitMatchIdx;
-      } else if (fitMatchCount > 1) {
-        DiagnosticEngine::report(
-            getLoc(Call), DiagID::ERR_GENERIC_PARSE,
-            "Ambiguous Union constructor: multiple safe-fit matches found for "
-            "type " +
-                argType->toString() + ". Use explicit cast.");
-        HasError = true;
-        return toka::Type::fromString("unknown");
+      int matchedIdx = -1;
+      std::shared_ptr<toka::Type> argType = checkExpr(valExpr);
+
+      if (isNamed) {
+        for (int i = 0; i < (int)Sh->Members.size(); ++i) {
+          if (Sh->Members[i].Name == fieldName) {
+            matchedIdx = i;
+            break;
+          }
+        }
+        if (matchedIdx == -1) {
+          error(argExpr, "Union '" + Sh->Name + "' has no variant named '" +
+                             fieldName + "'");
+          return toka::Type::fromString("unknown");
+        }
+
+        auto memType = Sh->Members[matchedIdx].ResolvedType
+                           ? Sh->Members[matchedIdx].ResolvedType
+                           : toka::Type::fromString(
+                                 resolveType(Sh->Members[matchedIdx].Type));
+        if (!isTypeCompatible(memType, argType)) {
+          error(valExpr, "Type mismatch for Union variant '" + fieldName +
+                             "': expected " + memType->toString() + ", got " +
+                             argType->toString());
+        }
+        Call->MatchedMemberIdx = matchedIdx;
       } else {
-        DiagnosticEngine::report(getLoc(Call), DiagID::ERR_GENERIC_PARSE,
-                                 "No matching member found in Union '" +
-                                     Sh->Name + "' for type " +
-                                     argType->toString());
-        HasError = true;
-        return toka::Type::fromString("unknown");
+        // Heuristic matching for positional arg
+        int exactMatchIdx = -1;
+        int exactMatchCount = 0;
+        int fitMatchIdx = -1;
+        int fitMatchCount = 0;
+
+        for (int i = 0; i < (int)Sh->Members.size(); ++i) {
+          auto memType =
+              Sh->Members[i].ResolvedType
+                  ? Sh->Members[i].ResolvedType
+                  : toka::Type::fromString(resolveType(Sh->Members[i].Type));
+          if (!memType)
+            continue;
+
+          if (argType->equals(*memType)) {
+            exactMatchCount++;
+            if (exactMatchIdx == -1)
+              exactMatchIdx = i;
+          } else if (isTypeCompatible(memType, argType)) {
+            fitMatchCount++;
+            if (fitMatchIdx == -1)
+              fitMatchIdx = i;
+          }
+        }
+
+        if (exactMatchCount == 1) {
+          Call->MatchedMemberIdx = exactMatchIdx;
+        } else if (exactMatchCount > 1) {
+          DiagnosticEngine::report(
+              getLoc(Call), DiagID::ERR_GENERIC_PARSE,
+              "Ambiguous Union constructor: multiple exact matches found for "
+              "type " +
+                  argType->toString());
+          HasError = true;
+          return toka::Type::fromString("unknown");
+        } else if (fitMatchCount == 1) {
+          Call->MatchedMemberIdx = fitMatchIdx;
+        } else if (fitMatchCount > 1) {
+          DiagnosticEngine::report(getLoc(Call), DiagID::ERR_GENERIC_PARSE,
+                                   "Ambiguous Union constructor: multiple "
+                                   "safe-fit matches found for "
+                                   "type " +
+                                       argType->toString() +
+                                       ". Use explicit cast.");
+          HasError = true;
+          return toka::Type::fromString("unknown");
+        } else {
+          DiagnosticEngine::report(getLoc(Call), DiagID::ERR_GENERIC_PARSE,
+                                   "No matching member found in Union '" +
+                                       Sh->Name + "' for type " +
+                                       argType->toString());
+          HasError = true;
+          return toka::Type::fromString("unknown");
+        }
       }
 
       return toka::Type::fromString(Sh->Name);
-
     } else {
       // Enum / Alias ?
+
       return toka::Type::fromString(Sh->Name);
     }
   }
