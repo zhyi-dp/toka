@@ -40,11 +40,17 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
   if (match(TokenType::GenericLT)) {
     do {
       GenericParam gp;
+      if (match(TokenType::KwConst)) {
+        gp.IsConst = true;
+      }
       gp.Name =
           consume(TokenType::Identifier, "Expected generic parameter name")
               .Text;
       if (match(TokenType::Colon)) {
-        gp.Type = advance().Text; // e.g. usize
+        gp.Type = parseTypeString();
+        // Implicit const if type is present? Or require const?
+        // Let's stick to "If type present -> IsConst=true" for backward compat
+        // if any, BUT if 'const' keyword was used, it's definitely const.
         gp.IsConst = true;
       }
       genericParams.push_back(gp);
@@ -256,12 +262,15 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
   if (match(TokenType::GenericLT)) {
     do {
       GenericParam gp;
+      if (match(TokenType::KwConst)) {
+        gp.IsConst = true;
+      }
       gp.Name =
           consume(TokenType::Identifier, "Expected generic parameter name")
               .Text;
       if (match(TokenType::Colon)) {
         gp.Type = parseTypeString();
-        gp.IsConst = true;
+        gp.IsConst = true; // Still imply const if type is present
       }
       genericParams.push_back(gp);
     } while (match(TokenType::Comma));

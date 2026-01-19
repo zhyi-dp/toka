@@ -1,0 +1,9 @@
+fn foo<N_: usize>() -> usize {
+    return N_;
+}
+
+fn main() -> i32 {
+    auto x = foo<10>();
+    if (x == 10) return 0;
+    return 1;
+}

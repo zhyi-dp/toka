@@ -61,6 +61,9 @@ struct SymbolInfo {
   bool IsShared() const {
     return TypeObj && TypeObj->typeKind == toka::Type::SharedPtr;
   }
+
+  bool HasConstValue = false;
+  uint64_t ConstValue = 0;
 };
 
 class Scope {

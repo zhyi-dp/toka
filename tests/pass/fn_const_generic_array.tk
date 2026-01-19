@@ -1,0 +1,36 @@
+import std/io::println
+
+// Test 1: Return generic array size
+fn make_array<N_: usize>() -> [i32; N_] {
+    auto arr = [0; N_]
+    return arr
+}
+
+// Test 2: Take generic array as argument
+fn sum_array<N_: usize>(arr: [i32; N_]) -> i32 {
+    auto sum# = 0
+    // Manual loop without iterator to ensure base functionality
+    auto i#: usize = 0
+    loop {
+        if i == N_ { break }
+        sum# = sum + arr[i]
+        i# = i + 1 as usize
+    }
+    return sum
+}
+
+fn main() -> i32 {
+    // 1. Instantiate and check size implicitly
+    auto a = make_array<5>() // [i32; 5]
+    
+    // Bounds check test (should compile and run safe)
+    if a[4] != 0 { return 1 }
+    
+    // 2. Pass to generic fn
+    auto b = [10, 20, 30] // [i32; 3]
+    auto s = sum_array<3>(b)
+    
+    if s != 60 { return 2 }
+    
+    return 0
+}

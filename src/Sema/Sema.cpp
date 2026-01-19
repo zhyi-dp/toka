@@ -17,6 +17,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cctype>
+#include <functional> // [NEW] Added for std::function
 #include <iostream>
 #include <map>
 #include <memory>
@@ -868,6 +869,10 @@ FunctionDecl *Sema::instantiateGenericFunction(
   // Instantiate
   depth++;
 
+  std::cerr << "DEBUG-INST: Instantiating " << Template->Name << " as "
+            << mangledName << " Body: " << (Template->Body ? "Yes" : "No")
+            << "\n";
+
   // 1. Clone
   auto ClonedNode = Template->clone();
   FunctionDecl *Instance = static_cast<FunctionDecl *>(ClonedNode.release());
@@ -879,10 +884,38 @@ FunctionDecl *Sema::instantiateGenericFunction(
   // 2. Scope Injection Setup
   enterScope();
   for (size_t i = 0; i < Template->GenericParams.size(); ++i) {
-    SymbolInfo aliasInfo;
-    aliasInfo.TypeObj = resolveType(Args[i]); // Resolve before binding? Yes.
-    aliasInfo.IsTypeAlias = true;
-    CurrentScope->define(Template->GenericParams[i].Name, aliasInfo);
+    const auto &GP = Template->GenericParams[i];
+    std::string SubstVal = resolveType(Args[i])->toString(); // "10" or "i32"
+
+    if (GP.IsConst) {
+      SymbolInfo constInfo;
+      // We assume it's a number (usize/integer).
+      // We register it as a variable so checkExpr(VariableExpr(N)) works.
+      constInfo.TypeObj =
+          toka::Type::fromString(GP.Type.empty() ? "usize" : GP.Type);
+
+      // [NEW] Set Const Value for Expression Evaluation
+      uint64_t val = 0;
+      try {
+        val = std::stoull(SubstVal);
+      } catch (...) {
+      }
+      constInfo.HasConstValue = true;
+      constInfo.ConstValue = val;
+
+      // NOTE: We don't set IsTypeAlias. Semantically it's a value.
+      // But we need CodeGen to see it.
+      // Strategy: Inject a synthetic variable declaration at the start of the
+      // body.
+      CurrentScope->define(GP.Name, constInfo);
+
+      // We will inject `auto N = 10;` into the body later.
+    } else {
+      SymbolInfo aliasInfo;
+      aliasInfo.TypeObj = resolveType(Args[i]);
+      aliasInfo.IsTypeAlias = true;
+      CurrentScope->define(GP.Name, aliasInfo);
+    }
   }
 
   // [NEW] 2.5 Substitute Generic Types in Signature
@@ -912,10 +945,174 @@ FunctionDecl *Sema::instantiateGenericFunction(
     }
   };
 
+  // Substitute types in signature
   for (auto &Arg : Instance->Args) {
     applySubst(Arg.Type);
+    Arg.ResolvedType = nullptr;
   }
+  std::cerr << "DEBUG-SUBST: ReturnType Before: '" << Instance->ReturnType
+            << "'\n";
   applySubst(Instance->ReturnType);
+  std::cerr << "DEBUG-SUBST: ReturnType After: '" << Instance->ReturnType
+            << "'\n";
+
+  // [NEW] Substitute types in Body (Recursive Traversal)
+  // We need to traverse Stmt and Expr to find nodes that store type strings:
+  // VariableDecl: TypeName
+  // NewExpr: Type
+  // CastExpr: TargetType
+  // AllocExpr: TypeName
+  // InitStructExpr: ShapeName (if generic)
+  // CallExpr: GenericArgs (vector<string>)
+  // MethodCallExpr: N/A (args handled by Expr)
+  // AnonymousRecordExpr: AssignedTypeName
+
+  if (Instance->Body) {
+    // Define Visitors
+    std::function<void(Expr *)> visitExpr;
+    std::function<void(Stmt *)> visitStmt;
+
+    visitExpr = [&](Expr *e) {
+      if (!e)
+        return;
+      // Clear ResolvedType on ALL expressions to force re-type-check/resolution
+      e->ResolvedType = nullptr;
+
+      if (auto *ne = dynamic_cast<NewExpr *>(e)) {
+        applySubst(ne->Type);
+        if (ne->Initializer)
+          visitExpr(ne->Initializer.get());
+      } else if (auto *ae = dynamic_cast<AllocExpr *>(e)) {
+        std::cerr << "DEBUG-VISIT: AllocExpr check subst on Type: '"
+                  << ae->TypeName << "'\n";
+        applySubst(ae->TypeName);
+        if (ae->Initializer)
+          visitExpr(ae->Initializer.get());
+        if (ae->ArraySize)
+          visitExpr(ae->ArraySize.get());
+      } else if (auto *ce = dynamic_cast<CastExpr *>(e)) {
+        applySubst(ce->TargetType);
+        if (ce->Expression)
+          visitExpr(ce->Expression.get());
+      } else if (auto *ise = dynamic_cast<InitStructExpr *>(e)) {
+        applySubst(ise->ShapeName);
+        for (auto &m : ise->Members)
+          visitExpr(m.second.get());
+      } else if (auto *call = dynamic_cast<CallExpr *>(e)) {
+        // Function Name (if it has generics embedded?) - Usually handled by
+        // Parser logic putting generics in name? If so, applySubst on Callee.
+        applySubst(call->Callee);
+        for (auto &s : call->GenericArgs)
+          applySubst(s);
+        for (auto &arg : call->Args)
+          visitExpr(arg.get());
+      } else if (auto *mc = dynamic_cast<MethodCallExpr *>(e)) {
+        // applySubst(mc->Method); // Method name usually doesn't have type
+        // unless it's generic method?
+        visitExpr(mc->Object.get());
+        for (auto &arg : mc->Args)
+          visitExpr(arg.get());
+      } else if (auto *are = dynamic_cast<AnonymousRecordExpr *>(e)) {
+        applySubst(are->AssignedTypeName);
+        for (auto &m : are->Fields)
+          if (m.second)
+            visitExpr(m.second.get());
+      } else if (auto *bin = dynamic_cast<BinaryExpr *>(e)) {
+        visitExpr(bin->LHS.get());
+        visitExpr(bin->RHS.get());
+      } else if (auto *un = dynamic_cast<UnaryExpr *>(e)) {
+        visitExpr(un->RHS.get());
+      } else if (auto *fe = dynamic_cast<MemberExpr *>(e)) {
+        visitExpr(fe->Object.get());
+      } else if (auto *idx = dynamic_cast<ArrayIndexExpr *>(e)) {
+        visitExpr(idx->Array.get());
+        for (auto &i : idx->Indices)
+          visitExpr(i.get());
+      } else if (auto *me = dynamic_cast<MatchExpr *>(e)) {
+        visitExpr(me->Target.get());
+        for (auto &arm : me->Arms) {
+          if (arm->Guard)
+            visitExpr(arm->Guard.get());
+          visitStmt(arm->Body.get());
+        }
+      } else if (auto *ifE = dynamic_cast<IfExpr *>(e)) {
+        visitExpr(ifE->Condition.get());
+        visitStmt(ifE->Then.get());
+        if (ifE->Else)
+          visitStmt(ifE->Else.get());
+      } else if (auto *le = dynamic_cast<LoopExpr *>(e)) {
+        visitStmt(le->Body.get());
+      } else if (auto *fore = dynamic_cast<ForExpr *>(e)) {
+        visitExpr(fore->Collection.get());
+        visitStmt(fore->Body.get());
+      } else if (auto *rep = dynamic_cast<RepeatedArrayExpr *>(e)) {
+        visitExpr(rep->Value.get());
+        visitExpr(rep->Count.get());
+        // [FIX] Handle N_ replacement in Count if it was invalid
+        if (auto *ve = dynamic_cast<VariableExpr *>(rep->Count.get())) {
+          std::string name = Type::stripMorphology(ve->Name);
+          if (substMap.count(name)) {
+            std::string valStr = substMap[name];
+            // Check if it's a number
+            try {
+              uint64_t val = std::stoull(valStr);
+              rep->Count = std::make_unique<NumberExpr>(val);
+              rep->Count->Loc = ve->Loc;
+            } catch (...) {
+            }
+          }
+        }
+      } else if (auto *ve = dynamic_cast<VariableExpr *>(e)) {
+        // This is tricky because we can't easily replace 'e' here as it's
+        // passed by pointer The caller usually holds 'std::unique_ptr<Expr>&'
+        // but we have 'Expr*'. However, RepeatedArrayExpr above handles its
+        // specific child case. For general cases (e.g. 'return N'), replacing
+        // VariableExpr 'N' with NumberExpr '5' is harder without access to the
+        // parent's unique_ptr. BUT: 'instantiateGenericFunction' visitor
+        // infrastructure is weak here. Fortunately, for 'return N', 'checkExpr'
+        // handles Variable lookup into Scope. The ERROR was specific to
+        // RepeatedArrayExpr which demands a Literal/Const. By fixing
+        // RepeatedArrayExpr specific logic above, we solve the array size
+        // issue. For other cases, Scope Injection (N_ = 5) should suffice.
+      }
+      // Note: VariableExpr, NumberExpr, etc don't have nested Exprs or Types to
+      // substitute
+    };
+
+    visitStmt = [&](Stmt *s) {
+      if (!s)
+        return;
+      std::cerr << "DEBUG-VISIT-STMT: " << typeid(*s).name() << "\n";
+      if (auto *bs = dynamic_cast<BlockStmt *>(s)) {
+        for (auto &sub : bs->Statements)
+          visitStmt(sub.get());
+      } else if (auto *vd = dynamic_cast<VariableDecl *>(s)) {
+        applySubst(vd->TypeName);
+        vd->ResolvedType = nullptr; // Clear cache
+        if (vd->Init)
+          visitExpr(vd->Init.get());
+      } else if (auto *rs = dynamic_cast<ReturnStmt *>(s)) {
+        if (rs->ReturnValue)
+          visitExpr(rs->ReturnValue.get());
+      } else if (auto *es = dynamic_cast<ExprStmt *>(s)) {
+        visitExpr(es->Expression.get());
+      } else if (auto *ds = dynamic_cast<DeleteStmt *>(s)) {
+        visitExpr(ds->Expression.get());
+      } else if (auto *fs = dynamic_cast<FreeStmt *>(s)) {
+        visitExpr(fs->Expression.get());
+        if (fs->Count)
+          visitExpr(fs->Count.get());
+      } else if (auto *dd = dynamic_cast<DestructuringDecl *>(s)) {
+        applySubst(dd->TypeName);
+        if (dd->Init)
+          visitExpr(dd->Init.get());
+      } else if (auto *us = dynamic_cast<UnsafeStmt *>(s)) {
+        visitStmt(us->Statement.get());
+      }
+    };
+
+    visitStmt(Instance->Body.get());
+  }
 
   // 3. Register in Module
   if (CurrentModule) {
@@ -933,6 +1130,45 @@ FunctionDecl *Sema::instantiateGenericFunction(
     // But Sema always has CurrentModule during analysis.
     // If we are called from checkCallExpr, CurrentModule is set.
     InstancePtr.release(); // Leak if no module? No, let's assume CurrentModule.
+  }
+
+  // [NEW] Inject Const Generic Variables into Body
+  if (Instance->Body) {
+    auto Block = dynamic_cast<BlockStmt *>(Instance->Body.get());
+    if (Block) {
+      // Iterate backwards so the first param ends up at the very top
+      for (int i = (int)Template->GenericParams.size() - 1; i >= 0; --i) {
+        const auto &GP = Template->GenericParams[i];
+        if (GP.IsConst) {
+          std::string ValStr = resolveType(Args[i])->toString();
+
+          // Create Init Expr
+          uint64_t val = 0;
+          try {
+            val = std::stoull(ValStr);
+          } catch (...) {
+          }
+          auto initExpr = std::make_unique<NumberExpr>(val);
+
+          // SymbolInfo update is done in Scope Injection loop above.
+          // Wait, I missed updating SymbolInfo in the first loop?
+          // I only modified Sema.h to add the field.
+          // I need to modify the FIRST loop to set constInfo.ConstValue!
+
+          // Create VariableDecl with Init
+          auto decl =
+              std::make_unique<VariableDecl>(GP.Name, std::move(initExpr));
+          decl->TypeName = GP.Type.empty() ? "usize" : GP.Type;
+          decl->IsConst = true;
+
+          // Inject into Block
+
+          // Inject into Block
+          // We need to cast decl to Stmt
+          Block->Statements.insert(Block->Statements.begin(), std::move(decl));
+        }
+      }
+    }
   }
 
   // 4. Semantic Check (Recursion)

@@ -1699,7 +1699,23 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
       llvm::Type *elemTy = resolveType(elemTyStr, false);
       if (!elemTy)
         return nullptr;
-      uint64_t count = std::stoull(countStr);
+      uint64_t count = 0;
+      try {
+        count = std::stoull(countStr);
+      } catch (...) {
+        std::string funcCtxt = "Unknown";
+        if (auto *BB = m_Builder.GetInsertBlock()) {
+          if (auto *F = BB->getParent()) {
+            funcCtxt = F->getName().str();
+          }
+        }
+        std::cerr << "CodeGen Error: Invalid array size '" << countStr
+                  << "' in type '" << baseType << "' (Function: " << funcCtxt
+                  << ")\n";
+        // Attempt fallback? No, crash is better than silent fail for now, but
+        // explicit msg helps.
+        exit(1);
+      }
       type = llvm::ArrayType::get(elemTy, count);
     }
   } else if (baseType[0] == '(') {

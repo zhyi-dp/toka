@@ -691,7 +691,11 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
                                            baseName + ".deref_step");
       }
 
-      // 3. Final GEP Calculation (Single-level for pointer-based arrays)
+      // 3. Final GEP Calculation
+      if (sym.soulType->isArrayTy()) {
+        return m_Builder.CreateInBoundsGEP(sym.soulType, currentBase,
+                                           {m_Builder.getInt32(0), indexValue});
+      }
       return m_Builder.CreateInBoundsGEP(sym.soulType, currentBase, indexValue);
     }
   }

@@ -445,6 +445,24 @@ void Sema::checkStmt(Stmt *S) {
       Info.InitMask = 0;
     }
 
+    // Check for Const Value Propagation
+    if (Var->IsConst && Var->Init) {
+      // If initialized with a literal number, mark as Const Value
+      if (auto *Num = dynamic_cast<NumberExpr *>(Var->Init.get())) {
+        Info.HasConstValue = true;
+        Info.ConstValue = Num->Value;
+      }
+      // Or if initialized with ANOTHER const variable (like N = M)
+      else if (auto *RefVar = dynamic_cast<VariableExpr *>(Var->Init.get())) {
+        SymbolInfo RefInfo;
+        if (CurrentScope->lookup(RefVar->Name, RefInfo) &&
+            RefInfo.HasConstValue) {
+          Info.HasConstValue = true;
+          Info.ConstValue = RefInfo.ConstValue;
+        }
+      }
+    }
+
     CurrentScope->define(Var->Name, Info);
 
     // Move Logic: If initializing from a Unique Variable, move it.

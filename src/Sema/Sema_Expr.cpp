@@ -900,6 +900,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                                    toka::Type::fromString(resolvedName));
       std::string InitType = InitTypeObj->toString();
       if (!isTypeCompatible(resolvedName, InitType) && InitType != "unknown") {
+        std::cerr << "DEBUG: NewExpr Initializer Mismatch: InitType="
+                  << InitType << " ExpectedType=" << resolvedName << "\n";
         DiagnosticEngine::report(getLoc(New), DiagID::ERR_TYPE_MISMATCH,
                                  InitType, New->Type);
         HasError = true;
@@ -1549,8 +1551,17 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     uint64_t size = 0;
     if (auto *Num = dynamic_cast<NumberExpr *>(Repeat->Count.get())) {
       size = Num->Value;
+    } else if (auto *Var = dynamic_cast<VariableExpr *>(Repeat->Count.get())) {
+      SymbolInfo info;
+      if (CurrentScope->lookup(Var->Name, info) && info.HasConstValue) {
+        size = info.ConstValue;
+      } else {
+        error(Repeat, "Array repeat count must be a numeric literal or const "
+                      "generic parameter");
+      }
     } else {
-      error(Repeat, "Array repeat count must be a numeric literal");
+      error(Repeat, "Array repeat count must be a numeric literal or const "
+                    "generic parameter");
     }
     return std::make_shared<toka::ArrayType>(elemType, size);
   } else if (auto *ArrLit = dynamic_cast<ArrayExpr *>(E)) {
@@ -2483,8 +2494,14 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         HasError = true;
         return toka::Type::fromString("unknown");
       }
-      for (const auto &argStr : Call->GenericArgs) {
-        TypeArgs.push_back(toka::Type::fromString(resolveType(argStr)));
+      for (size_t i = 0; i < Call->GenericArgs.size(); ++i) {
+        std::string argStr = Call->GenericArgs[i];
+        if (Fn->GenericParams[i].IsConst) {
+          // Pass the literal value directly as the "Type" name for mangling
+          TypeArgs.push_back(toka::Type::fromString(argStr));
+        } else {
+          TypeArgs.push_back(toka::Type::fromString(resolveType(argStr)));
+        }
       }
     } else {
       // Type Deduction
@@ -2610,6 +2627,10 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       Fn = instantiateGenericFunction(Fn, TypeArgs, Call);
       if (!Fn)
         return toka::Type::fromString("unknown");
+
+      // [FIX] Update the Call AST to point to the mangled instance name
+      // otherwise CodeGen will attempt to call the generic template name
+      Call->Callee = Fn->Name;
     } else {
       HasError = true;
       return toka::Type::fromString("unknown");
