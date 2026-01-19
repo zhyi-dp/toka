@@ -17,3 +17,12 @@
 - toka中除了 函数返回签名指针形态符号在类型名前 外，指针形态符号始终在变量名前 而不是类型名前，如 ^p:Node 而不是 p:^Node
 - toka中，大括号仅用于作用域边界 类型级别名字的集合 和 字符串格式化输出的占位，其他情况不使用大括号。shape的定义以及实例初始化列表形式如 auto x = Point(x=1,y=2)均是圆括号，不要使用大括号
 - toka 代码中如需使用 println 函数，必须使用 import std/io::println
+- 为了自动化测试方便，目前我们所有的测试程序的 main 必须返回i32，正常时返回 0
+- Toka 使用统一的 `shape` 关键字定义所有结构化数据，通过括号内的结构自动判定实体种类。
+| 语法特征 | 判定 Kind | 访问约束 |
+| :--- | :--- | :--- |
+| `shape Name(x: T, y: U)` | **Struct** | 直接通过 `.name` 访问 |
+| `shape Name(T, U)` | **Tuple** | 通过 `.0`, `.1` 访问 |
+| `shape Name(A \| B(T) \| C = N)` | **Enum (Tagged)** | **强制** 必须通过 `match` 或 `if auto` 访问 |
+| `shape Name(as T \| as name: T)` | **Union** | `as` 重解释 (Bare) 或 `.name` (Named) |
+| `alias Name = [T; N]` | **Array** | 通过 `[index]` 访问 |

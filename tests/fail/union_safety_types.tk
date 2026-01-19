@@ -1,0 +1,25 @@
+import std/io::println
+
+pub type BoolAlias = bool
+shape MyEnum ( A | B )
+pub type StrictEnum = MyEnum
+
+shape FailBool (
+    as b: bool
+)
+
+shape FailBoolAlias (
+    as b: BoolAlias
+)
+
+shape FailEnum (
+    as e: MyEnum
+)
+
+shape FailEnumAlias (
+    as e: StrictEnum
+)
+
+fn main() -> i32 {
+    return 0
+}

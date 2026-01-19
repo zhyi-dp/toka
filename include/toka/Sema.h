@@ -250,6 +250,10 @@ private:
   bool isTypeCompatible(std::shared_ptr<toka::Type> Target,
                         std::shared_ptr<toka::Type> Source);
 
+  // [NEW] Deep Inspection for Union Safety
+  std::shared_ptr<toka::Type>
+  getDeepestUnderlyingType(std::shared_ptr<toka::Type> Type);
+
   std::shared_ptr<toka::Type>
   instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape);
 

@@ -1,0 +1,27 @@
+import std/io::println
+
+// Strong types
+pub type char = i8
+pub type Char = u32
+pub type BoolAlias = bool
+
+// Enum Declaration (Sum Type)
+shape MyEnum ( A | B )
+// Alias to Shape
+pub type StrictEnum = MyEnum
+
+// Allowed Types Union
+shape SafeUnionType (
+    as c: char |
+    as wc: Char |
+    as b: u8
+)
+
+fn main() -> i32 {
+    auto u = SafeUnionType(c = 65 as char)
+    println("Union initialized with char: {}", u.c as i32)
+    
+    auto u2 = SafeUnionType(wc = 0x1F600 as Char)
+    println("Union initialized with Char: {}", u2.wc as u32)
+    return 0
+}

@@ -575,25 +575,32 @@ void Sema::analyzeShapes(Module &M) {
         // ... (keep existing comments if any, or just ignore unknown)
       }
 
-      // [Rule] Union Type Blacklist: No bool or u8
+      // [Rule] Union Type Blacklist: Check Underlying Physics
       if (S->Kind == ShapeKind::Union) {
-        if (member.ResolvedType->isBoolean() ||
-            (member.ResolvedType->isInteger() &&
-             (member.ResolvedType->toString() == "u8" ||
-              member.ResolvedType->toString() == "i8"))) {
-          // Checking "i8" too just in case, though prompt said u8. Prompt said:
-          // "禁止 union { bool, u8 }". Let's stick to bool and u8/i8 (byte
-          // variants) as they are dangerous for pattern matching overlap? User
-          // said "Start with bool and u8". Let's be safe and include i8 if it's
-          // byte sized. Actually the user said "Forbidden U(Byte=1)". Let's
-          // forbid bool and u8 explicitly as requested.
+        auto underlying = getDeepestUnderlyingType(member.ResolvedType);
+        bool invalid = false;
+        std::string reason = "";
+
+        if (underlying->isBoolean() || underlying->toString() == "bool") {
+          invalid = true;
+          reason = "bool";
+        } else if (auto st =
+                       std::dynamic_pointer_cast<toka::ShapeType>(underlying)) {
+          // Check if it's a Strict Enum
+          if (ShapeMap.count(st->Name)) {
+            ShapeDecl *SD = ShapeMap[st->Name];
+            if (SD->Kind == ShapeKind::Enum &&
+                !SD->IsPacked) { // Packed is C-enum
+              invalid = true;
+              reason = "strict enum";
+            }
+          }
         }
-        std::string tStr = member.ResolvedType->toString();
-        if (member.ResolvedType->isBoolean() || tStr == "u8" ||
-            tStr == "bool") {
-          DiagnosticEngine::report(getLoc(S.get()),
-                                   DiagID::ERR_UNION_INVALID_MEMBER,
-                                   member.Name, tStr);
+
+        if (invalid) {
+          DiagnosticEngine::report(
+              getLoc(S.get()), DiagID::ERR_UNION_INVALID_MEMBER, member.Name,
+              member.Type /* Original Name */, reason);
           HasError = true;
         }
       }

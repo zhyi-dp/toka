@@ -565,4 +565,27 @@ bool Sema::isTypeCompatible(const std::string &Target,
   return isTypeCompatible(tObj, sObj);
 }
 
+std::shared_ptr<toka::Type>
+Sema::getDeepestUnderlyingType(std::shared_ptr<toka::Type> type) {
+  if (!type)
+    return nullptr;
+
+  auto current = type;
+  // Limit recursion to avoid infinite loops
+  for (int i = 0; i < 20; ++i) {
+    if (auto s = std::dynamic_pointer_cast<toka::ShapeType>(current)) {
+      if (TypeAliasMap.count(s->Name)) {
+        std::string targetStr = TypeAliasMap[s->Name].Target;
+        auto targetObj = toka::Type::fromString(resolveType(targetStr));
+        if (targetObj) {
+          current = targetObj;
+          continue;
+        }
+      }
+    }
+    break;
+  }
+  return resolveType(current);
+}
+
 } // namespace toka
