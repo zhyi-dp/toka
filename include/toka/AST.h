@@ -22,6 +22,14 @@
 
 namespace toka {
 
+class ASTNode;
+
+struct GenericParam {
+  std::string Name;
+  std::string Type; // Empty if it's a type parameter
+  bool IsConst = false;
+};
+
 class ASTNode {
 public:
   SourceLocation Loc;
@@ -29,10 +37,36 @@ public:
   virtual ~ASTNode() = default;
   virtual std::string toString() const = 0;
 
+  virtual std::unique_ptr<ASTNode> clone() const {
+    return nullptr;
+  } // TODO: Make pure virtual after implementing for all
+
   void setLocation(const Token &tok, const std::string &file = "") {
     Loc = tok.Loc;
   }
 };
+
+// Helper for deep copying unique_ptr<T> where T : ASTNode
+template <typename T>
+std::unique_ptr<T> cloneNode(const std::unique_ptr<T> &node) {
+  if (!node)
+    return nullptr;
+  // clone() returns unique_ptr<ASTNode>, we cast it back to unique_ptr<T>
+  // This assumes the clone() implementation returns the correct type.
+  return std::unique_ptr<T>(static_cast<T *>(node->clone().release()));
+}
+
+// Helper for deep copying vector of unique_ptr<T>
+template <typename T>
+std::vector<std::unique_ptr<T>>
+cloneVec(const std::vector<std::unique_ptr<T>> &vec) {
+  std::vector<std::unique_ptr<T>> res;
+  res.reserve(vec.size());
+  for (const auto &el : vec) {
+    res.push_back(cloneNode(el));
+  }
+  return res;
+}
 
 class Expr : public ASTNode {
 public:
@@ -49,6 +83,12 @@ public:
   std::string toString() const override {
     return "Number(" + std::to_string(Value) + ")";
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<NumberExpr>(Value);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class FloatExpr : public Expr {
@@ -58,6 +98,12 @@ public:
   std::string toString() const override {
     return "Float(" + std::to_string(Value) + ")";
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<FloatExpr>(Value);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class BoolExpr : public Expr {
@@ -65,6 +111,12 @@ public:
   bool Value;
   BoolExpr(bool val) : Value(val) {}
   std::string toString() const override { return Value ? "true" : "false"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<BoolExpr>(Value);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class NullExpr : public Expr {
@@ -99,6 +151,17 @@ public:
     return std::string("Var(") + (HasPointer ? "^" : "") + Name +
            (IsValueMutable ? "#" : "") + ")";
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<VariableExpr>(Name);
+    n->HasPointer = HasPointer;
+    n->IsUnique = IsUnique;
+    n->IsShared = IsShared;
+    n->IsValueMutable = IsValueMutable;
+    n->IsValueNullable = IsValueNullable;
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class StringExpr : public Expr {
@@ -106,6 +169,12 @@ public:
   std::string Value;
   StringExpr(const std::string &val) : Value(val) {}
   std::string toString() const override { return "String(\"" + Value + "\")"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<StringExpr>(Value);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class DereferenceExpr : public Expr {
@@ -114,6 +183,12 @@ public:
   DereferenceExpr(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
   std::string toString() const override {
     return std::string("Dereference(") + Expression->toString() + ")";
+  }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<DereferenceExpr>(cloneNode(Expression));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
   }
 };
 
@@ -127,6 +202,12 @@ public:
   std::string toString() const override {
     return "Binary(" + Op + ", " + LHS->toString() + ", " + RHS->toString() +
            ")";
+  }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<BinaryExpr>(Op, cloneNode(LHS), cloneNode(RHS));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
   }
 };
 
@@ -147,6 +228,16 @@ public:
     return "Unary(" + std::to_string((int)Op) + (HasNull ? "?" : "") +
            (IsRebindable ? "#" : "") + ", " + RHS->toString() + ")";
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<UnaryExpr>(Op, cloneNode(RHS));
+    n->HasNull = HasNull;
+    n->IsRebindable = IsRebindable;
+    n->IsValueMutable = IsValueMutable;
+    n->IsValueNullable = IsValueNullable;
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class PostfixExpr : public Expr {
@@ -157,6 +248,12 @@ public:
       : Op(op), LHS(std::move(lhs)) {}
   std::string toString() const override {
     return "Postfix(" + std::to_string((int)Op) + ", " + LHS->toString() + ")";
+  }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<PostfixExpr>(Op, cloneNode(LHS));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
   }
 };
 
@@ -169,6 +266,12 @@ public:
   std::string toString() const override {
     return "Cast(" + Expression->toString() + " as " + TargetType + ")";
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<CastExpr>(cloneNode(Expression), TargetType);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class AddressOfExpr : public Expr {
@@ -176,6 +279,12 @@ public:
   std::unique_ptr<Expr> Expression;
   AddressOfExpr(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
   std::string toString() const override { return "&" + Expression->toString(); }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<AddressOfExpr>(cloneNode(Expression));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class MemberExpr : public Expr {
@@ -189,9 +298,14 @@ public:
       : Object(std::move(obj)), Member(member), IsArrow(isArrow),
         IsStatic(isStatic) {}
   std::string toString() const override {
-    if (IsStatic)
-      return Object->toString() + "::" + Member;
     return Object->toString() + (IsArrow ? "->" : ".") + Member;
+  }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<MemberExpr>(cloneNode(Object), Member, IsArrow,
+                                          IsStatic);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
   }
 };
 
@@ -213,6 +327,13 @@ public:
     s += "]";
     return s;
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n =
+        std::make_unique<ArrayIndexExpr>(cloneNode(Array), cloneVec(Indices));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class ArrayExpr : public Expr {
@@ -230,6 +351,12 @@ public:
     s += "]";
     return s;
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<ArrayExpr>(cloneVec(Elements));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class RepeatedArrayExpr : public Expr {
@@ -239,6 +366,13 @@ public:
   RepeatedArrayExpr(std::unique_ptr<Expr> val, std::unique_ptr<Expr> count)
       : Value(std::move(val)), Count(std::move(count)) {}
   std::string toString() const override { return "RepeatedArray"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n =
+        std::make_unique<RepeatedArrayExpr>(cloneNode(Value), cloneNode(Count));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class UnsafeExpr : public Expr {
@@ -247,6 +381,12 @@ public:
   UnsafeExpr(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
   std::string toString() const override {
     return "Unsafe(" + Expression->toString() + ")";
+  }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<UnsafeExpr>(cloneNode(Expression));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
   }
 };
 
@@ -265,6 +405,13 @@ public:
   std::string toString() const override {
     return std::string("Alloc(") + (IsArray ? "[]" : "") + TypeName + ")";
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<AllocExpr>(TypeName, cloneNode(Initializer),
+                                         IsArray, cloneNode(ArraySize));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class TupleExpr : public Expr {
@@ -282,6 +429,12 @@ public:
     s += ")";
     return s;
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<TupleExpr>(cloneVec(Elements));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class InitStructExpr : public Expr {
@@ -292,7 +445,18 @@ public:
       const std::string &name,
       std::vector<std::pair<std::string, std::unique_ptr<Expr>>> members)
       : ShapeName(name), Members(std::move(members)) {}
+
   std::string toString() const override { return "Init(" + ShapeName + ")"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    std::vector<std::pair<std::string, std::unique_ptr<Expr>>> members;
+    for (const auto &p : Members) {
+      members.emplace_back(p.first, cloneNode(p.second));
+    }
+    auto n = std::make_unique<InitStructExpr>(ShapeName, std::move(members));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class AnonymousRecordExpr : public Expr {
@@ -316,6 +480,17 @@ public:
     s += ")";
     return s;
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
+    for (const auto &p : Fields) {
+      fields.emplace_back(p.first, cloneNode(p.second));
+    }
+    auto n = std::make_unique<AnonymousRecordExpr>(std::move(fields));
+    n->AssignedTypeName = AssignedTypeName;
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class FunctionDecl;
@@ -326,16 +501,39 @@ class CallExpr : public Expr {
 public:
   std::string Callee;
   std::vector<std::unique_ptr<Expr>> Args;
+  std::vector<std::string> GenericArgs; // [NEW]
 
   // Semantic Resolution Cache
   FunctionDecl *ResolvedFn = nullptr;
   ExternDecl *ResolvedExtern = nullptr;
   ShapeDecl *ResolvedShape = nullptr;
 
-  CallExpr(const std::string &callee, std::vector<std::unique_ptr<Expr>> args)
-      : Callee(callee), Args(std::move(args)) {}
+  CallExpr(const std::string &callee, std::vector<std::unique_ptr<Expr>> args,
+           std::vector<std::string> genericArgs = {})
+      : Callee(callee), Args(std::move(args)),
+        GenericArgs(std::move(genericArgs)) {}
 
-  std::string toString() const override { return "Call(" + Callee + ")"; }
+  std::string toString() const override {
+    std::string s = "Call(" + Callee;
+    if (!GenericArgs.empty()) {
+      s += "<";
+      for (size_t i = 0; i < GenericArgs.size(); ++i) {
+        if (i > 0)
+          s += ", ";
+        s += GenericArgs[i];
+      }
+      s += ">";
+    }
+    s += ")";
+    return s;
+  }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<CallExpr>(Callee, cloneVec(Args), GenericArgs);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    n->ResolvedFn = nullptr; // Reset sema cache
+    return n;
+  }
 };
 
 class MethodCallExpr : public Expr {
@@ -349,6 +547,13 @@ public:
       : Object(std::move(obj)), Method(method), Args(std::move(args)) {}
 
   std::string toString() const override { return "MethodCall(" + Method + ")"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<MethodCallExpr>(cloneNode(Object), Method,
+                                              cloneVec(Args));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class NewExpr : public Expr {
@@ -361,6 +566,12 @@ public:
     return "New(" + Type + ", " + (Initializer ? Initializer->toString() : "") +
            ")";
   }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<NewExpr>(Type, cloneNode(Initializer));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class PassExpr : public Expr {
@@ -369,6 +580,12 @@ public:
   PassExpr(std::unique_ptr<Expr> val) : Value(std::move(val)) {}
   std::string toString() const override {
     return "Pass(" + (Value ? Value->toString() : "none") + ")";
+  }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<PassExpr>(cloneNode(Value));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
   }
 };
 
@@ -414,6 +631,14 @@ public:
   MatchArm(std::unique_ptr<Pattern> p, std::unique_ptr<Expr> g,
            std::unique_ptr<Stmt> b)
       : Pat(std::move(p)), Guard(std::move(g)), Body(std::move(b)) {}
+
+  std::unique_ptr<MatchArm> clone() const {
+    // Pattern is NOT ASTNode compatible with cloneNode?
+    // Wait, Pattern inherits ASTNode (Line 551). So cloneNode<Pattern> works.
+    auto n = std::make_unique<MatchArm>(cloneNode(Pat), cloneNode(Guard),
+                                        cloneNode(Body));
+    return n;
+  }
 };
 
 class MatchExpr : public Expr {
@@ -426,6 +651,12 @@ public:
       : Target(std::move(target)), Arms(std::move(arms)) {}
 
   std::string toString() const override { return "Match(...)"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<MatchExpr>(cloneNode(Target), cloneVec(Arms));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class BreakExpr : public Expr {
@@ -435,6 +666,12 @@ public:
   BreakExpr(std::string label, std::unique_ptr<Expr> val)
       : TargetLabel(std::move(label)), Value(std::move(val)) {}
   std::string toString() const override { return "Break"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<BreakExpr>(TargetLabel, cloneNode(Value));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class ContinueExpr : public Expr {
@@ -442,6 +679,12 @@ public:
   std::string TargetLabel;
   ContinueExpr(std::string label) : TargetLabel(std::move(label)) {}
   std::string toString() const override { return "Continue"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<ContinueExpr>(TargetLabel);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 // --- Statements ---
@@ -453,6 +696,11 @@ public:
   BlockStmt(std::vector<std::unique_ptr<Stmt>> stmts)
       : Statements(std::move(stmts)) {}
   std::string toString() const override { return "Block"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<BlockStmt>(cloneVec(Statements));
+    n->Loc = Loc;
+    return n;
+  }
 };
 
 class ReturnStmt : public Stmt {
@@ -460,6 +708,11 @@ public:
   std::unique_ptr<Expr> ReturnValue;
   ReturnStmt(std::unique_ptr<Expr> val) : ReturnValue(std::move(val)) {}
   std::string toString() const override { return "Return"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<ReturnStmt>(cloneNode(ReturnValue));
+    n->Loc = Loc;
+    return n;
+  }
 };
 
 class ExprStmt : public Stmt {
@@ -467,6 +720,11 @@ public:
   std::unique_ptr<Expr> Expression;
   ExprStmt(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
   std::string toString() const override { return "ExprStmt"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<ExprStmt>(cloneNode(Expression));
+    n->Loc = Loc;
+    return n;
+  }
 };
 
 class DeleteStmt : public Stmt {
@@ -474,6 +732,11 @@ public:
   std::unique_ptr<Expr> Expression;
   DeleteStmt(std::unique_ptr<Expr> expr) : Expression(std::move(expr)) {}
   std::string toString() const override { return "Delete"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<DeleteStmt>(cloneNode(Expression));
+    n->Loc = Loc;
+    return n;
+  }
 };
 
 class UnsafeStmt : public Stmt {
@@ -481,6 +744,11 @@ public:
   std::unique_ptr<Stmt> Statement;
   UnsafeStmt(std::unique_ptr<Stmt> stmt) : Statement(std::move(stmt)) {}
   std::string toString() const override { return "UnsafeStmt"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<UnsafeStmt>(cloneNode(Statement));
+    n->Loc = Loc;
+    return n;
+  }
 };
 
 class FreeStmt : public Stmt {
@@ -490,6 +758,12 @@ public:
   FreeStmt(std::unique_ptr<Expr> expr, std::unique_ptr<Expr> count = nullptr)
       : Expression(std::move(expr)), Count(std::move(count)) {}
   std::string toString() const override { return "FreeStmt"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n =
+        std::make_unique<FreeStmt>(cloneNode(Expression), cloneNode(Count));
+    n->Loc = Loc;
+    return n;
+  }
 };
 
 class IfExpr : public Expr {
@@ -504,6 +778,13 @@ public:
         Else(std::move(elseStmt)) {}
 
   std::string toString() const override { return "If(...)"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<IfExpr>(cloneNode(Condition), cloneNode(Then),
+                                      cloneNode(Else));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class WhileExpr : public Expr {
@@ -518,6 +799,13 @@ public:
         ElseBody(std::move(elseBody)) {}
 
   std::string toString() const override { return "While(...)"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<WhileExpr>(cloneNode(Condition), cloneNode(Body),
+                                         cloneNode(ElseBody));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class LoopExpr : public Expr {
@@ -526,6 +814,12 @@ public:
   LoopExpr(std::unique_ptr<Stmt> body) : Body(std::move(body)) {}
 
   std::string toString() const override { return "Loop"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<LoopExpr>(cloneNode(Body));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class ForExpr : public Expr {
@@ -545,6 +839,14 @@ public:
         ElseBody(std::move(elseBody)) {}
 
   std::string toString() const override { return "For(" + VarName + ")"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<ForExpr>(VarName, IsReference, IsMutable,
+                                       cloneNode(Collection), cloneNode(Body),
+                                       cloneNode(ElseBody));
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 // Deprecated: MatchStmt is replaced by MatchExpr since match is now an
@@ -569,6 +871,12 @@ public:
       : TypeName(typeName), Variables(std::move(vars)), Init(std::move(init)) {}
 
   std::string toString() const override { return "Destructuring " + TypeName; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<DestructuringDecl>(TypeName, Variables,
+                                                 cloneNode(Init));
+    n->Loc = Loc;
+    return n;
+  }
 };
 
 class VariableDecl : public Stmt {
@@ -592,6 +900,23 @@ public:
       : Name(name), Init(std::move(init)) {}
 
   std::string toString() const override { return "Val " + Name; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<VariableDecl>(Name, cloneNode(Init));
+    n->TypeName = TypeName;
+    n->HasPointer = HasPointer;
+    n->IsUnique = IsUnique;
+    n->IsShared = IsShared;
+    n->IsReference = IsReference;
+    n->IsPub = IsPub;
+    n->IsConst = IsConst;
+    n->IsRebindable = IsRebindable;
+    n->IsValueMutable = IsValueMutable; // VariableDecl has this field
+    n->IsPointerNullable = IsPointerNullable;
+    n->IsValueNullable = IsValueNullable;
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 
   std::shared_ptr<Type> ResolvedType;
 };
@@ -637,11 +962,7 @@ public:
   bool IsPub = false;
   bool IsPacked = false;
   std::string Name;
-  struct GenericParam {
-    std::string Name;
-    std::string Type; // Empty if it's a type parameter
-    bool IsConst = false;
-  };
+  // struct GenericParam moved to top-level
   std::vector<GenericParam> GenericParams; // [UPDATED] e.g. <T, N_: usize>
   ShapeKind Kind;
   std::vector<ShapeMember> Members;
@@ -736,14 +1057,40 @@ public:
   std::vector<Arg> Args;
   std::string ReturnType;
   std::unique_ptr<BlockStmt> Body;
+
   bool IsVariadic = false;
+  std::vector<GenericParam> GenericParams; // [NEW] e.g. <T>
 
   FunctionDecl(bool isPub, const std::string &name, std::vector<Arg> args,
-               std::unique_ptr<BlockStmt> body, const std::string &retType)
+               std::unique_ptr<BlockStmt> body, const std::string &retType,
+               std::vector<GenericParam> generics = {})
       : IsPub(isPub), Name(name), Args(std::move(args)), ReturnType(retType),
-        Body(std::move(body)) {}
+        Body(std::move(body)), GenericParams(std::move(generics)) {}
   std::string toString() const override {
     return std::string(IsPub ? "Pub" : "") + "Fn(" + Name + ")";
+  }
+  std::unique_ptr<ASTNode> clone() const override {
+    // Manually deep copy args (since they contain strings/bools and shared_ptr)
+    // shared_ptr copy is shallow for resolved type, which is what we want?
+    // Wait, generic template args have unresolved types usually? Or generic
+    // types? We copy whatever is there.
+    std::vector<Arg> clonedArgs = Args;
+
+    // Deep copy body
+    auto clonedBody =
+        Body ? std::unique_ptr<BlockStmt>(
+                   static_cast<BlockStmt *>(Body->clone().release()))
+             : nullptr;
+
+    auto n = std::make_unique<FunctionDecl>(IsPub, Name, clonedArgs,
+                                            std::move(clonedBody), ReturnType,
+                                            GenericParams);
+    n->IsVariadic = IsVariadic;
+    n->Loc = Loc;
+    // FunctionDecl is NOT an Expr, does not have ResolvedType?
+    // FunctionDecl inherits ASTNode directly (Line 993).
+    // ASTNode doesn't have ResolvedType.
+    return n;
   }
 };
 

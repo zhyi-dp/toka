@@ -26,6 +26,11 @@ namespace toka {
 llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                                      const std::string &overrideName,
                                      bool declOnly) {
+  // [NEW] Skip Generic Templates
+  // Logic should not generate IR for templates, only instances.
+  if (!func->GenericParams.empty())
+    return nullptr;
+
   std::string funcName = overrideName.empty() ? func->Name : overrideName;
   m_Functions[funcName] = func;
   m_Symbols.clear();

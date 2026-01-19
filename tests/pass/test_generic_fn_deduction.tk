@@ -1,0 +1,28 @@
+fn id<T>(x: T) -> T {
+    return x;
+}
+
+// &x#: T -> x is a reference to T, mutable binding (so we can write to x, which means rewriting value)
+fn swap<T>(x#: T, y#: T) {
+    auto temp = x;
+    x# = y;
+    y# = temp;
+}
+
+fn main() -> i32 {
+    auto i = id(42);
+    if (i != 42) return 1;
+
+    auto f = id(3.14);
+    if (f < 3.13) return 2;
+
+    auto a# = 10;
+    auto b# = 20;
+
+    // Implicit reference capture
+    swap(a, b); 
+    
+    if (a != 20 || b != 10) return 3;
+
+    return 0;
+}

@@ -2236,12 +2236,16 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
       if (arg.IsUnique || arg.IsShared) {
         isCaptured = true;
       }
-      // Only capture if it's a Value Type (Struct/Array) AND NOT a
-      // Pointer/Shared/Reference (Shared is handled above now)
+      // Only capture if it's a Value Type (Struct/Array/Mutable) AND NOT a
+      // Pointer/Shared/Reference
       else if (!arg.HasPointer && !arg.IsReference) {
-        llvm::Type *logicalTy = resolveType(arg.Type, false);
-        if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
+        if (arg.IsValueMutable) {
           isCaptured = true;
+        } else {
+          llvm::Type *logicalTy = resolveType(arg.Type, false);
+          if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
+            isCaptured = true;
+        }
       }
     } else if (extDecl && i < extDecl->Args.size()) {
       const auto &arg = extDecl->Args[i];

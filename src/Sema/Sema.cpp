@@ -399,7 +399,13 @@ void Sema::registerGlobals(Module &M) {
 }
 
 void Sema::checkFunction(FunctionDecl *Fn) {
+  // [NEW] Skip Generic Templates
+  // We cannot check them until they are instantiated with concrete types.
+  if (!Fn->GenericParams.empty())
+    return;
 
+  std::string savedRet =
+      CurrentFunctionReturnType; // [FIX] Save state for recursion
   CurrentFunctionReturnType = Fn->ReturnType;
   enterScope(); // Function scope
 
@@ -460,7 +466,7 @@ void Sema::checkFunction(FunctionDecl *Fn) {
   }
 
   exitScope();
-  CurrentFunctionReturnType = "";
+  CurrentFunctionReturnType = savedRet; // [FIX] Restore state
 }
 
 void Sema::checkShapeSovereignty() {
@@ -703,4 +709,123 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
   props.Status = ShapeAnalysisStatus::Analyzed;
 }
 
+FunctionDecl *Sema::instantiateGenericFunction(
+    FunctionDecl *Template,
+    const std::vector<std::shared_ptr<toka::Type>> &Args, CallExpr *CallSite) {
+
+  if (Template->GenericParams.size() != Args.size()) {
+    DiagnosticEngine::report(getLoc(CallSite),
+                             DiagID::ERR_GENERIC_ARITY_MISMATCH, Template->Name,
+                             Template->GenericParams.size(), Args.size());
+    HasError = true;
+    return nullptr;
+  }
+
+  // Magnling: Name_M_Arg1_Arg2
+  std::string mangledName = Template->Name + "_M";
+  for (auto &Arg : Args) {
+    if (!Arg)
+      continue;
+    std::string argStr = resolveType(Arg)->toString();
+    for (char &c : argStr) {
+      if (!std::isalnum(c) && c != '_')
+        c = '_';
+    }
+    mangledName += "_" + argStr;
+  }
+
+  // Recursion Guard
+  static int depth = 0;
+  if (depth > 100) {
+    DiagnosticEngine::report(
+        getLoc(CallSite), DiagID::ERR_GENERIC_RECURSION_LIMIT, Template->Name);
+    HasError = true;
+    return nullptr;
+  }
+
+  // Check Cache
+  static std::map<std::string, FunctionDecl *> InstantiationCache;
+  if (InstantiationCache.count(mangledName)) {
+    return InstantiationCache[mangledName];
+  }
+
+  // Instantiate
+  depth++;
+
+  // 1. Clone
+  auto ClonedNode = Template->clone();
+  FunctionDecl *Instance = static_cast<FunctionDecl *>(ClonedNode.release());
+  std::unique_ptr<FunctionDecl> InstancePtr(Instance);
+
+  Instance->Name = mangledName;
+  Instance->GenericParams.clear(); // Mark as concrete
+
+  // 2. Scope Injection Setup
+  enterScope();
+  for (size_t i = 0; i < Template->GenericParams.size(); ++i) {
+    SymbolInfo aliasInfo;
+    aliasInfo.TypeObj = resolveType(Args[i]); // Resolve before binding? Yes.
+    aliasInfo.IsTypeAlias = true;
+    CurrentScope->define(Template->GenericParams[i].Name, aliasInfo);
+  }
+
+  // [NEW] 2.5 Substitute Generic Types in Signature
+  // We must update Arg types and ReturnType so callers see concrete types (e.g.
+  // i32 instead of T)
+  std::map<std::string, std::string> substMap;
+  for (size_t i = 0; i < Template->GenericParams.size(); ++i) {
+    substMap[Template->GenericParams[i].Name] =
+        resolveType(Args[i])->toString();
+  }
+
+  auto applySubst = [&](std::string &s) {
+    for (auto const &[K, V] : substMap) {
+      size_t pos = 0;
+      while ((pos = s.find(K, pos)) != std::string::npos) {
+        auto isWordChar = [](char c) { return std::isalnum(c) || c == '_'; };
+        bool startOk = (pos == 0) || !isWordChar(s[pos - 1]);
+        bool endOk =
+            (pos + K.size() == s.size()) || !isWordChar(s[pos + K.size()]);
+        if (startOk && endOk) {
+          s.replace(pos, K.size(), V);
+          pos += V.size();
+        } else {
+          pos += K.size();
+        }
+      }
+    }
+  };
+
+  for (auto &Arg : Instance->Args) {
+    applySubst(Arg.Type);
+  }
+  applySubst(Instance->ReturnType);
+
+  // 3. Register in Module
+  if (CurrentModule) {
+    CurrentModule->Functions.push_back(std::move(InstancePtr));
+    Instance = CurrentModule->Functions.back().get();
+
+    std::string fileName =
+        DiagnosticEngine::SrcMgr->getFullSourceLoc(CurrentModule->Loc).FileName;
+    ModuleMap[fileName].Functions[mangledName] = Instance;
+
+    GlobalFunctions.push_back(Instance);
+  } else {
+    // Create independent ownership if no module context (shouldn't happen here)
+    // For safety, leak it or manage elsewhere.
+    // But Sema always has CurrentModule during analysis.
+    // If we are called from checkCallExpr, CurrentModule is set.
+    InstancePtr.release(); // Leak if no module? No, let's assume CurrentModule.
+  }
+
+  // 4. Semantic Check (Recursion)
+  checkFunction(Instance);
+
+  exitScope();
+  depth--;
+
+  InstantiationCache[mangledName] = Instance;
+  return Instance;
+}
 } // namespace toka

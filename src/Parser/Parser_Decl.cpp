@@ -30,10 +30,10 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
   Token name = consume(TokenType::Identifier, "Expected shape name");
 
   // Parse Generic Parameters: Name<T, U> or Name<T, N_: usize>
-  std::vector<ShapeDecl::GenericParam> genericParams;
+  std::vector<GenericParam> genericParams;
   if (match(TokenType::GenericLT)) {
     do {
-      ShapeDecl::GenericParam gp;
+      GenericParam gp;
       gp.Name =
           consume(TokenType::Identifier, "Expected generic parameter name")
               .Text;
@@ -200,6 +200,24 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
     error(peek(), "Expected function name");
     return nullptr;
   }
+
+  // Parse Generic Parameters: <T, N_: usize>
+  std::vector<GenericParam> genericParams;
+  if (match(TokenType::GenericLT)) {
+    do {
+      GenericParam gp;
+      gp.Name =
+          consume(TokenType::Identifier, "Expected generic parameter name")
+              .Text;
+      if (match(TokenType::Colon)) {
+        gp.Type = parseTypeString();
+        gp.IsConst = true;
+      }
+      genericParams.push_back(gp);
+    } while (match(TokenType::Comma));
+    consume(TokenType::Greater, "Expected '>' to close generic parameters");
+  }
+
   consume(TokenType::LParen, "Expected '('");
   std::vector<FunctionDecl::Arg> args;
   bool isVariadic = false;
@@ -293,8 +311,8 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
   } else {
     expectEndOfStatement();
   }
-  auto decl = std::make_unique<FunctionDecl>(isPub, name.Text, args,
-                                             std::move(body), retType);
+  auto decl = std::make_unique<FunctionDecl>(
+      isPub, name.Text, args, std::move(body), retType, genericParams);
   decl->IsVariadic = isVariadic;
   decl->setLocation(name, m_CurrentFile);
   return decl;

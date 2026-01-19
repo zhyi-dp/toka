@@ -477,17 +477,21 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   } else if (match(TokenType::Identifier)) {
     Token name = previous();
     // [NEW] Check for Generics <...>
+    std::vector<std::string> genericArgs;
+    std::string genericSuffix = "";
     if (check(TokenType::GenericLT)) {
-      name.Text += advance().Text; // Consume <
-      int balance = 1;
-      while (balance > 0 && !check(TokenType::EndOfFile)) {
-        if (check(TokenType::GenericLT))
-          balance++;
-        else if (check(TokenType::Greater))
-          balance--;
-
-        name.Text += advance().Text;
-      }
+      match(TokenType::GenericLT); // consume <
+      genericSuffix += "<";
+      do {
+        std::string ty = parseTypeString();
+        genericArgs.push_back(ty);
+        genericSuffix += ty;
+        if (check(TokenType::Comma)) {
+          genericSuffix += ", ";
+        }
+      } while (match(TokenType::Comma));
+      consume(TokenType::Greater, "Expected '>'");
+      genericSuffix += ">";
     }
 
     bool isStructInit = false;
@@ -521,7 +525,8 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         match(TokenType::Comma);
       }
       consume(TokenType::RBrace, "Expected '}'");
-      expr = std::make_unique<InitStructExpr>(name.Text, std::move(fields));
+      expr = std::make_unique<InitStructExpr>(name.Text + genericSuffix,
+                                              std::move(fields));
       expr->setLocation(name, m_CurrentFile);
     } else if (match(TokenType::LParen)) {
       // Function Call
@@ -532,7 +537,8 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         } while (match(TokenType::Comma));
       }
       consume(TokenType::RParen, "Expected ')' after arguments");
-      auto node = std::make_unique<CallExpr>(name.Text, std::move(args));
+      auto node =
+          std::make_unique<CallExpr>(name.Text, std::move(args), genericArgs);
       node->setLocation(name, m_CurrentFile);
       expr = std::move(node);
     } else {
@@ -543,7 +549,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         Token member =
             consume(TokenType::Identifier, "Expected member after ::");
 
-        auto obj = std::make_unique<VariableExpr>(name.Text);
+        auto obj = std::make_unique<VariableExpr>(name.Text + genericSuffix);
         obj->setLocation(name, m_CurrentFile);
         expr = std::make_unique<MemberExpr>(std::move(obj), member.Text, false,
                                             true);
@@ -558,8 +564,29 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
             } while (match(TokenType::Comma));
           }
           consume(TokenType::RParen, "Expected ')' after arguments");
-          auto node = std::make_unique<CallExpr>(name.Text + "::" + member.Text,
-                                                 std::move(args));
+          // Static method call e.g. Box<T>::new()
+          // We treat "Box<T>::new" as function name??
+          // AST says CallExpr(Callee). Callee is string.
+          // GenericArgs? If static method itself is generic?
+          // Box<T>::method<U>() Here we are inside Scope Resolution block.
+          // MemberExpr handles "Box<T>::new".
+          // But MemberExpr is "Object . Member". Object is
+          // "Box<T>"(VariableExpr). We return specialized CallExpr for static
+          // call? Line 561 original: CallExpr(name + "::" + member, args). With
+          // generic suffix: CallExpr(name + suffix + "::" + member, args). Does
+          // this support method-level generics? No logic here supports
+          // `method<U>`. If we want `Type::method<U>()`, we need `parseExpr` to
+          // handle it? Suffix loop handles `.member`. This block handles `::`
+          // immediately after identifier. So `Type::method` is handled here. If
+          // `method` has generics, we aren't parsing them here! We consumed
+          // `member` (identifier). We immediately check LParen. We miss `<U>`
+          // here! But that's a separate issue. For now, preserve existing
+          // behavior + suffix.
+
+          auto node = std::make_unique<CallExpr>(
+              name.Text + genericSuffix + "::" + member.Text, std::move(args));
+          // Note: Static method calls on generic types don't support explicit
+          // method generics yet in this parser logic
           node->setLocation(name, m_CurrentFile);
           expr = std::move(node);
           return expr;
@@ -567,7 +594,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         return expr;
       }
 
-      auto var = std::make_unique<VariableExpr>(name.Text);
+      auto var = std::make_unique<VariableExpr>(name.Text + genericSuffix);
       var->setLocation(name, m_CurrentFile);
       // var->IsMutable = name.HasWrite; // Deprecated
       // var->IsNullable = name.HasNull; // Deprecated

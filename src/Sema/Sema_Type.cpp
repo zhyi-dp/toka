@@ -21,6 +21,16 @@
 namespace toka {
 
 std::string Sema::resolveType(const std::string &Type) {
+  // [NEW] Local Type Alias (Generic Parameter) Lookup
+  if (CurrentScope) {
+    SymbolInfo Sym;
+    if (CurrentScope->lookup(Type, Sym)) {
+      if (Sym.IsTypeAlias && Sym.TypeObj) {
+        return resolveType(Sym.TypeObj)->toString();
+      }
+    }
+  }
+
   size_t scopePos = Type.find("::");
   if (scopePos != std::string::npos) {
     std::string ModName = Type.substr(0, scopePos);
@@ -86,6 +96,20 @@ Sema::resolveType(std::shared_ptr<toka::Type> type) {
       }
       // 2. Instantiate
       return instantiateGenericShape(shape);
+    }
+
+    // [NEW] Local Scope Alias Lookup (for T -> i32)
+    if (CurrentScope) {
+      SymbolInfo Sym;
+      if (CurrentScope->lookup(shape->Name, Sym)) {
+        if (Sym.IsTypeAlias && Sym.TypeObj) {
+          // We found T -> i32 (TypeObj).
+          // We need to return TypeObj, but retain attributes (IsWritable, etc)
+          // of 'shape'.
+          auto resolved = resolveType(Sym.TypeObj);
+          return resolved->withAttributes(type->IsWritable, type->IsNullable);
+        }
+      }
     }
 
     size_t scopePos = shape->Name.find("::");
@@ -172,8 +196,8 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
   // 4. Instantiate (Cache-First Cycle Breaking)
   // Create partial decl first to allow recursion
   auto NewDecl = std::make_unique<ShapeDecl>(
-      Template->IsPub, mangledName, std::vector<ShapeDecl::GenericParam>{},
-      Template->Kind, std::vector<ShapeMember>{}, Template->IsPacked);
+      Template->IsPub, mangledName, std::vector<GenericParam>{}, Template->Kind,
+      std::vector<ShapeMember>{}, Template->IsPacked);
   NewDecl->Loc = Template->Loc;
 
   ShapeDecl *storedDecl = NewDecl.get();

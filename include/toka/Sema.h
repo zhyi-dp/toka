@@ -26,6 +26,7 @@ struct SymbolInfo {
   // New Type Object (Source of Truth)
   std::shared_ptr<toka::Type> TypeObj;
 
+  bool IsTypeAlias = false; // [NEW] For Generic Params (T -> i32)
   bool Moved = false;
   uint64_t InitMask =
       ~0ULL; // 0=unset, 1=set. For shapes, each bit corresponds to a member.
@@ -250,6 +251,10 @@ private:
 
   std::shared_ptr<toka::Type>
   instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape);
+
+  FunctionDecl *instantiateGenericFunction(
+      FunctionDecl *Template,
+      const std::vector<std::shared_ptr<toka::Type>> &Args, CallExpr *CallSite);
 
   // Helper for type synthesis from AST nodes with morphology flags
   template <typename T>

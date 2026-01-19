@@ -73,6 +73,8 @@ DIAG(ERR_UNKNOWN_SHAPE_IN_PAT, Error, "Unknown type '{}' in pattern matching")
 
 // --- Generics (Upcoming) ---
 DIAG(ERR_GENERIC_COUNT_MISMATCH, Error, "Type '{}' expects {} generic arguments, but got {}")
+DIAG(ERR_GENERIC_ARITY_MISMATCH, Error, "Generic mismatch for '{}': expected {} arguments, got {}")
+DIAG(ERR_GENERIC_RECURSION_LIMIT, Error, "Generic instantiation recursion limit reached for '{}'")
 DIAG(ERR_GENERIC_CODEGEN,    Error, "Generic instantiation failed: {}")
 
 // --- Parser Errors ---

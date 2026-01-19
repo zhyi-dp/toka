@@ -304,8 +304,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // 3. Create and Register Synthetic ShapeDecl
     // We treat it as a regular Struct
     auto SyntheticShape = std::make_unique<ShapeDecl>(
-        false, UniqueName, std::vector<ShapeDecl::GenericParam>{},
-        ShapeKind::Struct, members);
+        false, UniqueName, std::vector<GenericParam>{}, ShapeKind::Struct,
+        members);
 
     // Important: Register in ShapeMap so MemberExpr can find it
     ShapeMap[UniqueName] = SyntheticShape.get();
@@ -2412,6 +2412,153 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   std::vector<std::shared_ptr<toka::Type>> ParamTypes;
   std::shared_ptr<toka::Type> ReturnType;
   bool IsVariadic = false;
+
+  // [NEW] Generic Instantiation
+  if (Fn && !Fn->GenericParams.empty()) {
+    std::vector<std::shared_ptr<toka::Type>> TypeArgs;
+    bool deductionFailed = false;
+
+    if (!Call->GenericArgs.empty()) {
+      // Explicit Instantiation
+      if (Call->GenericArgs.size() != Fn->GenericParams.size()) {
+        DiagnosticEngine::report(
+            getLoc(Call), DiagID::ERR_GENERIC_ARITY_MISMATCH, Fn->Name,
+            Fn->GenericParams.size(), Call->GenericArgs.size());
+        HasError = true;
+        return toka::Type::fromString("unknown");
+      }
+      for (const auto &argStr : Call->GenericArgs) {
+        TypeArgs.push_back(toka::Type::fromString(resolveType(argStr)));
+      }
+    } else {
+      // Type Deduction
+      std::map<std::string, std::shared_ptr<toka::Type>> Deduced;
+
+      for (size_t i = 0; i < Call->Args.size() && i < Fn->Args.size(); ++i) {
+        auto argType = checkExpr(Call->Args[i].get());
+        if (!argType || argType->isUnknown())
+          continue;
+
+        // DEBUG:
+        std::cerr << "Deduce: Arg " << i << " Type=" << argType->toString()
+                  << "\n";
+
+        const auto &Param = Fn->Args[i];
+        std::string PType = Param.Type;
+        // [FIX] Parse Sigils from PType string (since Parser might leave them
+        // in string)
+        bool locHasPointer = Param.HasPointer;
+        bool locIsUnique = Param.IsUnique;
+        bool locIsShared = Param.IsShared;
+        bool locIsReference = Param.IsReference;
+
+        while (PType.size() > 1 && (PType[0] == '*' || PType[0] == '^' ||
+                                    PType[0] == '~' || PType[0] == '&')) {
+          if (PType[0] == '*')
+            locHasPointer = true;
+          else if (PType[0] == '^')
+            locIsUnique = true;
+          else if (PType[0] == '~')
+            locIsShared = true;
+          else if (PType[0] == '&')
+            locIsReference = true;
+          PType = PType.substr(1);
+        }
+
+        // Check if PType is a generic param
+        bool isGeneric = false;
+        for (const auto &gp : Fn->GenericParams) {
+          if (gp.Name == PType) {
+            isGeneric = true;
+            break;
+          }
+        }
+
+        // DEBUG:
+        std::cerr << "Deduce: Param " << i << " Type=" << PType
+                  << " Generic=" << isGeneric
+                  << " HasPointer=" << Param.HasPointer << "\n";
+
+        if (isGeneric) {
+          // Strict Match: T matches ArgType
+          // Need to account for morphology stripping on Param/Arg side?
+          // If Param is `x: T`, and Arg is `i32`, T=i32.
+          // If Param is `x: ^T`, and Arg is `^i32`?
+          //   Param.IsUnique is true. Param.Type is T.
+          //   ArgType is UniquePointer(i32).
+          //   We must strip ArgType morphology to find T.
+
+          std::shared_ptr<toka::Type> candidate = argType;
+
+          // Strip Param Morphology from Candidate
+          if (locHasPointer) {
+            if (candidate->isRawPointer())
+              candidate = candidate->getPointeeType();
+            else if (candidate
+                         ->isReference()) // Allow &T -> *T decay for deduction
+              candidate = candidate->getPointeeType();
+            else
+              continue; // Mismatch handled later
+          }
+          if (locIsUnique) {
+            if (candidate->isUniquePtr())
+              candidate = candidate->getPointeeType();
+            else
+              continue;
+          }
+          if (locIsShared) {
+            if (candidate->isSharedPtr())
+              candidate = candidate->getPointeeType();
+            else
+              continue;
+          }
+          if (locIsReference) {
+            if (candidate->isReference())
+              candidate = candidate->getPointeeType();
+            // Else: Candidate is Value. Match Value against T in &T.
+            // So if Param=&T, Arg=i32. T=i32.
+            // Just proceed with candidate as is.
+          }
+
+          // Deduce
+          if (Deduced.count(PType)) {
+            if (!Deduced[PType]->equals(*candidate)) {
+              error(Call, "Type deduction conflict for '" + PType + "': '" +
+                              Deduced[PType]->toString() + "' vs '" +
+                              candidate->toString() + "'");
+              deductionFailed = true;
+            }
+          } else {
+            Deduced[PType] = candidate;
+            // DEBUG:
+            std::cerr << "Deduce: Deduced " << PType << " = "
+                      << candidate->toString() << "\n";
+          }
+        }
+      }
+
+      if (!deductionFailed) {
+        for (const auto &gp : Fn->GenericParams) {
+          if (!Deduced.count(gp.Name)) {
+            error(Call, "Failed to deduce type for generic parameter '" +
+                            gp.Name + "'");
+            deductionFailed = true;
+          } else {
+            TypeArgs.push_back(Deduced[gp.Name]);
+          }
+        }
+      }
+    }
+
+    if (!deductionFailed) {
+      Fn = instantiateGenericFunction(Fn, TypeArgs, Call);
+      if (!Fn)
+        return toka::Type::fromString("unknown");
+    } else {
+      HasError = true;
+      return toka::Type::fromString("unknown");
+    }
+  }
 
   if (Fn) {
     Call->ResolvedFn = Fn;
