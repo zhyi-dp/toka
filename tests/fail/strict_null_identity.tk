@@ -11,11 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-shape Data (v: i32)
+shape Data (val: i32)
+
+
 
 fn main() -> i32 {
-    auto ^#p = new Data(v = 42)
-    *p = null // Should Fail: ^p is not nullable
-    // EXPECT: Use of undeclared identifier 'null'
+    // EXPECT: Pointer morphology mismatch
+    // EXPECT: assignment type mismatch: cannot assign 'null' to '*Data'
+    auto *d: Data = null
     return 0
 }

@@ -4,19 +4,24 @@ pub type BoolAlias = bool
 shape MyEnum ( A | B )
 pub type StrictEnum = MyEnum
 
+
 shape FailBool (
+    // EXPECT: restricted type 'bool'
     as b: bool
 )
 
 shape FailBoolAlias (
+    // EXPECT: restricted type 'BoolAlias'
     as b: BoolAlias
 )
 
 shape FailEnum (
+    // EXPECT: restricted type 'MyEnum'
     as e: MyEnum
 )
 
 shape FailEnumAlias (
+    // EXPECT: restricted type 'StrictEnum'
     as e: StrictEnum
 )
 

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "toka/AST.h"
+
+#include "toka/DiagnosticEngine.h"
 #include "toka/Sema.h"
 #include "toka/Type.h"
 #include <cctype>
@@ -20,6 +22,9 @@
 #include <string>
 
 namespace toka {
+
+// Helper to get location
+static SourceLocation getLoc(ASTNode *Node) { return Node->Loc; }
 
 std::string Sema::resolveType(const std::string &Type) {
   // [NEW] Local Type Alias (Generic Parameter) Lookup
@@ -89,6 +94,7 @@ Sema::resolveType(std::shared_ptr<toka::Type> type) {
   }
 
   if (auto shape = std::dynamic_pointer_cast<toka::ShapeType>(type)) {
+
     // [NEW] Monomorphization Trigger
     if (!shape->GenericArgs.empty()) {
       // 1. Resolve arguments first
@@ -333,6 +339,79 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
 
   auto instance = std::make_shared<ShapeType>(mangledName);
   instance->resolve(storedDecl);
+
+  // [NEW] Late Validation for Generic Union Instantiation
+  // We must re-run the union safety checks ("Latent Blacklist Check")
+  // because T might have been substituted with a forbidden type (e.g.
+  // Union<bool>).
+  if (storedDecl->Kind == ShapeKind::Union) {
+    for (const auto &memb : storedDecl->Members) {
+      if (!memb.ResolvedType)
+        continue;
+
+      // 1. Check for Forbidden Primitive Types (bool, strict enum)
+      auto underlying = getDeepestUnderlyingType(memb.ResolvedType);
+      bool invalid = false;
+      std::string reason = "";
+
+      if (underlying->isBoolean() || underlying->toString() == "bool") {
+        invalid = true;
+        reason = "bool";
+      } else if (auto st =
+                     std::dynamic_pointer_cast<toka::ShapeType>(underlying)) {
+        // Naive Check for Strict Enum (without full ShapeMap lookup if easy)
+        // We can access ShapeMap from Sema
+        if (ShapeMap.count(st->Name)) {
+          ShapeDecl *SD = ShapeMap[st->Name];
+          if (SD->Kind == ShapeKind::Enum && !SD->IsPacked) {
+            invalid = true;
+            reason = "strict enum";
+          }
+        }
+      }
+
+      if (invalid) {
+        DiagnosticEngine::report(getLoc(storedDecl),
+                                 DiagID::ERR_UNION_INVALID_MEMBER, memb.Name,
+                                 memb.Type, reason);
+        HasError = true;
+      }
+
+      // 2. Check for Resource Types (Limit HasDrop)
+      bool isResource = false;
+      if (memb.IsUnique || memb.IsShared) {
+        isResource = true;
+      } else if (auto st =
+                     std::dynamic_pointer_cast<toka::ShapeType>(underlying)) {
+        // Check if this shape is known to have drop
+        // Since we are in Sema, we can access m_ShapeProps if it was computed.
+        // But m_ShapeProps is local to analyzeShapes pass? No, it's a member of
+        // Sema. We might need to ensure it's populated. If not found, be
+        // conservative? Or assume it's fine if not smart ptr? For now, let's
+        // check smart pointers (most common issue) and explicit String
+        if (st->Name == "String" || st->Name == "std::string::String") {
+          isResource = true;
+        } else if (m_ShapeProps.count(st->Name) &&
+                   m_ShapeProps[st->Name].HasDrop) {
+          isResource = true;
+        }
+      } else if (auto ptr =
+                     std::dynamic_pointer_cast<toka::PointerType>(underlying)) {
+        if (ptr->isUniquePtr() || ptr->isSharedPtr())
+          isResource = true;
+      }
+
+      if (isResource) {
+        DiagnosticEngine::report(getLoc(storedDecl),
+                                 DiagID::ERR_UNION_RESOURCE_TYPE, memb.Name,
+                                 memb.Type);
+        DiagnosticEngine::report(getLoc(storedDecl),
+                                 DiagID::NOTE_UNION_RESOURCE_TIP);
+        HasError = true;
+      }
+    }
+  }
+
   return instance;
 }
 

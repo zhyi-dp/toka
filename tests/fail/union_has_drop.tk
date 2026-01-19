@@ -2,17 +2,21 @@ shape Resource (
     val: ^i32
 )
 
+
 shape IllegalUnion (
+    // EXPECT: manages resources
     as r: Resource |
     as i: i32
 )
 
 shape IllegalSmartPtrUnion (
+    // EXPECT: manages resources
     as p: ^i32 |
     as i: i32
 )
 
 shape IllegalArrayUnion (
+    // EXPECT: manages resources
     as arr: [Resource; 2] |
     as i: i32
 )

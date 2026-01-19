@@ -1,11 +1,9 @@
-union BadBool {
-    b: bool,
-    val: u64
-}
 
-union BadU8 {
-    b: u8,
-    val: u64
-}
+// EXPECT: has restricted type 'bool'
+shape BadBool(as b: bool | as val: u64)
+// EXPECT: has type '^i32' which manages resources
+shape BadUnique(as p: ^i32 | as val: u64)
+// EXPECT: has type '~i32' which manages resources
+shape BadShared(as p: ~i32 | as val: u64)
 
-fn main() {}
+fn main() -> i32 { return 0; }

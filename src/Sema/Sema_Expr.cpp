@@ -2282,6 +2282,7 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
 
 // Stage 5c: Object-Oriented Call Expression Check
 std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
+
   std::string CallName = Call->Callee;
 
   // 1. Primitives (Constructors/Casts) e.g. i32(42)

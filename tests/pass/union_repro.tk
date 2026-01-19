@@ -1,0 +1,7 @@
+
+shape MyUnion(as i: i32 | as f: f32)
+
+fn main() -> i32 {
+    auto u = MyUnion(i = 42) // Should be valid for Union
+    return 0
+}

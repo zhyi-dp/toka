@@ -24,6 +24,16 @@ shape Buffer<T, N_: usize> (
     len: usize
 )
 
+shape Union<T, U> (
+    as T |
+    as U
+)
+
+shape NamedUnion<T, U> (
+    as a:T |
+    as b:U
+)
+
 fn test_struct() {
     auto b = Box<i32>(val = 42)
     assert(b.val == 42, "Struct<i32> val failed")
@@ -69,6 +79,14 @@ fn test_array_wrapper() {
     assert(buf.data[2] == 3, "Buffer[2] failed")
 }
 
+fn test_union() {
+    auto u = Union<i32, f64>(10)
+    assert(u.0 == 10, "Union<i32, f64> val failed")
+
+    auto u2 = NamedUnion<i32, f64>(b = 3.14)
+    assert(u2.b == 3.14, "NamedUnion<i32, f64> val failed")
+}
+
 fn main() -> i32 {
     println("Testing Generic Shapes...")
     
@@ -76,6 +94,7 @@ fn main() -> i32 {
     test_tuple()
     test_enum()
     test_array_wrapper()
+    test_union()
     
     println("All Generic Shape tests passed!")
     return 0

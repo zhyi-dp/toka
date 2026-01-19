@@ -1,0 +1,13 @@
+
+shape DangerousUnion<T> (
+    as val: T |
+    as raw: u32
+)
+
+
+fn main() -> i32 {
+    // T becomes bool, which is forbidden in Unions via blacklisting
+    // EXPECT: has restricted type 'bool'
+    auto u = DangerousUnion<bool>(val = true);
+    return 0;
+}

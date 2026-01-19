@@ -1,0 +1,18 @@
+
+shape DangerousUnionResource<T> (
+    as ^val: T |   // T will be ^i32 (8 bytes)
+    as raw: u64   // u64 is 8 bytes
+)
+
+fn main() -> i32 {
+    // ^i32 is forbidden (HasDrop), but size aligns with u64.
+    // If we only get PARTIAL_INIT, this test would pass (incorrectly).
+    // We expect ERR_UNION_MEMBER_HAS_DROP or similar.
+
+
+
+    auto ^ptr = new i32(10);
+    // EXPECT: which manages resources
+    auto u = DangerousUnionResource<i32>(^val = ^ptr); 
+    return 0;
+}
