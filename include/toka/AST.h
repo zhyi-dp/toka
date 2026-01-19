@@ -507,6 +507,7 @@ public:
   FunctionDecl *ResolvedFn = nullptr;
   ExternDecl *ResolvedExtern = nullptr;
   ShapeDecl *ResolvedShape = nullptr;
+  int MatchedMemberIdx = -1; // For Union variant selection
 
   CallExpr(const std::string &callee, std::vector<std::unique_ptr<Expr>> args,
            std::vector<std::string> genericArgs = {})
@@ -857,6 +858,7 @@ struct DestructuredVar {
   std::string Name;
   bool IsValueMutable = false;
   bool IsValueNullable = false;
+  bool IsReference = false;
 };
 
 class DestructuringDecl : public Stmt {

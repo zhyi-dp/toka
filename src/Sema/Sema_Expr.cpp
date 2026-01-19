@@ -441,8 +441,36 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         HasError = true;
       }
     } else if (!srcType->equals(*targetType)) {
-      // Fallback for other things? E.g. compatible aliases
-      if (!isTypeCompatible(targetType, srcType)) {
+      // Rule: Union Reinterpretation
+      auto srcTypeResolved = resolveType(srcType);
+      bool srcIsUnion = false;
+      std::shared_ptr<ShapeType> st = nullptr;
+      if (srcTypeResolved->isShape()) {
+        st = std::dynamic_pointer_cast<ShapeType>(srcTypeResolved);
+        if (st->Decl && st->Decl->Kind == ShapeKind::Union) {
+          srcIsUnion = true;
+        }
+      }
+
+      if (srcIsUnion) {
+        bool found = false;
+        for (const auto &M : st->Decl->Members) {
+          auto mType = M.ResolvedType
+                           ? M.ResolvedType
+                           : toka::Type::fromString(resolveType(M.Type));
+          if (mType && targetType->equals(*mType)) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          // Fallback: check nested tuple/struct layout compatibility if needed?
+          // The design doc says: "TargetType must be one of the variants".
+          DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
+                                   srcType->toString(), Cast->TargetType);
+          HasError = true;
+        }
+      } else if (!isTypeCompatible(targetType, srcType)) {
         DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
                                  srcType->toString(), Cast->TargetType);
         HasError = true;
@@ -2706,6 +2734,73 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         }
         argIdx++;
       }
+      return toka::Type::fromString(Sh->Name);
+
+    } else if (Sh->Kind == ShapeKind::Union) {
+      // Union Constructor Matching (Literal Safe Fit)
+      Call->ResolvedShape = Sh;
+      if (Call->Args.size() != 1) {
+        DiagnosticEngine::report(
+            getLoc(Call), DiagID::ERR_GENERIC_PARSE,
+            "Union constructor expects exactly 1 argument (positional)");
+        HasError = true;
+        return toka::Type::fromString("unknown");
+      }
+
+      auto argType = checkExpr(Call->Args[0].get());
+      int exactMatchIdx = -1;
+      int exactMatchCount = 0;
+      int fitMatchIdx = -1;
+      int fitMatchCount = 0;
+
+      for (int i = 0; i < (int)Sh->Members.size(); ++i) {
+        auto memType =
+            Sh->Members[i].ResolvedType
+                ? Sh->Members[i].ResolvedType
+                : toka::Type::fromString(resolveType(Sh->Members[i].Type));
+        if (!memType)
+          continue;
+
+        if (argType->equals(*memType)) {
+          exactMatchCount++;
+          if (exactMatchIdx == -1)
+            exactMatchIdx = i;
+        } else if (isTypeCompatible(memType, argType)) {
+          fitMatchCount++;
+          if (fitMatchIdx == -1)
+            fitMatchIdx = i;
+        }
+      }
+
+      if (exactMatchCount == 1) {
+        Call->MatchedMemberIdx = exactMatchIdx;
+      } else if (exactMatchCount > 1) {
+        DiagnosticEngine::report(
+            getLoc(Call), DiagID::ERR_GENERIC_PARSE,
+            "Ambiguous Union constructor: multiple exact matches found for "
+            "type " +
+                argType->toString());
+        HasError = true;
+        return toka::Type::fromString("unknown");
+      } else if (fitMatchCount == 1) {
+        Call->MatchedMemberIdx = fitMatchIdx;
+      } else if (fitMatchCount > 1) {
+        DiagnosticEngine::report(
+            getLoc(Call), DiagID::ERR_GENERIC_PARSE,
+            "Ambiguous Union constructor: multiple safe-fit matches found for "
+            "type " +
+                argType->toString() + ". Use explicit cast.");
+        HasError = true;
+        return toka::Type::fromString("unknown");
+      } else {
+        DiagnosticEngine::report(getLoc(Call), DiagID::ERR_GENERIC_PARSE,
+                                 "No matching member found in Union '" +
+                                     Sh->Name + "' for type " +
+                                     argType->toString());
+        HasError = true;
+        return toka::Type::fromString("unknown");
+      }
+
       return toka::Type::fromString(Sh->Name);
 
     } else {

@@ -939,12 +939,19 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
 }
 
 llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
-  llvm::Value *initVal = genExpr(dest->Init.get()).load(m_Builder);
-  if (!initVal)
-    return nullptr;
+  PhysEntity initEnt = genExpr(dest->Init.get());
+  llvm::Value *initVal = nullptr;
 
-  llvm::Type *srcTy = initVal->getType();
-  if (!srcTy->isStructTy()) {
+  llvm::Type *srcTy = nullptr;
+  if (initEnt.isAddress) {
+    srcTy = initEnt.irType;
+  } else {
+    initVal = initEnt.load(m_Builder); // Actually returns value
+    if (initVal)
+      srcTy = initVal->getType();
+  }
+
+  if (!srcTy || !srcTy->isStructTy()) {
     error(dest, "Positional destructuring requires a struct or tuple type");
     return nullptr;
   }
@@ -958,12 +965,33 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
 
     const auto &v = dest->Variables[i];
     std::string vName = Type::stripMorphology(v.Name);
+    llvm::Type *memberTy = st->getElementType(i);
 
-    llvm::Value *val = m_Builder.CreateExtractValue(initVal, i, vName);
-    llvm::Type *ty = val->getType();
+    llvm::Value *finalVal = nullptr;
+    if (v.IsReference) {
+      if (!initEnt.isAddress) {
+        error(dest,
+              "Cannot take reference of a temporary value in destructuring");
+        return nullptr;
+      }
+      // [L-Value Destructuring] GEP to get address of member
+      finalVal =
+          m_Builder.CreateStructGEP(st, initEnt.value, i, vName + ".addr");
+    } else {
+      if (initEnt.isAddress) {
+        // [L-Value to R-Value] GEP + Load
+        llvm::Value *addr =
+            m_Builder.CreateStructGEP(st, initEnt.value, i, vName + ".addr");
+        finalVal = m_Builder.CreateLoad(memberTy, addr, vName);
+      } else {
+        // [R-Value Destructuring] ExtractValue
+        finalVal = m_Builder.CreateExtractValue(initVal, i, vName);
+      }
+    }
 
-    llvm::AllocaInst *alloca = m_Builder.CreateAlloca(ty, nullptr, vName);
-    m_Builder.CreateStore(val, alloca);
+    llvm::AllocaInst *alloca =
+        m_Builder.CreateAlloca(finalVal->getType(), nullptr, vName);
+    m_Builder.CreateStore(finalVal, alloca);
 
     m_NamedValues[vName] = alloca;
 
@@ -989,12 +1017,13 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
 
     TokaSymbol sym;
     sym.allocaPtr = alloca;
-    // For destructuring, metadata is often already flattened
-    fillSymbolMetadata(sym, "", false, false, false, false, v.IsValueMutable,
-                       v.IsValueNullable, ty);
+    // For destructuring, metadata is often already flattened.
+    // Use memberTy (the 'Meat') as the soul type.
+    fillSymbolMetadata(sym, "", false, false, false, v.IsReference,
+                       v.IsValueMutable, v.IsValueNullable, memberTy);
     sym.typeName = deducedType; // Set typeName in symbol
     sym.isRebindable = false;
-    sym.isContinuous = ty->isArrayTy();
+    sym.isContinuous = memberTy->isArrayTy();
     m_Symbols[vName] = sym;
 
     if (!m_ScopeStack.empty()) {

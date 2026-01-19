@@ -55,14 +55,20 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
     isPtrNullable = tok.HasNull;
   }
 
-  // Check for positional destructuring: let Type(v1, v2) = ...
-  if (check(TokenType::Identifier) && checkAt(1, TokenType::LParen)) {
-    Token typeName = advance();
+  // Check for positional destructuring: let Type(v1, v2) = ... or let (v1, v2)
+  // = ...
+  if ((check(TokenType::Identifier) && checkAt(1, TokenType::LParen)) ||
+      check(TokenType::LParen)) {
+    std::string typeName = "";
+    if (check(TokenType::Identifier)) {
+      typeName = advance().Text;
+    }
     consume(TokenType::LParen, "Expected '(' for destructuring");
     std::vector<DestructuredVar> vars;
     while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+      bool isRef = match(TokenType::Ampersand);
       Token varName = consume(TokenType::Identifier, "Expected variable name");
-      vars.push_back({varName.Text, varName.HasWrite, varName.HasNull});
+      vars.push_back({varName.Text, varName.HasWrite, varName.HasNull, isRef});
       if (!match(TokenType::Comma))
         break;
     }
@@ -70,9 +76,11 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
     consume(TokenType::Equal, "Expected '=' for destructuring");
     auto init = parseExpr();
     expectEndOfStatement();
-    auto node = std::make_unique<DestructuringDecl>(
-        typeName.Text, std::move(vars), std::move(init));
-    node->setLocation(typeName, m_CurrentFile);
+    auto node = std::make_unique<DestructuringDecl>(typeName, std::move(vars),
+                                                    std::move(init));
+    node->setLocation(previous(),
+                      m_CurrentFile); // Use previous (RParen or last consumed)
+                                      // as location anchor
     return node;
   }
 

@@ -10,8 +10,8 @@ fn main() -> i32 {
     auto u# = U(0xAABBCCDD)
     
     // Test Cast
-    auto (a, b, c, d) = u as (u8, u8, u8, u8) // Implicitly destructuring the tuple view
-    if a == 0xDD { 
+    auto (a, b, c, d) = u as (u8, u8, u8, u8)
+    if a as u32 == 0xDD { 
         println("a OK") 
     }
     
@@ -20,7 +20,7 @@ fn main() -> i32 {
     g# = 0xFF
     
     auto (a2, b2, c2, d2) = u as (u8, u8, u8, u8)
-    if b2 == 0xFF {
+    if b2 as u32 == 0xFF {
         println("Mutation OK") 
     }
     

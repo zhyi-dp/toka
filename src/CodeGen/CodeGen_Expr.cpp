@@ -132,7 +132,25 @@ void CodeGen::emitSoulAssignment(llvm::Value *soulAddr, llvm::Value *rhsVal,
                                  llvm::Type *type) {
   if (!soulAddr || !rhsVal || !type)
     return;
-  m_Builder.CreateStore(rhsVal, soulAddr);
+
+  llvm::Value *finalRHS = rhsVal;
+  if (finalRHS->getType() != type) {
+    if (finalRHS->getType()->isIntegerTy() && type->isIntegerTy()) {
+      finalRHS = m_Builder.CreateIntCast(finalRHS, type, false);
+    } else if (finalRHS->getType()->isFloatingPointTy() &&
+               type->isFloatingPointTy()) {
+      finalRHS = m_Builder.CreateFPCast(finalRHS, type);
+    } else {
+      // For other types, try bitcast if sizes match, otherwise it might be an
+      // error that Sema should have caught.
+      if (m_Module->getDataLayout().getTypeStoreSize(finalRHS->getType()) ==
+          m_Module->getDataLayout().getTypeStoreSize(type)) {
+        finalRHS = m_Builder.CreateBitCast(finalRHS, type);
+      }
+    }
+  }
+
+  m_Builder.CreateStore(finalRHS, soulAddr);
 }
 
 void CodeGen::emitEnvelopeRebind(llvm::Value *handleAddr, llvm::Value *rhsVal,
@@ -1063,7 +1081,23 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
 }
 
 PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
-  PhysEntity val_ent = genExpr(cast->Expression.get()).load(m_Builder);
+  PhysEntity srcEnt = genExpr(cast->Expression.get());
+
+  // Rule: Union L-Value Reinterpretation
+  std::shared_ptr<Type> srcTypeObj = cast->Expression->ResolvedType;
+  if (srcEnt.isAddress && srcTypeObj && srcTypeObj->isShape()) {
+    auto st = std::dynamic_pointer_cast<ShapeType>(srcTypeObj);
+    if (st->Decl && st->Decl->Kind == ShapeKind::Union) {
+      llvm::Value *addr = srcEnt.value;
+      llvm::Type *destTy = resolveType(cast->TargetType, false);
+      // [CRITICAL] bitcast address, preserving L-Value. DO NOT LOAD.
+      llvm::Value *newAddr =
+          m_Builder.CreateBitCast(addr, destTy->getPointerTo());
+      return PhysEntity(newAddr, cast->TargetType, destTy, true);
+    }
+  }
+
+  PhysEntity val_ent = srcEnt.load(m_Builder);
   llvm::Value *val = val_ent.load(m_Builder);
   if (!val)
     return nullptr;
@@ -1072,8 +1106,16 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
     return val;
 
   llvm::Type *srcType = val->getType();
-  if (srcType->isIntegerTy() && targetType->isIntegerTy())
-    return m_Builder.CreateIntCast(val, targetType, true);
+  if (srcType->isIntegerTy() && targetType->isIntegerTy()) {
+    bool isSigned = false;
+    if (cast->ResolvedType) {
+      isSigned = cast->ResolvedType->isSignedInteger();
+    } else {
+      // Fallback: check target type string if ResolvedType is missing
+      isSigned = (cast->TargetType.size() > 0 && cast->TargetType[0] == 'i');
+    }
+    return m_Builder.CreateIntCast(val, targetType, isSigned);
+  }
 
   // Floating Point Conversions
   if (srcType->isFloatingPointTy() && targetType->isFloatingPointTy()) {
@@ -1903,7 +1945,9 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         }
 
         int memberIdx = -1;
-        if (isNamed) {
+        if (sh->Kind == ShapeKind::Union) {
+          memberIdx = call->MatchedMemberIdx;
+        } else if (isNamed) {
           for (size_t i = 0; i < sh->Members.size(); ++i) {
             if (sh->Members[i].Name == fieldName) {
               memberIdx = (int)i;
@@ -1921,7 +1965,17 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
             return nullptr;
 
           // Auto-cast if needed (e.g. integer promotion) - minimal support
-          llvm::Type *destTy = st->getElementType(memberIdx);
+          llvm::Type *destTy = nullptr;
+          if (sh->Kind == ShapeKind::Union) {
+            const ShapeMember &M = sh->Members[memberIdx];
+            if (M.ResolvedType) {
+              destTy = getLLVMType(M.ResolvedType);
+            } else {
+              destTy = resolveType(M.Type, false);
+            }
+          } else {
+            destTy = st->getElementType(memberIdx);
+          }
           if (val->getType() != destTy) {
             if (val->getType()->isIntegerTy() && destTy->isIntegerTy()) {
               val = m_Builder.CreateIntCast(val, destTy, true);
@@ -1999,18 +2053,27 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
             llvm::Value *falseStr = m_Builder.CreateGlobalStringPtr("false");
             pVal = m_Builder.CreateSelect(val, trueStr, falseStr);
             spec = "%s";
+          } else if (ty->isIntegerTy(8) || semanticType == "char" ||
+                     semanticType == "u8" || semanticType == "i8") {
+            spec = semanticType == "char" ? "%c" : "%d";
+            if (semanticType == "u8") {
+              pVal = m_Builder.CreateZExtOrBitCast(
+                  val, llvm::Type::getInt32Ty(m_Context));
+            } else {
+              pVal = m_Builder.CreateSExtOrBitCast(
+                  val, llvm::Type::getInt32Ty(m_Context));
+            }
           } else if (ty->isIntegerTy(64)) {
-            spec = "%lld";
+            spec = (semanticType.size() > 0 && semanticType[0] == 'u') ? "%llu"
+                                                                       : "%lld";
           } else if (ty->isIntegerTy()) {
-            spec = "%d";
+            spec = (semanticType.size() > 0 && semanticType[0] == 'u') ? "%u"
+                                                                       : "%d";
           } else if (ty->isDoubleTy()) {
             spec = "%f";
           } else if (ty->isFloatTy()) {
             spec = "%f";
             pVal = m_Builder.CreateFPExt(val, m_Builder.getDoubleTy());
-          } else if (ty->isIntegerTy(8) || semanticType == "char" ||
-                     semanticType == "u8" || semanticType == "i8") {
-            spec = "%c";
           } else if (semanticType == "*char" || semanticType == "str" ||
                      semanticType == "String") {
             // Explicit check for String type (including String struct if we

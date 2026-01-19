@@ -477,7 +477,8 @@ void Sema::checkStmt(Stmt *S) {
     auto declType = toka::Type::fromString(Destruct->TypeName);
 
     // Basic check: declType should match initType
-    if (initType->toString() != "unknown" && initType->toString() != "tuple" &&
+    if (!Destruct->TypeName.empty() && initType->toString() != "unknown" &&
+        initType->toString() != "tuple" &&
         !isTypeCompatible(declType, initType)) {
       DiagnosticEngine::report(getLoc(Destruct), DiagID::ERR_TYPE_MISMATCH,
                                initType->toString(), declType->toString());
@@ -485,23 +486,42 @@ void Sema::checkStmt(Stmt *S) {
     }
 
     std::string soulName = Type::stripMorphology(Destruct->TypeName);
-    if (ShapeMap.count(soulName)) {
+    if (!soulName.empty() && ShapeMap.count(soulName)) {
       ShapeDecl *SD = ShapeMap[soulName];
       size_t Limit = std::min(SD->Members.size(), Destruct->Variables.size());
       for (size_t i = 0; i < Limit; ++i) {
         SymbolInfo Info;
-        // Simple type for destructuring vars (usually primitives or basic
-        // shapes)
         std::string fullType = SD->Members[i].Type;
         if (Destruct->Variables[i].IsValueMutable)
           fullType += "#";
         if (Destruct->Variables[i].IsValueNullable)
           fullType += "?";
-        Info.TypeObj = toka::Type::fromString(fullType);
-
+        auto typeObj = toka::Type::fromString(fullType);
+        if (Destruct->Variables[i].IsReference) {
+          Info.TypeObj = std::make_shared<toka::ReferenceType>(typeObj);
+        } else {
+          Info.TypeObj = typeObj;
+        }
         CurrentScope->define(Destruct->Variables[i].Name, Info);
       }
-    } else if (TypeAliasMap.count(soulName)) {
+    } else if (initType->typeKind == Type::Tuple) {
+      auto tt = std::dynamic_pointer_cast<TupleType>(initType);
+      size_t Limit = std::min(tt->Elements.size(), Destruct->Variables.size());
+      for (size_t i = 0; i < Limit; ++i) {
+        SymbolInfo Info;
+        auto memType = tt->Elements[i];
+        if (Destruct->Variables[i].IsReference) {
+          Info.TypeObj = std::make_shared<toka::ReferenceType>(memType);
+        } else {
+          Info.TypeObj = memType;
+        }
+        if (Destruct->Variables[i].IsValueMutable)
+          Info.TypeObj->IsWritable = true;
+        if (Destruct->Variables[i].IsValueNullable)
+          Info.TypeObj->IsNullable = true;
+        CurrentScope->define(Destruct->Variables[i].Name, Info);
+      }
+    } else if (!soulName.empty() && TypeAliasMap.count(soulName)) {
       for (const auto &Var : Destruct->Variables) {
         SymbolInfo Info;
         std::string fullType = "i32"; // Fallback
@@ -510,14 +530,12 @@ void Sema::checkStmt(Stmt *S) {
         if (Var.IsValueNullable)
           fullType += "?";
         Info.TypeObj = toka::Type::fromString(fullType);
-
         CurrentScope->define(Var.Name, Info);
       }
     } else {
       for (const auto &Var : Destruct->Variables) {
         SymbolInfo Info;
         Info.TypeObj = toka::Type::fromString("unknown");
-        CurrentScope->define(Var.Name, Info);
         CurrentScope->define(Var.Name, Info);
       }
     }
