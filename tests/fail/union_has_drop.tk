@@ -1,0 +1,25 @@
+shape Resource (
+    val: ^i32
+)
+
+shape IllegalUnion (
+    as r: Resource |
+    as i: i32
+)
+
+shape IllegalSmartPtrUnion (
+    as p: ^i32 |
+    as i: i32
+)
+
+shape IllegalArrayUnion (
+    as arr: [Resource; 2] |
+    as i: i32
+)
+
+shape SafeUnion (
+    as p: *Resource | // Raw pointer is safe
+    as i: i32
+)
+
+fn main() { }

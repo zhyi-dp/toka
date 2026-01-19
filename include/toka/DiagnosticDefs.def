@@ -42,6 +42,8 @@ DIAG(ERR_MISSING_MEMBER,     Error, "Missing initialization for member '{}' of s
 DIAG(ERR_DUPLICATE_FIELD,    Error, "Duplicate field '{}' in shape initialization")
 DIAG(ERR_UNION_PARTIAL_INIT, Error, "Partial initialization of Union '{}': variant '{}' size {} is smaller than Union size {}")
 DIAG(ERR_UNION_INVALID_MEMBER, Error, "Union member '{}' cannot be type '{}'; bool and u8 are too small for safe union storage")
+DIAG(ERR_UNION_RESOURCE_TYPE, Error, "Union member '{}' has type '{}' which manages resources (HasDrop); unions must be data-only")
+DIAG(NOTE_UNION_RESOURCE_TIP, Note, "Unions cannot track active variants to drop resources safely; consider using a raw pointer '*{}' or 'ManuallyDrop<T>'")
 
 // --- Sema: Traits & Interfaces ---
 DIAG(ERR_SIGNATURE_MISMATCH, Error, "Method signature mismatch: trait defines '{}' as {}, but implementation is {}")

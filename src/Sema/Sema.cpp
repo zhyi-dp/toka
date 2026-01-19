@@ -635,10 +635,68 @@ void Sema::analyzeShapes(Module &M) {
       HasError = true;
     }
 
-    if (props.HasDrop && !hasExplicitDrop) {
-      DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RESOURCE,
+    if (props.HasRawPtr && !hasExplicitDrop) {
+      DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RAW_PTR,
                                S->Name);
       HasError = true;
+    }
+
+    // [NOTE] ERR_UNSAFE_RESOURCE (HasDrop && !ExplicitDrop) is disabled.
+    // Smart pointers (HasDrop=true) do not require explicit drop in their
+    // containing struct because CodeGen handles their destruction
+    // automatically. The check below for Unions, however, strictly bans HasDrop
+    // types.
+
+    // [Rule] Union Safety: No Resource Types (HasDrop)
+    if (S->Kind == ShapeKind::Union) {
+      for (auto &memb : S->Members) {
+        bool isResource = false;
+        // 1. Smart Pointers
+        if (memb.IsUnique || memb.IsShared) {
+          isResource = true;
+        }
+        // 2. Value types that have Drop
+        //    (Recursive structures, or types with Drop impl)
+        //    We can check the computed props of the member's type if it is a
+        //    Shape
+        else if (!memb.HasPointer && !memb.IsReference) {
+          std::string baseType = toka::Type::stripMorphology(memb.Type);
+          // Unwrap arrays first?
+          // Actually computeShapeProperties handles recursion if we called it
+          // on baseType. But wait, computeShapeProperties is called on Shapes.
+          // If 'memb.Type' is [T; 2], baseType might be [T; 2] or we need to
+          // handle it. Let's use the resolved type if possible, or simple
+          // recursion. 'memb.ResolvedType' should be available now.
+
+          if (memb.ResolvedType) {
+            std::shared_ptr<toka::Type> T = memb.ResolvedType;
+            // Unwrap Arrays
+            while (T->isArray()) {
+              T = std::static_pointer_cast<toka::ArrayType>(T)->ElementType;
+            }
+
+            if (T->isSmartPointer()) {
+              isResource = true;
+            } else if (T->isShape()) {
+              std::string shapeName =
+                  std::static_pointer_cast<toka::ShapeType>(T)->Name;
+              if (m_ShapeProps.count(shapeName) &&
+                  m_ShapeProps[shapeName].HasDrop) {
+                isResource = true;
+              }
+            }
+          }
+        }
+
+        if (isResource) {
+          DiagnosticEngine::report(getLoc(S.get()),
+                                   DiagID::ERR_UNION_RESOURCE_TYPE, memb.Name,
+                                   memb.Type);
+          DiagnosticEngine::report(getLoc(S.get()),
+                                   DiagID::NOTE_UNION_RESOURCE_TIP, memb.Type);
+          HasError = true;
+        }
+      }
     }
   }
 }
@@ -684,13 +742,50 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
         props.HasRawPtr = true;
       }
 
-      if (member.IsUnique || member.IsShared) { // ^T or ~T
-        props.HasDrop = true;                   // Smart pointers have drop
+      std::string typeStr = member.Type;
+      // Handle flag-based or string-based sigils
+      if (member.IsUnique || member.IsShared || typeStr.rfind("^", 0) == 0 ||
+          typeStr.rfind("~", 0) == 0) {
+        props.HasDrop = true;
       }
 
-      // If it's a value type (member.Type), recurse
-      if (!member.HasPointer && !member.IsUnique && !member.IsShared &&
-          !member.IsReference) {
+      // Check if it's an array string "[T; N]"
+      // Note: This is a hacky parse, but consistent with current AST
+      if (typeStr.size() > 0 && typeStr.front() == '[') {
+        size_t semi = typeStr.rfind(';');
+        if (semi != std::string::npos) {
+          std::string inner = typeStr.substr(1, semi - 1);
+          // Recurse on inner type
+          if (inner.rfind("^", 0) == 0 || inner.rfind("~", 0) == 0) {
+            props.HasDrop = true;
+          } else {
+            if (ShapeMap.count(inner)) {
+              computeShapeProperties(inner, M);
+              if (m_ShapeProps[inner].HasDrop)
+                props.HasDrop = true;
+              if (m_ShapeProps[inner].HasRawPtr)
+                props.HasRawPtr = true;
+            }
+            // Check explicit drop on inner type (e.g. valid struct inside
+            // array)
+            bool innerHasDrop = false;
+            for (auto &I : M.Impls) {
+              if (I->TypeName == inner) {
+                for (auto &M : I->Methods) {
+                  if (M->Name == "drop") {
+                    innerHasDrop = true;
+                    break;
+                  }
+                }
+              }
+            }
+            if (innerHasDrop)
+              props.HasDrop = true;
+          }
+        }
+      } else if (!member.HasPointer && !member.IsUnique && !member.IsShared &&
+                 !member.IsReference && typeStr.rfind("^", 0) != 0 &&
+                 typeStr.rfind("~", 0) != 0) {
         // It's a value type T. Check if T is a Shape.
         std::string baseType = member.Type;
         if (ShapeMap.count(baseType)) {
@@ -702,10 +797,7 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
             props.HasDrop = true;
         }
 
-        // Also check if type T has 'drop' method itself (encap) even if not
-        // a Shape recursion? This is covered by "if T has drop method, then
-        // HasDrop=true". We check: does T have a "drop" method? Iterate
-        // Impls again?
+        // Also check if type T has 'drop' method itself (encap)
         bool memberTypeHasExplicitDrop = false;
         for (auto &I : M.Impls) {
           if (I->TypeName == baseType) {
