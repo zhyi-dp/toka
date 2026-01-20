@@ -536,7 +536,12 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
   consume(TokenType::Equal, "Expected '='");
 
   std::string targetType = parseTypeString();
-  expectEndOfStatement();
+
+  if (previous().Kind == TokenType::Greater && peek().HasNewlineBefore) {
+    // Allow implicit semicolon for generic alias
+  } else {
+    expectEndOfStatement();
+  }
 
   auto decl =
       std::make_unique<TypeAliasDecl>(isPub, name.Text, targetType, isStrong);

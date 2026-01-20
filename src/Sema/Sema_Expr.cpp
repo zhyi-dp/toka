@@ -2690,8 +2690,32 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
     // Fallback: Check if it's a type alias to a shape
     if (!Fn && !Ext && !Sh && TypeAliasMap.count(CallName)) {
       std::string target = TypeAliasMap[CallName].Target;
-      if (ShapeMap.count(target))
+      // [FIX] Generic Alias Resolution: Resolve the type string first
+      // This handles 'alias Node = GenericNode<i32>' by triggering
+      // instantiation and returning the mangled ShapeType.
+      auto potentialType = toka::Type::fromString(target);
+      if (potentialType && !potentialType->isUnknown()) {
+        auto resolved = resolveType(potentialType);
+        if (auto shapeT =
+                std::dynamic_pointer_cast<toka::ShapeType>(resolved)) {
+          if (shapeT->Decl) {
+            Sh = shapeT->Decl;
+            // Update Callee to the concrete mangled name (e.g. Generic_M_i32)
+            // This ensures CodeGen calls the correct function.
+            Call->Callee = shapeT->Name;
+          }
+        }
+      }
+
+      // Legacy/Simple Fallback (if resolveType didn't yield a ShapeDecl logic
+      // above covers most)
+      if (!Sh && ShapeMap.count(target)) {
         Sh = ShapeMap[target];
+        // If simple alias, we might also want to update Callee?
+        // Typically code expects Callee to be the Shape Name.
+        // For 'alias P = Point', target='Point'.
+        Call->Callee = target;
+      }
     }
   }
   // Local Scope Lookup (Local, Imported, or Shadowed)

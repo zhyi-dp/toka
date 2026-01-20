@@ -1,0 +1,26 @@
+
+import std/io::println
+
+shape GenericNode<T>(
+    val: T
+)
+
+alias AliasNode = GenericNode<i32>
+type StrongNode = GenericNode<i32>
+
+fn main() -> i32 {
+    auto n1# = AliasNode(val = 10)
+    auto n2 = GenericNode<i32>(val = 20)
+    
+    // Alias should be compatible with underlying
+    n1 = n2 
+    println("Alias work")
+
+    auto s1 = StrongNode(val = 30)
+    // s1 = n2 
+    
+    // Check if StrongNode works as its own type
+    println("Strong work")
+
+    return 0
+}
