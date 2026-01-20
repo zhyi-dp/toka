@@ -1142,11 +1142,14 @@ public:
   std::string TraitName;
   std::vector<std::unique_ptr<FunctionDecl>> Methods;
   std::vector<EncapEntry> EncapEntries;
+  std::vector<GenericParam> GenericParams; // [NEW] e.g. <T>
 
   ImplDecl(const std::string &name,
            std::vector<std::unique_ptr<FunctionDecl>> methods,
-           const std::string &traitName = "")
-      : TypeName(name), Methods(std::move(methods)), TraitName(traitName) {}
+           const std::string &traitName = "",
+           std::vector<GenericParam> generics = {})
+      : TypeName(name), Methods(std::move(methods)), TraitName(traitName),
+        GenericParams(std::move(generics)) {}
   std::string toString() const override {
     return "Impl(" + (TraitName.empty() ? "" : TraitName + " for ") + TypeName +
            ")";

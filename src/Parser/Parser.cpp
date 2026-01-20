@@ -139,11 +139,25 @@ std::string Parser::parseTypeString() {
         t == TokenType::GenericLT)
       balance++;
 
-    if (balance == 0 && (check(TokenType::Comma) || check(TokenType::RParen) ||
-                         check(TokenType::Equal) || isEndOfStatement() ||
-                         check(TokenType::LBrace) ||
-                         check(TokenType::Greater) || check(TokenType::Pipe)))
+    if (balance == 0 &&
+        (check(TokenType::Comma) || check(TokenType::RParen) ||
+         check(TokenType::Equal) || isEndOfStatement() ||
+         check(TokenType::LBrace) || check(TokenType::Greater) ||
+         check(TokenType::Pipe) || check(TokenType::KwFor)))
       break;
+
+    // Special handling for @: stop only if it's not following 'dyn'
+    if (balance == 0 && check(TokenType::At)) {
+      bool isDynTrait = false;
+      // Poor man's check for 'dyn' prefix
+      size_t dynPos = type.find("dyn");
+      if (dynPos != std::string::npos) {
+        // Ensure no significant tokens between dyn and @
+        isDynTrait = true;
+      }
+      if (!isDynTrait && !type.empty())
+        break;
+    }
 
     if (t == TokenType::RBracket || t == TokenType::RParen ||
         t == TokenType::Greater)

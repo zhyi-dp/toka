@@ -44,6 +44,8 @@ bool Sema::checkModule(Module &M) {
 
   // 2c. Check Impl blocks (NEW: Proper Self Injection)
   for (auto &Impl : M.Impls) {
+    if (!Impl->GenericParams.empty())
+      continue; // Skip templates, they are checked upon instantiation
     checkImpl(Impl.get());
   }
   // ...
@@ -338,85 +340,104 @@ void Sema::registerGlobals(Module &M) {
   }
 
   for (auto &Impl : M.Impls) {
+    // [NEW] Generic Impl Registration (Lazy)
+    if (!Impl->GenericParams.empty()) {
+      std::string baseName = Impl->TypeName;
+      size_t lt = baseName.find('<');
+      if (lt != std::string::npos)
+        baseName = baseName.substr(0, lt);
+      GenericImplMap[baseName] = Impl.get();
+      continue; // Skip standard registration for templates
+    }
+
     if (Impl->TraitName == "encap") {
       EncapMap[Impl->TypeName] = Impl->EncapEntries;
       // removed continue to allow method registration (hybrid trait)
     }
-    // [New] Resolve 'Self' in Method Signatures for External Callers
-    // We must replace 'Self' with the concrete (or generic) TypeName
-    // so that callers (like main) typically don't fail to resolve 'Self'.
-    std::string selfTy = Impl->TypeName;
-    for (auto &Method : Impl->Methods) {
-      if (Method->ReturnType == "Self") {
-        Method->ReturnType = selfTy;
+    registerImpl(Impl.get());
+  }
+}
+
+void Sema::registerImpl(ImplDecl *Impl) {
+  // [New] Resolve 'Self' in Method Signatures for External Callers
+  // We must replace 'Self' with the concrete (or generic) TypeName
+  // so that callers (like main) typically don't fail to resolve 'Self'.
+  std::string selfTy = Impl->TypeName;
+  for (auto &Method : Impl->Methods) {
+    if (Method->ReturnType == "Self") {
+      Method->ReturnType = selfTy;
+    }
+    for (auto &Arg : Method->Args) {
+      if (Arg.Type == "Self") {
+        Arg.Type = selfTy;
       }
-      for (auto &Arg : Method->Args) {
-        if (Arg.Type == "Self") {
-          Arg.Type = selfTy;
+    }
+  }
+
+  std::set<std::string> implemented;
+  std::string resolvedTypeName = resolveType(Impl->TypeName);
+  for (auto &Method : Impl->Methods) {
+    MethodMap[resolvedTypeName][Method->Name] = Method->ReturnType;
+    MethodDecls[resolvedTypeName][Method->Name] = Method.get();
+    implemented.insert(Method->Name);
+  }
+
+  // Populate ImplMap
+  if (!Impl->TraitName.empty()) {
+    std::string implKey = resolvedTypeName + "@" + Impl->TraitName;
+    for (auto &Method : Impl->Methods) {
+      ImplMap[implKey][Method->Name] = Method.get();
+    }
+  }
+
+  // Handle Trait Defaults
+  if (!Impl->TraitName.empty()) {
+    if (TraitMap.count(Impl->TraitName)) {
+      TraitDecl *TD = TraitMap[Impl->TraitName];
+      for (auto &Method : TD->Methods) {
+        if (implemented.count(Method->Name)) {
+          // Verify Signature Match (Pub/Priv)
+          FunctionDecl *ImplMethod = nullptr;
+          for (auto &m : Impl->Methods) {
+            if (m->Name == Method->Name) {
+              ImplMethod = m.get();
+              break;
+            }
+          }
+          if (ImplMethod) {
+            if (ImplMethod->IsPub != Method->IsPub) {
+              std::string traitVis = Method->IsPub ? "pub" : "private";
+              std::string implVis = ImplMethod->IsPub ? "pub" : "private";
+              DiagnosticEngine::report(getLoc(ImplMethod),
+                                       DiagID::ERR_SIGNATURE_MISMATCH,
+                                       Method->Name, traitVis, implVis);
+              HasError = true;
+            }
+          }
+          continue;
+        }
+        if (Method->Body) {
+          // Trait provides a default implementation
+          MethodMap[resolvedTypeName][Method->Name] = Method->ReturnType;
+          MethodDecls[resolvedTypeName][Method->Name] = Method.get();
+        } else {
+          DiagnosticEngine::report(getLoc(Impl), DiagID::ERR_MISSING_IMPL,
+                                   Method->Name, Impl->TraitName);
+          HasError = true;
         }
       }
+    } else {
+      DiagnosticEngine::report(getLoc(Impl), DiagID::ERR_TRAIT_NOT_FOUND,
+                               Impl->TraitName, Impl->TypeName);
+      HasError = true;
     }
+  }
 
-    std::set<std::string> implemented;
-    for (auto &Method : Impl->Methods) {
-      MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
-      MethodDecls[Impl->TypeName][Method->Name] = Method.get();
-      implemented.insert(Method->Name);
-    }
-
-    // Populate ImplMap
-    if (!Impl->TraitName.empty()) {
-      std::string implKey = Impl->TypeName + "@" + Impl->TraitName;
-      for (auto &Method : Impl->Methods) {
-        ImplMap[implKey][Method->Name] = Method.get();
-      }
-    }
-
-    // Handle Trait Defaults
-    if (!Impl->TraitName.empty()) {
-      if (TraitMap.count(Impl->TraitName)) {
-        TraitDecl *TD = TraitMap[Impl->TraitName];
-        for (auto &Method : TD->Methods) {
-          if (implemented.count(Method->Name)) {
-            // Verify Signature Match (Pub/Priv)
-            // We need to find the Impl method
-            FunctionDecl *ImplMethod = nullptr;
-            // Search in Impl->Methods
-            for (auto &m : Impl->Methods) {
-              if (m->Name == Method->Name) {
-                ImplMethod = m.get();
-                break;
-              }
-            }
-            if (ImplMethod) {
-              if (ImplMethod->IsPub != Method->IsPub) {
-                std::string traitVis = Method->IsPub ? "pub" : "private";
-                std::string implVis = ImplMethod->IsPub ? "pub" : "private";
-                DiagnosticEngine::report(getLoc(ImplMethod),
-                                         DiagID::ERR_SIGNATURE_MISMATCH,
-                                         Method->Name, traitVis, implVis);
-                HasError = true;
-              }
-            }
-            continue;
-          }
-          if (Method->Body) {
-            // Trait provides a default implementation
-            MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
-            MethodDecls[Impl->TypeName][Method->Name] = Method.get();
-          } else {
-            DiagnosticEngine::report(getLoc(Impl.get()),
-                                     DiagID::ERR_MISSING_IMPL, Method->Name,
-                                     Impl->TraitName);
-            HasError = true;
-          }
-        }
-      } else {
-        DiagnosticEngine::report(getLoc(Impl.get()),
-                                 DiagID::ERR_TRAIT_NOT_FOUND, Impl->TraitName,
-                                 Impl->TypeName);
-        HasError = true;
-      }
+  // [Toka] Resource Management: Mark type as having drop if @encap is
+  // implemented
+  if (Impl->TraitName == "@encap") {
+    if (implemented.count("drop")) {
+      m_ShapeProps[resolvedTypeName].HasDrop = true;
     }
   }
 }
@@ -497,18 +518,19 @@ void Sema::checkImpl(ImplDecl *Impl) {
   // (Assuming Impl<T> is handled similarly to Functions, but for now we focus
   // on non-generic Impl or instantiated ones) Actually, ImplDecl doesn't have
   // GenericParams on itself usually? It refers to a Generic Type. We should
-  // check if the TargetType is generic? For "impl<T> Box<T>", the ImplDecl has
-  // "Box<T>" as TypeName. We need to resolve it.
+  // check if the TargetType is generic? For "impl<T> Box<T>", the ImplDecl
+  // has "Box<T>" as TypeName. We need to resolve it.
 
   enterScope(); // Helper Scope for Self Injection
 
   // 1. Resolve Target Type (The "Self")
   std::shared_ptr<toka::Type> SelfType = nullptr;
 
-  // Resolve the type name. Note: resolveType handles "Box<T>" if instantiated,
-  // or "Box" if we are inside a generic context (which we aren't yet for global
-  // impls). For now, let's assume we are checking concrete impls OR we are just
-  // setting up the scope for "Self" to alias to "TypeName".
+  // Resolve the type name. Note: resolveType handles "Box<T>" if
+  // instantiated, or "Box" if we are inside a generic context (which we
+  // aren't yet for global impls). For now, let's assume we are checking
+  // concrete impls OR we are just setting up the scope for "Self" to alias to
+  // "TypeName".
 
   // Create a Type Object for the Impl's Target
   // We use Type::fromString but we might want to resolve aliases.
@@ -581,8 +603,8 @@ void Sema::checkShapeSovereignty() {
 
 void Sema::analyzeShapes(Module &M) {
   // Pass 2: Resolve Member Types (The "Filling" Phase)
-  // This must happen after registerGlobals (Pass 1) so that all Shape names are
-  // known.
+  // This must happen after registerGlobals (Pass 1) so that all Shape names
+  // are known.
   for (auto &S : M.Shapes) {
     // [NEW] Skip analysis for Generic Templates. They are analyzed only upon
     // Instantiation.
@@ -590,7 +612,8 @@ void Sema::analyzeShapes(Module &M) {
       continue;
 
     // We only resolve members for Struct, Tuple, Union (Not Enum variants
-    // purely yet? Enums have members too) Actually ShapeMember is used for all.
+    // purely yet? Enums have members too) Actually ShapeMember is used for
+    // all.
     for (auto &member : S->Members) {
       if (member.ResolvedType)
         continue; // Already resolved?
@@ -607,15 +630,16 @@ void Sema::analyzeShapes(Module &M) {
         prefix += "*";
 
       // 2. Construct Full Type String
-      // Note: member.Type is the raw string from parser (e.g. "Node" or "i32")
+      // Note: member.Type is the raw string from parser (e.g. "Node" or
+      // "i32")
       std::string fullTypeStr = prefix + member.Type;
 
       // 3. Resolve to Canonical Name (handles imports, aliases)
       // We use the full string so resolveType can handle the modifiers if it
       // needs to, but usually resolveType expects the base name if we passed
       // bools. However, type strings like "^Node" are valid for resolveType
-      // lookup if "Node" is a Shape. Let's use the standard resolveType(string)
-      // which handles everything.
+      // lookup if "Node" is a Shape. Let's use the standard
+      // resolveType(string) which handles everything.
       std::string resolvedName = resolveType(fullTypeStr);
 
       // 4. Create Type Object
@@ -710,17 +734,11 @@ void Sema::analyzeShapes(Module &M) {
       HasError = true;
     }
 
-    if (props.HasRawPtr && !hasExplicitDrop) {
-      DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RAW_PTR,
+    if (props.HasManualDrop && !hasExplicitDrop) {
+      DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RESOURCE,
                                S->Name);
       HasError = true;
     }
-
-    // [NOTE] ERR_UNSAFE_RESOURCE (HasDrop && !ExplicitDrop) is disabled.
-    // Smart pointers (HasDrop=true) do not require explicit drop in their
-    // containing struct because CodeGen handles their destruction
-    // automatically. The check below for Unions, however, strictly bans HasDrop
-    // types.
 
     // [Rule] Union Safety: No Resource Types (HasDrop)
     if (S->Kind == ShapeKind::Union) {
@@ -738,10 +756,10 @@ void Sema::analyzeShapes(Module &M) {
           std::string baseType = toka::Type::stripMorphology(memb.Type);
           // Unwrap arrays first?
           // Actually computeShapeProperties handles recursion if we called it
-          // on baseType. But wait, computeShapeProperties is called on Shapes.
-          // If 'memb.Type' is [T; 2], baseType might be [T; 2] or we need to
-          // handle it. Let's use the resolved type if possible, or simple
-          // recursion. 'memb.ResolvedType' should be available now.
+          // on baseType. But wait, computeShapeProperties is called on
+          // Shapes. If 'memb.Type' is [T; 2], baseType might be [T; 2] or we
+          // need to handle it. Let's use the resolved type if possible, or
+          // simple recursion. 'memb.ResolvedType' should be available now.
 
           if (memb.ResolvedType) {
             std::shared_ptr<toka::Type> T = memb.ResolvedType;
@@ -870,6 +888,8 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
             props.HasRawPtr = true;
           if (subProps.HasDrop)
             props.HasDrop = true;
+          if (subProps.HasManualDrop)
+            props.HasManualDrop = true;
         }
 
         // Also check if type T has 'drop' method itself (encap)
@@ -884,8 +904,23 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
             }
           }
         }
-        if (memberTypeHasExplicitDrop)
+        if (memberTypeHasExplicitDrop) {
           props.HasDrop = true;
+          props.HasManualDrop = true;
+        }
+      }
+    }
+  }
+
+  // Check if THIS shape has an explicit drop impl
+  for (auto &I : M.Impls) {
+    if (I->TypeName == shapeName) {
+      for (auto &Met : I->Methods) {
+        if (Met->Name == "drop") {
+          props.HasDrop = true;
+          props.HasManualDrop = true;
+          break;
+        }
       }
     }
   }
@@ -936,10 +971,6 @@ FunctionDecl *Sema::instantiateGenericFunction(
   // Instantiate
   depth++;
 
-  std::cerr << "DEBUG-INST: Instantiating " << Template->Name << " as "
-            << mangledName << " Body: " << (Template->Body ? "Yes" : "No")
-            << "\n";
-
   // 1. Clone
   auto ClonedNode = Template->clone();
   FunctionDecl *Instance = static_cast<FunctionDecl *>(ClonedNode.release());
@@ -986,8 +1017,8 @@ FunctionDecl *Sema::instantiateGenericFunction(
   }
 
   // [NEW] 2.5 Substitute Generic Types in Signature
-  // We must update Arg types and ReturnType so callers see concrete types (e.g.
-  // i32 instead of T)
+  // We must update Arg types and ReturnType so callers see concrete types
+  // (e.g. i32 instead of T)
   std::map<std::string, std::string> substMap;
   for (size_t i = 0; i < Template->GenericParams.size(); ++i) {
     substMap[Template->GenericParams[i].Name] =
@@ -1017,11 +1048,7 @@ FunctionDecl *Sema::instantiateGenericFunction(
     applySubst(Arg.Type);
     Arg.ResolvedType = nullptr;
   }
-  std::cerr << "DEBUG-SUBST: ReturnType Before: '" << Instance->ReturnType
-            << "'\n";
   applySubst(Instance->ReturnType);
-  std::cerr << "DEBUG-SUBST: ReturnType After: '" << Instance->ReturnType
-            << "'\n";
 
   // [NEW] Substitute types in Body (Recursive Traversal)
   // We need to traverse Stmt and Expr to find nodes that store type strings:
@@ -1042,7 +1069,8 @@ FunctionDecl *Sema::instantiateGenericFunction(
     visitExpr = [&](Expr *e) {
       if (!e)
         return;
-      // Clear ResolvedType on ALL expressions to force re-type-check/resolution
+      // Clear ResolvedType on ALL expressions to force
+      // re-type-check/resolution
       e->ResolvedType = nullptr;
 
       if (auto *ne = dynamic_cast<NewExpr *>(e)) {
@@ -1050,8 +1078,6 @@ FunctionDecl *Sema::instantiateGenericFunction(
         if (ne->Initializer)
           visitExpr(ne->Initializer.get());
       } else if (auto *ae = dynamic_cast<AllocExpr *>(e)) {
-        std::cerr << "DEBUG-VISIT: AllocExpr check subst on Type: '"
-                  << ae->TypeName << "'\n";
         applySubst(ae->TypeName);
         if (ae->Initializer)
           visitExpr(ae->Initializer.get());
@@ -1134,22 +1160,22 @@ FunctionDecl *Sema::instantiateGenericFunction(
         // passed by pointer The caller usually holds 'std::unique_ptr<Expr>&'
         // but we have 'Expr*'. However, RepeatedArrayExpr above handles its
         // specific child case. For general cases (e.g. 'return N'), replacing
-        // VariableExpr 'N' with NumberExpr '5' is harder without access to the
-        // parent's unique_ptr. BUT: 'instantiateGenericFunction' visitor
-        // infrastructure is weak here. Fortunately, for 'return N', 'checkExpr'
-        // handles Variable lookup into Scope. The ERROR was specific to
-        // RepeatedArrayExpr which demands a Literal/Const. By fixing
-        // RepeatedArrayExpr specific logic above, we solve the array size
-        // issue. For other cases, Scope Injection (N_ = 5) should suffice.
+        // VariableExpr 'N' with NumberExpr '5' is harder without access to
+        // the parent's unique_ptr. BUT: 'instantiateGenericFunction' visitor
+        // infrastructure is weak here. Fortunately, for 'return N',
+        // 'checkExpr' handles Variable lookup into Scope. The ERROR was
+        // specific to RepeatedArrayExpr which demands a Literal/Const. By
+        // fixing RepeatedArrayExpr specific logic above, we solve the array
+        // size issue. For other cases, Scope Injection (N_ = 5) should
+        // suffice.
       }
-      // Note: VariableExpr, NumberExpr, etc don't have nested Exprs or Types to
-      // substitute
+      // Note: VariableExpr, NumberExpr, etc don't have nested Exprs or Types
+      // to substitute
     };
 
     visitStmt = [&](Stmt *s) {
       if (!s)
         return;
-      std::cerr << "DEBUG-VISIT-STMT: " << typeid(*s).name() << "\n";
       if (auto *bs = dynamic_cast<BlockStmt *>(s)) {
         for (auto &sub : bs->Statements)
           visitStmt(sub.get());
@@ -1192,10 +1218,10 @@ FunctionDecl *Sema::instantiateGenericFunction(
 
     GlobalFunctions.push_back(Instance);
   } else {
-    // Create independent ownership if no module context (shouldn't happen here)
-    // For safety, leak it or manage elsewhere.
-    // But Sema always has CurrentModule during analysis.
-    // If we are called from checkCallExpr, CurrentModule is set.
+    // Create independent ownership if no module context (shouldn't happen
+    // here) For safety, leak it or manage elsewhere. But Sema always has
+    // CurrentModule during analysis. If we are called from checkCallExpr,
+    // CurrentModule is set.
     InstancePtr.release(); // Leak if no module? No, let's assume CurrentModule.
   }
 

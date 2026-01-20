@@ -2982,8 +2982,6 @@ PhysEntity CodeGen::genRepeatedArrayExpr(const RepeatedArrayExpr *expr) {
     if (var->HasConstantValue) {
       count = var->ConstantValue;
     } else {
-      llvm::errs() << "DEBUG-CODEGEN: Variable " << var->Name
-                   << " HasConstantValue=" << var->HasConstantValue << "\n";
       error(expr, "Repeat count variable must be a compile-time constant");
       return nullptr;
     }

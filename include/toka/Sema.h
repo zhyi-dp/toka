@@ -140,10 +140,19 @@ private:
   struct ShapeProperties {
     bool HasRawPtr = false;
     bool HasDrop = false;
+    bool HasManualDrop = false; // [NEW] Derived from explicit 'drop' impl
     ShapeAnalysisStatus Status = ShapeAnalysisStatus::Unvisited;
   };
 
+  void instantiateGenericImpl(ImplDecl *Template,
+                              const std::string &ConcreteTypeName);
+
   std::map<std::string, ShapeProperties> m_ShapeProps;
+
+  // Generic Impl Templates (Lazy Instantiation)
+  // Key: TypeName (e.g. "Box")
+  // Value: Pointer to the Template ImplDecl (owned by Module)
+  std::map<std::string, ImplDecl *> GenericImplMap;
 
   void analyzeShapes(Module &M);
   void checkShapeSovereignty();
@@ -217,6 +226,7 @@ private:
   // Passes
   void registerGlobals(Module &M);
   void checkFunction(FunctionDecl *Fn);
+  void registerImpl(ImplDecl *Impl);
   void checkImpl(ImplDecl *Impl);
   void checkStmt(Stmt *S);
 

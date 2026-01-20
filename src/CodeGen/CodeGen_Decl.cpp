@@ -26,8 +26,6 @@ namespace toka {
 llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                                      const std::string &overrideName,
                                      bool declOnly) {
-  // [NEW] Skip Generic Templates
-  // Logic should not generate IR for templates, only instances.
   if (!func->GenericParams.empty())
     return nullptr;
 
@@ -1241,8 +1239,8 @@ void CodeGen::genShape(const ShapeDecl *sh) {
 }
 
 void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
-  if (decl->TraitName == "encap") {
-    // Allow generation for hybrid encap trait
+  if (!decl->GenericParams.empty()) {
+    return;
   }
   m_CurrentSelfType = decl->TypeName;
   std::set<std::string> implementedMethods;

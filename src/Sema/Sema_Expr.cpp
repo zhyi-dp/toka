@@ -1167,6 +1167,20 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     std::string soulType = Type::stripMorphology(ObjType);
+    if (!(MethodMap.count(soulType) &&
+          MethodMap[soulType].count(Met->Method))) {
+      // [NEW] Lazy Impl Instantiation
+      std::string ConcreteTypeName = ObjTypeObj->getSoulName();
+      std::string BaseName = ConcreteTypeName;
+      size_t lt = BaseName.find('<');
+      if (lt != std::string::npos) {
+        BaseName = BaseName.substr(0, lt);
+        if (GenericImplMap.count(BaseName)) {
+          instantiateGenericImpl(GenericImplMap[BaseName], ConcreteTypeName);
+        }
+      }
+    }
+
     if (MethodMap.count(soulType) && MethodMap[soulType].count(Met->Method)) {
       if (MethodDecls.count(soulType) &&
           MethodDecls[soulType].count(Met->Method)) {
@@ -1646,15 +1660,19 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           if (requestedPrefix.empty()) {
             // obj.field -> Entity (Pointer itself if it's a pointer)
             if (SD->Kind == ShapeKind::Enum) {
-              return toka::Type::fromString(ObjType);
+              auto res = toka::Type::fromString(ObjType);
+              return res->withAttributes(objTypeObj->IsWritable,
+                                         res->IsNullable);
             }
-            return toka::Type::fromString(fullType);
+            auto res = toka::Type::fromString(fullType);
+            return res->withAttributes(objTypeObj->IsWritable, res->IsNullable);
           } else if (requestedPrefix == "*") {
             // obj.*field -> Identity (Address stored in the pointer)
             return toka::Type::fromString(fullType);
           }
 
-          return toka::Type::fromString(fullType);
+          auto res = toka::Type::fromString(fullType);
+          return res->withAttributes(objTypeObj->IsWritable, res->IsNullable);
         }
       }
       error(Memb, "struct/union '" + ObjType + "' has no member named '" +
@@ -2563,6 +2581,25 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
           checkExpr(Arg.get());
         }
         return toka::Type::fromString(MethodMap[ShapeName][VariantName]);
+      } else {
+        // [NEW] Lazy Impl Instantiation
+        std::string BaseName = RawPrefix;
+        size_t lt = BaseName.find('<');
+        if (lt != std::string::npos) {
+          BaseName = BaseName.substr(0, lt);
+          if (GenericImplMap.count(BaseName)) {
+            instantiateGenericImpl(GenericImplMap[BaseName], RawPrefix);
+            // Retry lookup
+            if (MethodMap.count(ShapeName) &&
+                MethodMap[ShapeName].count(VariantName)) {
+              for (auto &Arg : Call->Args) {
+                Arg = foldGenericConstant(std::move(Arg));
+                checkExpr(Arg.get());
+              }
+              return toka::Type::fromString(MethodMap[ShapeName][VariantName]);
+            }
+          }
+        }
       }
       // Enum Variant Constructor
       ShapeDecl *SD = ShapeMap[ShapeName];

@@ -545,26 +545,43 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
 }
 
 std::unique_ptr<ImplDecl> Parser::parseImpl() {
-  consume(TokenType::KwImpl, "Expected 'impl'");
-  Token firstIdent = consume(TokenType::Identifier, "Expected identifier");
+  Token startTok = consume(TokenType::KwImpl, "Expected 'impl'");
+
+  // 1. [NEW] Parse Generic Parameters <T, U>
+  std::vector<GenericParam> genericParams;
+  if (check(TokenType::GenericLT)) {
+    match(TokenType::GenericLT); // consume <
+    do {
+      Token name =
+          consume(TokenType::Identifier, "Expected generic parameter name");
+      genericParams.push_back({name.Text}); // Simple param for now
+    } while (match(TokenType::Comma));
+    consume(TokenType::Greater, "Expected '>' after generic parameters");
+  }
+
+  // 2. Parse First Type/Trait String (Not just Identifier)
+  // This allows "Box<T>" or "Iterator<T>"
+  std::string firstTypeStr = parseTypeString();
 
   std::string traitName;
   std::string typeName;
 
   if (match(TokenType::At)) {
     // impl Type@Trait
-    typeName = firstIdent.Text;
-    Token traitToken =
-        consume(TokenType::Identifier, "Expected trait name after '@'");
-    traitName = traitToken.Text;
+    typeName = firstTypeStr;
+    // Trait might also be generic? For now assume identifier or
+    // parseTypeString? Let's assume Traits are strictly Identifiers for now, or
+    // use parseTypeString if Traits can be generic. Existing code used
+    // Identifier. Let's upgrade to parseTypeString for future proofing or
+    // consistency.
+    traitName = parseTypeString();
   } else if (match(TokenType::KwFor)) {
     // impl Trait for Type
-    traitName = firstIdent.Text;
-    typeName =
-        consume(TokenType::Identifier, "Expected type name after 'for'").Text;
+    traitName = firstTypeStr;
+    typeName = parseTypeString();
   } else {
     // impl Type
-    typeName = firstIdent.Text;
+    typeName = firstTypeStr;
   }
 
   consume(TokenType::LBrace, "Expected '{'");
@@ -648,10 +665,10 @@ std::unique_ptr<ImplDecl> Parser::parseImpl() {
   }
   consume(TokenType::RBrace, "Expected '}'");
 
-  auto decl =
-      std::make_unique<ImplDecl>(typeName, std::move(methods), traitName);
+  auto decl = std::make_unique<ImplDecl>(typeName, std::move(methods),
+                                         traitName, genericParams);
   decl->EncapEntries = std::move(encapEntries);
-  decl->setLocation(firstIdent, m_CurrentFile);
+  decl->setLocation(startTok, m_CurrentFile);
   return decl;
 }
 

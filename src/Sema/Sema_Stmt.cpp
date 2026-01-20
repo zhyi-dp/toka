@@ -403,7 +403,7 @@ void Sema::checkStmt(Stmt *S) {
         }
       }
     } else {
-      // llvm::errs() << "DEBUG: checkVariableDecl NO_PERSIST Var=" <<
+
       // Var->Name
       //              << " Morph=" << morph << " LastSrc=" <<
       //              m_LastBorrowSource

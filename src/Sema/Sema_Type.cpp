@@ -56,7 +56,8 @@ std::string Sema::resolveType(const std::string &Type) {
   // Fallback: use the object-based resolver which handles generics
   auto typeObj = toka::Type::fromString(Type);
   auto resolved = resolveType(typeObj);
-  return resolved->toString();
+  std::string result = resolved->toString();
+  return result;
 }
 
 std::shared_ptr<toka::Type>
@@ -198,7 +199,9 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
   // object too.
   static std::map<std::string, std::shared_ptr<toka::Type>> GenericShapeCache;
   if (GenericShapeCache.count(mangledName)) {
-    return GenericShapeCache[mangledName];
+    return std::dynamic_pointer_cast<ShapeType>(
+        GenericShapeCache[mangledName]->withAttributes(
+            GenericShape->IsWritable, GenericShape->IsNullable));
   }
 
   // 4. Instantiate (Cache-First Cycle Breaking)
@@ -214,9 +217,15 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
 
   auto NewShapeTy = std::make_shared<toka::ShapeType>(mangledName);
   NewShapeTy->Decl = storedDecl;
-  GenericShapeCache[mangledName] = NewShapeTy; // Cache-first for recursion
+  GenericShapeCache[mangledName] = NewShapeTy; // Cache base version
 
-  // Now resolve members with recursion enabled
+  auto ResultTy =
+      std::dynamic_pointer_cast<ShapeType>(NewShapeTy->withAttributes(
+          GenericShape->IsWritable, GenericShape->IsNullable));
+
+  // Now resolve members with recursion enabled using substMap...
+  // Wait, we need to return ResultTy but the members are in storedDecl.
+  // storedDecl is shared by all attributes versions. Correct.
   std::vector<ShapeMember> newMembers;
   std::map<std::string, std::shared_ptr<toka::Type>> substMap;
 
@@ -412,7 +421,9 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
     }
   }
 
-  return instance;
+  auto result = std::dynamic_pointer_cast<ShapeType>(instance->withAttributes(
+      GenericShape->IsWritable, GenericShape->IsNullable));
+  return result;
 }
 
 bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,

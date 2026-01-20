@@ -1,0 +1,51 @@
+import std/io::println
+import std/memory::assert
+
+// 1. Define generic struct
+shape Box<T>(val: T)
+
+// 2. Generic Implementation
+// Challenge: Parser must parse <T> first, add T to Scope, then parse Box<T>
+impl<T> Box<T> {
+    
+    // Static Factory with T
+    pub fn new(v: T) -> Self {
+        return Box<T>(val = v) // Or return Self(val = v)
+    }
+
+    // Instance Method
+    pub fn unwrap(self) -> T {
+        return self.val
+    }
+
+    // Explicit generic type usage
+    pub fn set(self#, v: T) {
+        self#.val = v
+    }
+
+    // Namespace test within Generic context
+    pub fn replace(self, v: T) -> Self {
+        // Test Point: Does Self::new still point to Box<T> in generic context
+        return Self::new(v)
+    }
+}
+
+fn main() -> i32 {
+    println("Testing Generic Impl...")
+
+    // 1. Static Method: Box<i32>::new
+    // Compiler must infer T=i32 from context or explicit specifier
+    auto b# = Box<i32>::new(100)
+    assert(b.unwrap() == 100, "Unwrap failed")
+
+    // 2. Instance Method
+    b#.set(200)
+    assert(b.unwrap() == 200, "Set failed")
+
+    // 3. Namespace Call (Self::new)
+    auto b2 = b.replace(300)
+    assert(b2.unwrap() == 300, "Replace/Self::new failed")
+
+    println("Generic Impl Verification: PASS")
+    return 0
+}
