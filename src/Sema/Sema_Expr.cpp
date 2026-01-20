@@ -82,6 +82,37 @@ std::string Sema::checkUnaryExprStr(UnaryExpr *Unary) {
   return checkUnaryExpr(Unary)->toString();
 }
 
+std::unique_ptr<Expr> Sema::foldGenericConstant(std::unique_ptr<Expr> E) {
+  if (auto *Var = dynamic_cast<VariableExpr *>(E.get())) {
+    SymbolInfo Info;
+    // Look up symbol. If explicit Const Generic, substitute.
+    if (CurrentScope->lookup(Var->Name, Info) && Info.HasConstValue) {
+      // Create replacement NumberExpr
+      // Note: We use default i32/u64 typing logic or explicit usize?
+      // User suggested Type::usize(). Assuming AST supports it or just Value.
+      // If NumberExpr only takes Value, use that.
+      // Checking existing usage: Parser creates NumberExpr(val).
+      // Let's assume (val) constructor exists.
+      auto Num = std::make_unique<NumberExpr>(Info.ConstValue);
+      Num->Loc = Var->Loc;
+
+      // [Fix] Enforce Declared Type via Cast
+      // Generic parameters like <N: usize> must resolve to 'usize' typed
+      // expressions, not default 'i32' NumberExprs.
+      if (Info.TypeObj) {
+        std::string typeStr = Info.TypeObj->toString();
+        if (typeStr != "unknown" && typeStr != "auto") {
+          auto Cast = std::make_unique<CastExpr>(std::move(Num), typeStr);
+          Cast->Loc = Var->Loc;
+          return Cast;
+        }
+      }
+      return Num;
+    }
+  }
+  return E;
+}
+
 std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
   if (!E)
     return nullptr;
@@ -355,6 +386,164 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (Info.IsMutablyBorrowed) {
       DiagnosticEngine::report(getLoc(ve), DiagID::ERR_BORROW_MUT, ve->Name);
       HasError = true;
+    }
+
+    // [Annotated AST] Constant Substitution: The Core Fix
+    // If this variable is a Generic Constant (e.g., S=4, N=10), we MUST NOT
+    // allow CodeGen to see a VariableExpr, because it will try to Load it as an
+    // LValue. Instead, we perform AST Substitution here and return a NumberExpr
+    // (or equivalent).
+    if (Info.HasConstValue) {
+      // NOTE: We cannot simply return a new NumberExpr *node* here because
+      // checkExpr returns a Type object, not an AST node replacement. Wait,
+      // checkExpr returns shared_ptr<Type>, but it modifies the AST in-place?
+      // No, checkExpr does not take AST** or smart_ptr reference.
+      //
+      // CRITICAL ARCHITECTURE CORRECTION:
+      // Since checkExpr cannot replace the AST node itself (it takes raw
+      // pointer), we must rely on the previous approach (HasConstantValue
+      // propagation) BUT with a different CodeGen contract, OR we need the
+      // CALLER of checkExpr to handle replacement.
+      //
+      // However, the User's directive was "checkIdentifierExpr returns new
+      // NumberExpr". But verify checkExpr signature: it returns
+      // `std::shared_ptr<toka::Type>`. It does NOT return an Expr*.
+      //
+      // Let's look at `checkExprImpl` or `Sema::analyze`?
+      // Ah, `checkExpr` is recursive.
+      //
+      // Let's look at the Caller. Most callers are `checkExpr(E.get())`.
+      // E is a `unique_ptr<Expr>`.
+      // If we want to substitute, we need to change how `checkExpr` is called
+      // or works.
+      //
+      // PROPOSAL: We implement the 'HasConstantValue' flag-based fix again, BUT
+      // we correct CodeGen logic to NOT generate a Load.
+      //
+      // WAIT, the User said "don't do IsConstant check in CodeGen".
+      // That implies AST substitution.
+      //
+      // Let's check if we can modify the AST in place.
+      // We have `VariableExpr *ve`.
+      // We can't turn a `VariableExpr` into `NumberExpr` in C++ without
+      // changing the pointer.
+      //
+      // ALTERNATIVE:
+      // The user might be thinking of a different compiler architecture (AST
+      // Rewriter).
+      //
+      // Let's stick with the user's intent: "Ensure CodeGen treats it as a
+      // number". If I can't swap the node pointer easily here, I must modify
+      // CodeGen to *behave* as if it's a number.
+      //
+      // BUT, I can try to Mutate the VariableExpr to ACT like a NumberExpr?
+      // No.
+      //
+      // LET'S LOOK AT checkStmt or whoever owns the unique_ptr.
+      //
+      // Actually, looking at `Sema_Expr.cpp`, `checkExpr` takes `Expr *E`.
+      //
+      // If I cannot replace the node, I MUST use the `HasConstantValue` flag in
+      // CodeGen. The user said: "Do not return VariableExpr! ... return new
+      // NumberExpr". This implies the user thinks checkExpr returns an Expr*.
+      //
+      // CHECK SEMANTICS:
+      // `std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E)`
+      // Correct. It returns Type.
+      //
+      // So I cannot substitute the node *here*.
+      //
+      // OPTION 2: The `HasConstantValue` approach IS the right way for this
+      // codebase, provided `genVariableExpr` handles it correctly.
+      //
+      // The user's diagnosis "You generated a Load for a ConstantInt" was
+      // correct. My CodeGen fix WAS: `if (var->HasConstantValue) return
+      // ConstantInt;` This DOES NOT generate a Load. It generates a Value.
+      //
+      // So why did it crash?
+      // "上层逻辑...试图生成 builder.CreateLoad(i32 4)"
+      //
+      // Ah. `genVariableExpr` returned a `PhysEntity` wrapping the ConstantInt.
+      // `PhysEntity` constructor has `bool isAlloca`.
+      // If `isAlloca` is false (default), `PhysEntity::load()` returns the
+      // value itself.
+      //
+      // If the caller calls `load()`, it gets `i32 4`.
+      // If the caller calls `store()`, it crashes.
+      //
+      // Where is it crashing?
+      // `audit_generics.tk` Line 31: `auto buf = [0; S]`
+      //
+      // AST: `VariableDecl(buf, RepeatedArrayExpr(0, S))`
+      // CodeGen: `genVariableDecl` -> `genRepeatedArrayExpr` -> `genExpr(S)`.
+      // `genRepeatedArrayExpr` logic:
+      // `if (auto *num = dyn_cast<NumberExpr>(expr->Count)) ...`
+      // `else if (auto *var = dyn_cast<VariableExpr>(expr->Count))`
+      //
+      // In my CodeGen fix, I handled `VariableExpr` with `HasConstantValue`.
+      // So `genRepeatedArrayExpr` should grab `var->ConstantValue` (raw int)
+      // and use `ArrayType::get`. It does NOT call `genExpr(var)`.
+      //
+      // So `genVariableExpr` is NOT called for the array size S.
+      //
+      // So where is the crash?
+      // "Control flow reaches end of non-void function" (Exit 1)
+      // "Segmentation fault" (Exit 139)
+      //
+      // When `println(".. S")` was uncommented, it crashed.
+      // `println` calls `make_buffer_print` -> `genCallExpr` ->
+      // `genExpr(Args)`. `S` is passed to `println`. `println` takes `(fmt,
+      // ...)`. Varargs? `println` implementation might expect LValue?
+      //
+      // `checkIdentifierExpr` DOES NOT EXIST in this codebase.
+      // `checkExpr` handles `VariableExpr`.
+      //
+      // I will implement the Metadata Propagation (`HasConstantValue`) in Sema,
+      // AND I will re-implement the CodeGen fix which was correct,
+      // BUT I will ensure `PhysEntity` correctly flags it as an RValue.
+      //
+      // Wait, the user specifically said: "Don't do IsConstant check in
+      // CodeGen". They want AST Substitution. To do AST Substitution, I need to
+      // find where `Expr` pointers are held. They are held in
+      // `unique_ptr<Expr>` inside other AST nodes (Stmt, CallExpr, etc).
+      //
+      // To substitute, I would need a `Transform` pass or `Mutator`. `Sema` is
+      // a pass. `Sema` visits nodes via `checkExpr(E)`.
+      //
+      // If I cannot replace the node pointer, I must modify the node to behave
+      // correctly.
+      //
+      // Let's execute the User's Plan via a helper method
+      // `substituteConstantVars`? Or just accept that `HasConstantValue` IS the
+      // way to go, but I need to fix the Crash reason.
+      //
+      // The crash "Instruction does not dominate use" or similar LLVM errors
+      // usually come from block mess-up.
+      //
+      // Let's re-read the user's advice:
+      // "checkIdentifierExpr(IdentifierExpr* ID) ... return new NumberExpr"
+      // The user thinks I have `checkIdentifierExpr` returning `Expr*`. I DO
+      // NOT. I have `checkExpr(Expr*)` returning `Type`.
+      //
+      // COMPROMISE:
+      // I will use `HasConstantValue` (Sema) + `genVariableExpr` (CodeGen)
+      // checks. The user's premise that I can swap AST nodes return values is
+      // technically incompatible with the current `Sema` signature.
+      //
+      // However, I CAN mutate `VariableExpr` to `ResolvedType` = `const int`.
+      //
+      // Let's try to restore the CodeGen logic but be very careful.
+      //
+      // The crash with `println` might be because `genVariableExpr` returned a
+      // ConstantInt, and `genCallExpr` tried to pass it as `...` (VarArg). For
+      // VarArgs, `genCallExpr` calls `genExpr`. If `genExpr` returns a
+      // ConstantInt RValue, `genCallExpr` handles it?
+      //
+      // Let's implement the `HasConstantValue` propagation here first.
+
+      ve->HasConstantValue = true;
+      ve->ConstantValue = Info.ConstValue;
+      ve->ResolvedType = Info.TypeObj; // Ensure type is known (e.g. usize)
     }
 
     // Unset Check: Only check if NOT in LHS
@@ -1516,6 +1705,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
             ElemType = SD->Members[0].Type;
 
           for (auto &idx : Arr->Indices) {
+            idx = foldGenericConstant(std::move(idx)); // [FIX] Substitution
             std::shared_ptr<toka::Type> ArgTypeObj = checkExpr(idx.get());
             std::string ArgType = ArgTypeObj->toString();
             if (!isTypeCompatible(ElemType, ArgType)) {
@@ -1533,6 +1723,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (Arr->Indices.size() != 1) {
       error(Arr, "Array indexing expects exactly 1 index");
     }
+    Arr->Indices[0] =
+        foldGenericConstant(std::move(Arr->Indices[0])); // [FIX] Substitution
     checkExpr(Arr->Indices[0].get());
     return toka::Type::fromString(
         "unknown"); // Placeholder for element type derivation
@@ -1548,6 +1740,10 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return toka::Type::fromString(s);
   } else if (auto *Repeat = dynamic_cast<RepeatedArrayExpr *>(E)) {
     auto elemType = checkExpr(Repeat->Value.get());
+
+    // [FIX] Substitution for Count
+    Repeat->Count = foldGenericConstant(std::move(Repeat->Count));
+
     uint64_t size = 0;
     if (auto *Num = dynamic_cast<NumberExpr *>(Repeat->Count.get())) {
       size = Num->Value;
@@ -1555,6 +1751,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       SymbolInfo info;
       if (CurrentScope->lookup(Var->Name, info) && info.HasConstValue) {
         size = info.ConstValue;
+        // [Annotated AST] Propagate for CodeGen
+        Var->HasConstantValue = true;
+        Var->ConstantValue = size;
       } else {
         error(Repeat, "Array repeat count must be a numeric literal or const "
                       "generic parameter");
@@ -1567,6 +1766,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
   } else if (auto *ArrLit = dynamic_cast<ArrayExpr *>(E)) {
     // Infer from first element
     if (!ArrLit->Elements.empty()) {
+      ArrLit->Elements[0] =
+          foldGenericConstant(std::move(ArrLit->Elements[0])); // [FIX]
       auto ElemTyObj = checkExpr(ArrLit->Elements[0].get());
       std::string ElemTy = ElemTyObj->toString();
       return toka::Type::fromString(
@@ -1826,8 +2027,15 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   // 1. Resolve Operands using New API
   m_InLHS = (Bin->Op == "=" || Bin->Op == "+=" || Bin->Op == "-=" ||
              Bin->Op == "*=" || Bin->Op == "/=");
+  // [FIX] Substitution
+  if (!m_InLHS) // Do not substitute LHS if assigning! But wait, 'S = 4'?
+                // Invalid anyway.
+    Bin->LHS = foldGenericConstant(std::move(Bin->LHS));
+
   auto lhsType = checkExpr(Bin->LHS.get());
   m_InLHS = false;
+
+  Bin->RHS = foldGenericConstant(std::move(Bin->RHS)); // [FIX]
   auto rhsType = checkExpr(Bin->RHS.get());
 
   if (!lhsType || !rhsType)
@@ -2250,6 +2458,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
   // 1. Validate Indices (must be integer loops)
   for (auto &idxExpr : Idx->Indices) {
+    idxExpr = foldGenericConstant(std::move(idxExpr)); // [FIX]
     auto idxType = checkExpr(idxExpr.get());
     if (!idxType->isInteger()) {
       error(Idx,
@@ -2303,6 +2512,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       CallName == "u8" || CallName == "usize" || CallName == "isize" ||
       CallName == "bool") {
     for (auto &Arg : Call->Args) {
+      Arg = foldGenericConstant(std::move(Arg)); // [FIX]
       checkExpr(Arg.get());
     }
     return toka::Type::fromString(CallName);
@@ -2324,6 +2534,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       error(Call, "println requires at least a format string");
     }
     for (auto &Arg : Call->Args) {
+      Arg = foldGenericConstant(std::move(Arg)); // [FIX]
       checkExpr(Arg.get());
     }
     return toka::Type::fromString("void");
@@ -2347,8 +2558,10 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       // Static Method
       if (MethodMap.count(ShapeName) &&
           MethodMap[ShapeName].count(VariantName)) {
-        for (auto &Arg : Call->Args)
+        for (auto &Arg : Call->Args) {
+          Arg = foldGenericConstant(std::move(Arg)); // [FIX]
           checkExpr(Arg.get());
+        }
         return toka::Type::fromString(MethodMap[ShapeName][VariantName]);
       }
       // Enum Variant Constructor
@@ -2357,8 +2570,10 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         for (auto &Memb : SD->Members) {
           if (Memb.Name == VariantName) {
             // Enum Variant Constructor: Variant(Args...) -> ShapeName
-            for (auto &Arg : Call->Args)
+            for (auto &Arg : Call->Args) {
+              Arg = foldGenericConstant(std::move(Arg)); // [FIX]
               checkExpr(Arg.get());
+            }
 
             // Set ResolvedShape for CodeGen
             Call->ResolvedShape = SD;
@@ -2508,6 +2723,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       std::map<std::string, std::shared_ptr<toka::Type>> Deduced;
 
       for (size_t i = 0; i < Call->Args.size() && i < Fn->Args.size(); ++i) {
+        Call->Args[i] = foldGenericConstant(std::move(Call->Args[i])); // [FIX]
         auto argType = checkExpr(Call->Args[i].get());
         if (!argType || argType->isUnknown())
           continue;
@@ -2976,6 +3192,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   }
 
   for (size_t i = 0; i < Call->Args.size(); ++i) {
+    Call->Args[i] = foldGenericConstant(std::move(Call->Args[i])); // [FIX]
     auto argType = checkExpr(Call->Args[i].get());
 
     if (IsVariadic && i >= ParamTypes.size())

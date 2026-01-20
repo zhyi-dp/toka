@@ -1788,7 +1788,8 @@ llvm::Type *CodeGen::resolveType(const std::string &baseType, bool hasPointer) {
     type = llvm::Type::getInt16Ty(m_Context);
   else if (baseType == "i32" || baseType == "u32" || baseType == "int")
     type = llvm::Type::getInt32Ty(m_Context);
-  else if (baseType == "i64" || baseType == "u64" || baseType == "long")
+  else if (baseType == "i64" || baseType == "u64" || baseType == "long" ||
+           baseType == "usize")
     type = llvm::Type::getInt64Ty(m_Context);
   else if (baseType == "f32" || baseType == "float")
     type = llvm::Type::getFloatTy(m_Context);
@@ -1906,6 +1907,16 @@ llvm::Type *CodeGen::getLLVMType(std::shared_ptr<Type> type) {
     auto shapeType = std::static_pointer_cast<ShapeType>(type);
     if (m_StructTypes.count(shapeType->Name)) {
       return m_StructTypes[shapeType->Name];
+    }
+    // [Fix] On-Demand Generation for Synthetic Shapes (Dependencies)
+    if (shapeType->Decl) {
+      genShape(shapeType->Decl);
+      if (m_StructTypes.count(shapeType->Name))
+        return m_StructTypes[shapeType->Name];
+    } else if (m_Shapes.count(shapeType->Name)) {
+      genShape(m_Shapes[shapeType->Name]);
+      if (m_StructTypes.count(shapeType->Name))
+        return m_StructTypes[shapeType->Name];
     }
     // If generic lookup fails, try resolving by name (backup)
     return resolveType(shapeType->Name, false);

@@ -264,6 +264,9 @@ private:
       FunctionDecl *Template,
       const std::vector<std::shared_ptr<toka::Type>> &Args, CallExpr *CallSite);
 
+  // [NEW] Helper to substitute GenericConst variables with NumberExpr
+  std::unique_ptr<Expr> foldGenericConstant(std::unique_ptr<Expr> E);
+
   // Helper for type synthesis from AST nodes with morphology flags
   template <typename T>
   static std::string synthesizePhysicalType(const T &Arg) {

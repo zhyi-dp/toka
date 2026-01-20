@@ -164,6 +164,7 @@ void Sema::checkStmt(Stmt *S) {
   } else if (auto *Ret = dynamic_cast<ReturnStmt *>(S)) {
     std::string ExprType = "void";
     if (Ret->ReturnValue) {
+      Ret->ReturnValue = foldGenericConstant(std::move(Ret->ReturnValue));
       m_ControlFlowStack.push_back(
           {"", CurrentFunctionReturnType, false, true});
       auto RetTypeObj = checkExpr(Ret->ReturnValue.get());
@@ -206,6 +207,7 @@ void Sema::checkStmt(Stmt *S) {
       checkStrictMorphology(Ret, targetMorph, sourceMorph, "return value");
     }
   } else if (auto *Free = dynamic_cast<FreeStmt *>(S)) {
+    Free->Expression = foldGenericConstant(std::move(Free->Expression));
     auto FreeTypeObj = checkExpr(Free->Expression.get());
     if (!FreeTypeObj->isRawPointer()) {
       std::string ExprType = FreeTypeObj->toString();
@@ -222,12 +224,14 @@ void Sema::checkStmt(Stmt *S) {
   } else if (auto *ExprS = dynamic_cast<ExprStmt *>(S)) {
     // Standalone expressions are NOT receivers
     m_ControlFlowStack.push_back({"", "void", false, false});
+    ExprS->Expression = foldGenericConstant(std::move(ExprS->Expression));
     checkExpr(ExprS->Expression.get());
     m_ControlFlowStack.pop_back();
     clearStmtBorrows();
   } else if (auto *Var = dynamic_cast<VariableDecl *>(S)) {
     std::string InitType = "";
     if (Var->Init) {
+      Var->Init = foldGenericConstant(std::move(Var->Init));
       if (Var->IsReference)
         m_AllowUnsetUsage = true;
       m_ControlFlowStack.push_back({Var->Name, "void", false, true});

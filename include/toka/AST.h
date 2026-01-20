@@ -145,6 +145,8 @@ public:
   bool IsShared = false;
   bool IsValueMutable = false;
   bool IsValueNullable = false;
+  bool HasConstantValue = false;
+  uint64_t ConstantValue = 0;
 
   VariableExpr(const std::string &name) : Name(name) {}
   std::string toString() const override {
@@ -158,6 +160,8 @@ public:
     n->IsShared = IsShared;
     n->IsValueMutable = IsValueMutable;
     n->IsValueNullable = IsValueNullable;
+    n->HasConstantValue = HasConstantValue;
+    n->ConstantValue = ConstantValue;
     n->Loc = Loc;
     n->ResolvedType = ResolvedType;
     return n;

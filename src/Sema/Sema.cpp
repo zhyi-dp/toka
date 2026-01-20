@@ -1133,43 +1133,8 @@ FunctionDecl *Sema::instantiateGenericFunction(
   }
 
   // [NEW] Inject Const Generic Variables into Body
-  if (Instance->Body) {
-    auto Block = dynamic_cast<BlockStmt *>(Instance->Body.get());
-    if (Block) {
-      // Iterate backwards so the first param ends up at the very top
-      for (int i = (int)Template->GenericParams.size() - 1; i >= 0; --i) {
-        const auto &GP = Template->GenericParams[i];
-        if (GP.IsConst) {
-          std::string ValStr = resolveType(Args[i])->toString();
-
-          // Create Init Expr
-          uint64_t val = 0;
-          try {
-            val = std::stoull(ValStr);
-          } catch (...) {
-          }
-          auto initExpr = std::make_unique<NumberExpr>(val);
-
-          // SymbolInfo update is done in Scope Injection loop above.
-          // Wait, I missed updating SymbolInfo in the first loop?
-          // I only modified Sema.h to add the field.
-          // I need to modify the FIRST loop to set constInfo.ConstValue!
-
-          // Create VariableDecl with Init
-          auto decl =
-              std::make_unique<VariableDecl>(GP.Name, std::move(initExpr));
-          decl->TypeName = GP.Type.empty() ? "usize" : GP.Type;
-          decl->IsConst = true;
-
-          // Inject into Block
-
-          // Inject into Block
-          // We need to cast decl to Stmt
-          Block->Statements.insert(Block->Statements.begin(), std::move(decl));
-        }
-      }
-    }
-  }
+  // Removed dirty hack (VariableDecl injection).
+  // Const values are now handled by SymbolInfo resolution in CodeGen.
 
   // 4. Semantic Check (Recursion)
   checkFunction(Instance);

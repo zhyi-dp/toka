@@ -80,6 +80,7 @@ DIAG(ERR_GENERIC_COUNT_MISMATCH, Error, "Type '{}' expects {} generic arguments,
 DIAG(ERR_GENERIC_ARITY_MISMATCH, Error, "Generic mismatch for '{}': expected {} arguments, got {}")
 DIAG(ERR_GENERIC_RECURSION_LIMIT, Error, "Generic instantiation recursion limit reached for '{}'")
 DIAG(ERR_GENERIC_CODEGEN,    Error, "Generic instantiation failed: {}")
+DIAG(ERR_CONST_GENERIC_NAMING, Error, "Const generic parameter '{}' must end with '_' (e.g., 'N_') to denote compile-time constant.")
 
 // --- Parser Errors ---
 DIAG(ERR_EXPECTED_SEMI,      Error, "Expected ';' or newline after statement")

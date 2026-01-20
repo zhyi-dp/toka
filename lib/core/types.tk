@@ -16,10 +16,30 @@
 pub alias usize = u64
 pub alias isize = i64
 
+pub type byte = u8
+
 //Defines a strong type: creates a unique semantic identity that shares the same physical memory layout as the base type.
 //It enforces strict type isolation, requiring explicit conversion to prevent accidental type confusion and enhance memory safety.
 pub type Addr = u64
-pub type char = i8
+
+pub type char = i8     // encoding-neutral character, C-style
+pub type Char16 = u16  // UTF-16 code point, UCS-2(Strict BMP) only
+pub type Char32 = u32  // UTF-32 code point
+pub alias Char = Char32
+/*
+pub type string  = Vec<char>    // encoding-neutral string
+pub type String8  = Vec<byte>   // UTF-8 String
+pub type String16 = Vec<u16>    // UTF-16 String
+pub type String32 = Vec<Char32> // UTF-32 String
+pub alias String = String8
+
+//Slice (like C++ std::string_view or Rust &str)
+pub type str  = Slice<char>
+pub type Str8  = Slice<byte>
+pub type Str16 = Slice<u16>
+pub type Str32 = Slice<Char32>
+pub alias Str = Str8
+*/
 
 //A named literal (Symbolic Constant). 
 //It exists only as a compile-time value and is inlined directly by the compiler. 

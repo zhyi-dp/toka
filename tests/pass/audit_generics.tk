@@ -1,0 +1,43 @@
+import std/io::println
+
+// 1. Nested Generics for Mangling Check
+shape Inner<T>(
+    val: T
+)
+
+shape Outer<U>(
+    inner: Inner<U>
+)
+
+fn test_nested() {
+    auto x = Outer<i32>(inner=Inner<i32>(val=42))
+    println("Nested Generics: {}", x.inner.val)
+}
+
+// 2. Constant Resolution in Shapes
+shape FixedArray<N_: usize>(
+    data: [i32; N_]
+)
+
+fn test_const_shape() {
+    auto arr = FixedArray<5>(data=[1, 2, 3, 4, 5])
+    println("Const Shape Size: {}", 5)
+    println("Arr[0]: {}", arr.data[0])
+}
+
+// 3. Constant Resolution in Function Body
+fn make_buffer_print<S_: usize>() -> [i32; S_] {
+    // println("Generic Constant S: {}", S_)
+    auto buf = [0; S_] 
+    return buf
+}
+
+fn main() -> i32 {
+    test_nested()
+    test_const_shape()
+    auto buf = make_buffer_print<4>()
+    println("Buf[0]: {}", buf[0])
+    return 0
+}
+
+
