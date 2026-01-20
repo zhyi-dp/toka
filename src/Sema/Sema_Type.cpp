@@ -148,6 +148,14 @@ Sema::resolveType(std::shared_ptr<toka::Type> type) {
     }
   }
 
+  if (auto prim = std::dynamic_pointer_cast<toka::PrimitiveType>(type)) {
+    if (TypeAliasMap.count(prim->Name)) {
+      auto resolved = toka::Type::fromString(TypeAliasMap[prim->Name].Target);
+      return resolveType(
+          resolved->withAttributes(type->IsWritable, type->IsNullable));
+    }
+  }
+
   // Primitives can also be aliased potentially? Or just shapes.
   // currently Type::fromString parses unknown as ShapeType so this covers
   // aliases.
@@ -524,11 +532,11 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
 
   // String literal to pointer
   if (primS && primS->Name == "str") {
-    // T could be *i8 or ^i8
+    // T could be *i8 or *u8 or *char or ^...
     if (auto ptr = std::dynamic_pointer_cast<toka::PointerType>(T)) {
       if (auto pte = std::dynamic_pointer_cast<toka::PrimitiveType>(
               ptr->getPointeeType())) {
-        if (pte->Name == "i8")
+        if (pte->Name == "i8" || pte->Name == "u8" || pte->Name == "char")
           return true;
       }
     }

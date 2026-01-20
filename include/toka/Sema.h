@@ -200,8 +200,12 @@ private:
   Module *CurrentModule = nullptr;
   bool m_InUnsafeContext = false;
   bool m_InLHS = false;
+  bool m_DisableSoulCollapse = false; // [NEW] Track context for soul collapse
   std::shared_ptr<toka::Type>
       m_ExpectedType; // [NEW] Track expected type for inference
+  TokenType m_OuterPointerSigil =
+      TokenType::TokenNone; // [NEW] Track outer pointer sigil for nested member
+                            // access
 
   struct ControlFlowInfo {
     std::string Label;
@@ -279,6 +283,7 @@ private:
   std::unique_ptr<Expr> foldGenericConstant(std::unique_ptr<Expr> E);
 
   // Helper for type synthesis from AST nodes with morphology flags
+  // Helper for type synthesis from AST nodes with morphology flags
   template <typename T>
   static std::string synthesizePhysicalType(const T &Arg) {
     std::string Signature = "";
@@ -294,7 +299,7 @@ private:
       Signature += "*";
     }
 
-    // 3. Soul Type (Extracted via overloads for C++17 compatibility)
+    // 3. Soul Type
     Signature += getTypeName(Arg);
 
     // 4. Value Attributes
@@ -305,6 +310,22 @@ private:
       Signature += "#";
     }
 
+    return Signature;
+  }
+
+  // Specialization for ShapeMember to include morphology flags
+  static std::string synthesizePhysicalType(const ShapeMember &Arg) {
+    std::string Signature = "";
+    if (Arg.IsUnique)
+      Signature += "^";
+    else if (Arg.IsShared)
+      Signature += "~";
+    else if (Arg.IsReference)
+      Signature += "&";
+    else if (Arg.HasPointer)
+      Signature += "*";
+
+    Signature += Arg.Type;
     return Signature;
   }
 
@@ -329,6 +350,7 @@ private:
   static std::string getTypeName(const FunctionDecl::Arg &A) { return A.Type; }
   static std::string getTypeName(const ExternDecl::Arg &A) { return A.Type; }
   static std::string getTypeName(const VariableDecl &V) { return V.TypeName; }
+  static std::string getTypeName(const ShapeMember &M) { return M.Type; }
 };
 
 } // namespace toka

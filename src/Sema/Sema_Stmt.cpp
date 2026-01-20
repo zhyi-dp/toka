@@ -221,6 +221,11 @@ void Sema::checkStmt(Stmt *S) {
         HasError = true;
       }
     }
+  } else if (auto *Unsafe = dynamic_cast<UnsafeStmt *>(S)) {
+    bool oldUnsafe = m_InUnsafeContext;
+    m_InUnsafeContext = true;
+    checkStmt(Unsafe->Statement.get());
+    m_InUnsafeContext = oldUnsafe;
   } else if (auto *ExprS = dynamic_cast<ExprStmt *>(S)) {
     // Standalone expressions are NOT receivers
     m_ControlFlowStack.push_back({"", "void", false, false});
@@ -241,7 +246,7 @@ void Sema::checkStmt(Stmt *S) {
       m_AllowUnsetUsage = false;
     }
 
-    // If type not specified, infer from init
+    // 4. If type not specified, infer from init
     if (Var->TypeName.empty() || Var->TypeName == "auto") {
       if (InitType.empty() || InitType == "void") {
         DiagnosticEngine::report(getLoc(Var), DiagID::ERR_TYPE_REQUIRED,
@@ -250,48 +255,45 @@ void Sema::checkStmt(Stmt *S) {
         Var->TypeName = "unknown";
       } else {
         std::string Inferred = InitType;
-        // If the variable declaration HAS morphology, and the initializer
-        // ALSO has it, we must strip it from the inferred type to avoid
-        // redundancy (e.g. *i32 -> i32)
-        if (Inferred == "nullptr" && Var->TypeName.empty()) {
-          DiagnosticEngine::report(getLoc(Var), DiagID::ERR_INFER_NULLPTR);
+        if (Inferred == "nullptr") {
+          DiagnosticEngine::report(getLoc(Var), DiagID::ERR_GENERIC_PARSE,
+                                   "Cannot infer type from 'nullptr'. Explicit "
+                                   "type annotation required.");
           HasError = true;
           Var->TypeName = "unknown";
-          Var->TypeName = "unknown";
+          return;
+        }
+
+        // If variable declares morphology (auto ^p = ...), strip matching
+        // morphology from inferred soul
+        if (Var->HasPointer || Var->IsUnique || Var->IsShared ||
+            Var->IsReference) {
+          if (!Inferred.empty() && (Inferred[0] == '*' || Inferred[0] == '^' ||
+                                    Inferred[0] == '~' || Inferred[0] == '&')) {
+            Inferred = Inferred.substr(1);
+            if (!Inferred.empty() && (Inferred[0] == '?' ||
+                                      Inferred[0] == '!' || Inferred[0] == '#'))
+              Inferred = Inferred.substr(1);
+          }
         } else {
-          std::string Inferred = InitType;
-          // If the variable declaration HAS morphology, and the initializer
-          // ALSO has it, we must strip it from the inferred type to avoid
-          // redundancy (e.g. *i32 -> i32)
-          if (Inferred == "nullptr" && Var->TypeName.empty()) {
-            DiagnosticEngine::report(
-                getLoc(Var), DiagID::ERR_GENERIC_PARSE,
-                "Cannot infer type from 'nullptr'. Explicit type annotation "
-                "required (e.g., 'auto *p: Data = nullptr').");
+          // Strict: No sigil, no pointer, except for "str" (implicit *char)
+          if (!Inferred.empty() &&
+              (Inferred[0] == '*' || Inferred[0] == '^' || Inferred[0] == '~' ||
+               Inferred[0] == '&') &&
+              Inferred.substr(0, 3) != "str") {
+            std::string sigilStr = std::string(1, Inferred[0]);
+            DiagnosticEngine::report(getLoc(Var),
+                                     DiagID::ERR_POINTER_SIGIL_MISSING,
+                                     Var->Name, Inferred, sigilStr, Var->Name);
             HasError = true;
             Var->TypeName = "unknown";
             return;
           }
-
-          if (Var->HasPointer || Var->IsUnique || Var->IsShared ||
-              Var->IsReference) {
-            if (!Inferred.empty() &&
-                (Inferred[0] == '*' || Inferred[0] == '^' ||
-                 Inferred[0] == '~' || Inferred[0] == '&')) {
-              Inferred = Inferred.substr(1);
-              // Also strip attributes from the inferred prefix
-              if (!Inferred.empty() &&
-                  (Inferred[0] == '?' || Inferred[0] == '!' ||
-                   Inferred[0] == '#')) {
-                Inferred = Inferred.substr(1);
-              }
-            }
-          }
-          Var->TypeName = Inferred;
         }
+        Var->TypeName = Inferred;
       }
     } else {
-      // Check compatibility
+      // Compatibility Check
       std::string DeclFullTy = Var->TypeName;
       std::string Morph = "";
       if (Var->HasPointer)
@@ -302,7 +304,6 @@ void Sema::checkStmt(Stmt *S) {
         Morph = "~";
       else if (Var->IsReference)
         Morph = "&";
-
       if (!Morph.empty()) {
         if (Var->IsPointerNullable)
           Morph += "?";
@@ -310,7 +311,6 @@ void Sema::checkStmt(Stmt *S) {
           Morph += "!";
         DeclFullTy = Morph + DeclFullTy;
       }
-
       if (!InitType.empty() && !isTypeCompatible(DeclFullTy, InitType)) {
         DiagnosticEngine::report(getLoc(Var), DiagID::ERR_INIT_TYPE_MISMATCH,
                                  DeclFullTy, InitType);
@@ -318,7 +318,7 @@ void Sema::checkStmt(Stmt *S) {
       }
     }
 
-    // Strict Morphology Check for Variable Declaration
+    // 5. Strict Morphology Check
     if (Var->Init && !Var->IsReference) {
       MorphKind lhsMorph = MorphKind::None;
       if (Var->IsUnique)
@@ -335,8 +335,6 @@ void Sema::checkStmt(Stmt *S) {
     }
 
     SymbolInfo Info;
-
-    // Construct Full Type String for Type Object with Legacy Normalization
     std::string morph = "";
     if (Var->HasPointer)
       morph = "*";
@@ -348,23 +346,16 @@ void Sema::checkStmt(Stmt *S) {
       morph = "&";
 
     std::string baseType = Var->TypeName;
-    // Legacy behavior: If type implies morphology (e.g. ^Data) and flags
-    // imply morphology (IsUnique), we often treat the type string's sigil as
-    // the representation of that flag and strip it? Or if flags are set, we
-    // PREPEND morphology. The legacy code checked if baseType started with
-    // sigils.
-
+    // Strip redundant sigil from baseType if it matches morph
     if (baseType.size() > 1 && (baseType[0] == '^' || baseType[0] == '~' ||
                                 baseType[0] == '*' || baseType[0] == '&')) {
       if (morph.empty()) {
         morph = std::string(1, baseType[0]);
+        baseType = baseType.substr(1);
+      } else if (morph[0] == baseType[0]) {
+        baseType = baseType.substr(1);
       }
-      // We strip the sigil from base type if we are extracting it to morph,
-      // OR if morph is already set (redundancy)
-      baseType = baseType.substr(1);
     }
-
-    // Borrow tracking logic using 'morph' local var
     if (morph == "&" && !m_LastBorrowSource.empty()) {
       Info.BorrowedFrom = m_LastBorrowSource;
 
@@ -435,8 +426,12 @@ void Sema::checkStmt(Stmt *S) {
       Info.TypeObj->IsNullable = true;
     }
 
-    // [New] Annotated AST: Populate ResolvedType
     Var->ResolvedType = Info.TypeObj;
+
+    DiagnosticEngine::report(getLoc(Var), DiagID::NOTE_GENERIC,
+                             "Var: " + Var->Name +
+                                 " Type: " + Info.TypeObj->toString() +
+                                 " Mask: " + std::to_string(m_LastInitMask));
 
     if (Var->Init) {
       Info.InitMask = m_LastInitMask;

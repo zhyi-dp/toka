@@ -64,6 +64,9 @@ DIAG(ERR_NULL_ACCESS,        Error, "Accessing member of nullable type '{}' requ
 DIAG(ERR_MORPHOLOGY_MISMATCH, Error, "Pointer morphology mismatch: expected explicit '{}' (from LHS/Target), found '{}' (from RHS/Source)")
 DIAG(ERR_SMART_PTR_FROM_STACK, Error, "Smart pointer sigil '{}' cannot be applied to stack variable; use 'new' or assign from existing smart pointer")
 DIAG(ERR_CAST_MISMATCH,       Error, "Invalid cast: cannot convert '{}' to '{}' via 'as'; only 'Addr' and '*' conversions are supported")
+DIAG(ERR_POINTER_SIGIL_MISSING, Error, "Variable '{}' implies pointer type '{}' but lacks explicit sigil. Use 'auto {}{}' or dereference.")
+DIAG(ERR_MEMBER_SIGIL_MISMATCH, Error, "Dot operator '.' cannot be used with explicit pointer sigil. Did you mean '^ptr->member' or 'ptr.member'?")
+DIAG(ERR_ARROW_SIGIL_REQUIRED,  Error, "Arrow operator '->' requires explicit pointer sigil on variable. Did you mean '^ptr->member'?")
 
 // --- Sema: Memory Safety ---
 DIAG(ERR_UNSAFE_ALLOC_CTX,   Error, "Operation 'alloc' is only allowed in unsafe context")
@@ -96,3 +99,4 @@ DIAG(WARN_CODEGEN_UNRESOLVED, Warning, "Unresolved member type for '{}'; default
 DIAG(ERR_FILE_IO,            Error, "File I/O Error: {}")
 DIAG(ERR_CLI_ARG,            Error, "Invalid command line argument: {}")
 
+DIAG(NOTE_GENERIC,            Note, "{}")

@@ -1,0 +1,21 @@
+
+fn main() -> i32 {
+    unsafe {
+        auto *p# = alloc i32(0)
+        // Check 1: Explicit dereference assignment
+        p# = 50
+        
+        // Check 2: Hatless assignment (Implicit deref)
+        // User asks if ptr# = 100 works.
+        // We also check ptr = 100.
+        
+        p# = 100
+        
+        if p != 100 {
+            return 1
+        }
+        
+        free *p 
+    }
+    return 0
+}

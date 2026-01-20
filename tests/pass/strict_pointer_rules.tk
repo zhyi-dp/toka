@@ -1,0 +1,24 @@
+
+import std/io::println
+
+shape Point(x: i32, y: i32)
+
+fn main() -> i32 {
+    unsafe {
+        // 1. Variable Declaration: Must use explicit sigil
+        auto ^p# = new Point(x=10, y=20)
+        
+        // 2. Member Access: Dot - Implicit Deref
+        println("p.x: {}", p.x)
+        
+        // 3. Member Access: Arrow - Explicit Sigil
+        println("^p->y: {}", ^p->y)
+        
+        // 4. Mutation
+        p#.x = 100
+        ^p#->y = 200
+        
+        println("Modified: {}, {}", p.x, p.y)
+    }
+    return 0
+}

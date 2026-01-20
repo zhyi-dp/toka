@@ -22,13 +22,15 @@ namespace toka {
 PhysEntity CodeGen::genAllocExpr(const AllocExpr *ae) {
   llvm::Function *allocHook = m_Module->getFunction("__toka_alloc");
   if (!allocHook) {
-    // Declare it if not present
+    allocHook = m_Module->getFunction("malloc");
+  }
+  if (!allocHook) {
+    // Declare malloc if neither is present
     llvm::Type *sizeTy = llvm::Type::getInt64Ty(m_Context);
-    llvm::Type *retTy =
-        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(m_Context));
+    llvm::Type *retTy = m_Builder.getPtrTy();
     llvm::FunctionType *ft = llvm::FunctionType::get(retTy, {sizeTy}, false);
     allocHook = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
-                                       "__toka_alloc", m_Module.get());
+                                       "malloc", m_Module.get());
   }
 
   llvm::Type *elemTy = resolveType(ae->TypeName, false);
@@ -566,9 +568,11 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
       }
       return genAddr(unary->RHS.get());
     }
-    if (unary->Op == TokenType::Star) {
-      // *p -> The Soul address of p.
-      // genAddr(p) already peels the onion to return the Soul address.
+    if (unary->Op == TokenType::Star || unary->Op == TokenType::Caret ||
+        unary->Op == TokenType::Tilde) {
+      // *p, ^p, ~p -> The Identity address (pointer value).
+      // genAddr(p) already peels the onion to return the Soul address (the
+      // location pointed to).
       return genAddr(unary->RHS.get());
     }
   }

@@ -153,6 +153,11 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
             shouldBreak = true;
           if (check(TokenType::Less) && depth == 0)
             shouldBreak = true;
+          if ((check(TokenType::Colon) ||
+               (peek().Kind == TokenType::Identifier && peek().Text == "as") ||
+               check(TokenType::KwAs)) &&
+              depth == 0)
+            shouldBreak = true;
 
           if (check(TokenType::Comma) || check(TokenType::RParen) ||
               check(TokenType::RBrace) || isEndOfStatement() ||
