@@ -503,8 +503,11 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         expr = std::move(elements[0]);
       }
     }
-  } else if (match(TokenType::Identifier)) {
+  } else if (match(TokenType::Identifier) || match(TokenType::KwUpperSelf)) {
     Token name = previous();
+    // Normalize KwUpperSelf to appear as Identifier "Self" locally if needed,
+    // though Token.Text usually holds "Self" anyway.
+
     // [NEW] Check for Generics <...>
     std::vector<std::string> genericArgs;
     std::string genericSuffix = "";
@@ -575,8 +578,18 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       if (check(TokenType::Colon) && checkAt(1, TokenType::Colon)) {
         consume(TokenType::Colon, "");
         consume(TokenType::Colon, "");
-        Token member =
-            consume(TokenType::Identifier, "Expected member after ::");
+
+        Token member;
+        if (check(TokenType::Identifier)) {
+          member = consume(TokenType::Identifier, "Expected member after ::");
+        } else if (check(TokenType::KwNew)) {
+          member = advance();
+          member.Kind = TokenType::Identifier; // Treat as identifier
+        } else {
+          // Fallback for other potential keywords?
+          error(peek(), "Expected member identifier or 'new' after ::");
+          return nullptr;
+        }
 
         auto obj = std::make_unique<VariableExpr>(name.Text + genericSuffix);
         obj->setLocation(name, m_CurrentFile);

@@ -217,6 +217,7 @@ private:
   // Passes
   void registerGlobals(Module &M);
   void checkFunction(FunctionDecl *Fn);
+  void checkImpl(ImplDecl *Impl);
   void checkStmt(Stmt *S);
 
   std::string checkUnaryExprStr(UnaryExpr *Unary); // Legacy

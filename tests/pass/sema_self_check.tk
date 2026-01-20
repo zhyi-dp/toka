@@ -1,0 +1,54 @@
+import std/io::println
+import std/memory::assert
+
+shape Rect(width: i32, height: i32)
+
+impl Rect {
+    // 1. Explicit 'Self' usage in arguments
+    // Equivalent to: fn area(self: Rect)
+    pub fn area(self) -> i32 {
+        return self.width * self.height
+    }
+
+    // 2. Explicit 'Self' as return type
+    // Equivalent to: fn new(w: i32, h: i32) -> Rect
+    pub fn new(w: i32, h: i32) -> Self {
+        return Rect(width=w, height=h)
+    }
+
+    // 3. 'Self' in variable declaration
+    pub fn clone(self) -> Self {
+        auto copy: Self = unset
+        copy = Rect(width=self.width, height=self.height)
+        return copy
+    }
+
+    // [新增] 4. 'Self' as Namespace for Static Calls
+    pub fn double_size(self) -> Self {
+        // 测试点：编译器能否解析 Self::new (...)
+        // 如果 Sema 没做好，这里可能会报错 "Self is not a namespace"
+        return Self::new(self.width * 2, self.height * 2)
+    }
+}
+
+fn main() -> i32 {
+    // Verify creation via new() -> Self
+    auto r = Rect::new(10, 20)
+    assert(r.width == 10, "Width mismatch")
+    
+    // Verify method with self: Self
+    auto a = r.area()
+    println("Area: {}", a)
+    assert(a == 200, "Area mismatch")
+
+    // Verify clone() -> Self
+    auto c = r.clone()
+    assert(c.area() == 200, "Clone area mismatch")
+
+    // Verify Namespace Resolution
+    auto d = r.double_size()
+    assert(d.width == 20, "Double width mismatch")
+
+    println("Self Type Injection Verification: PASS")
+    return 0
+}

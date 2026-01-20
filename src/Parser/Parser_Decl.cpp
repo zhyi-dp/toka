@@ -289,13 +289,19 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
       if (firstArg && match(TokenType::KwSelf)) {
         FunctionDecl::Arg arg;
         arg.Name = "self";
-        arg.Type = "Self";
+        arg.Type = "Self"; // Default
         arg.HasPointer = false;
         // Capture mutability from token (e.g. self#)
         if (previous().HasWrite) {
           // arg.IsMutable = true; // Deprecated
           arg.IsValueMutable = true;
         }
+
+        // [Fix] Allow explicit type annotation: self: Type
+        if (match(TokenType::Colon)) {
+          arg.Type = parseTypeString();
+        }
+
         args.push_back(arg);
         firstArg = false;
         continue;

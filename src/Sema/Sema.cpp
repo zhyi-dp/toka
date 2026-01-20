@@ -41,6 +41,11 @@ bool Sema::checkModule(Module &M) {
   for (auto &Fn : M.Functions) {
     checkFunction(Fn.get());
   }
+
+  // 2c. Check Impl blocks (NEW: Proper Self Injection)
+  for (auto &Impl : M.Impls) {
+    checkImpl(Impl.get());
+  }
   // ...
 
   // Transfer ownership of synthetic anonymous record shapes to the Module
@@ -337,12 +342,28 @@ void Sema::registerGlobals(Module &M) {
       EncapMap[Impl->TypeName] = Impl->EncapEntries;
       // removed continue to allow method registration (hybrid trait)
     }
+    // [New] Resolve 'Self' in Method Signatures for External Callers
+    // We must replace 'Self' with the concrete (or generic) TypeName
+    // so that callers (like main) typically don't fail to resolve 'Self'.
+    std::string selfTy = Impl->TypeName;
+    for (auto &Method : Impl->Methods) {
+      if (Method->ReturnType == "Self") {
+        Method->ReturnType = selfTy;
+      }
+      for (auto &Arg : Method->Args) {
+        if (Arg.Type == "Self") {
+          Arg.Type = selfTy;
+        }
+      }
+    }
+
     std::set<std::string> implemented;
     for (auto &Method : Impl->Methods) {
       MethodMap[Impl->TypeName][Method->Name] = Method->ReturnType;
       MethodDecls[Impl->TypeName][Method->Name] = Method.get();
       implemented.insert(Method->Name);
     }
+
     // Populate ImplMap
     if (!Impl->TraitName.empty()) {
       std::string implKey = Impl->TypeName + "@" + Impl->TraitName;
@@ -350,6 +371,7 @@ void Sema::registerGlobals(Module &M) {
         ImplMap[implKey][Method->Name] = Method.get();
       }
     }
+
     // Handle Trait Defaults
     if (!Impl->TraitName.empty()) {
       if (TraitMap.count(Impl->TraitName)) {
@@ -468,6 +490,51 @@ void Sema::checkFunction(FunctionDecl *Fn) {
 
   exitScope();
   CurrentFunctionReturnType = savedRet; // [FIX] Restore state
+}
+
+void Sema::checkImpl(ImplDecl *Impl) {
+  // [NEW] Skip Generic Templates until Instantiation
+  // (Assuming Impl<T> is handled similarly to Functions, but for now we focus
+  // on non-generic Impl or instantiated ones) Actually, ImplDecl doesn't have
+  // GenericParams on itself usually? It refers to a Generic Type. We should
+  // check if the TargetType is generic? For "impl<T> Box<T>", the ImplDecl has
+  // "Box<T>" as TypeName. We need to resolve it.
+
+  enterScope(); // Helper Scope for Self Injection
+
+  // 1. Resolve Target Type (The "Self")
+  std::shared_ptr<toka::Type> SelfType = nullptr;
+
+  // Resolve the type name. Note: resolveType handles "Box<T>" if instantiated,
+  // or "Box" if we are inside a generic context (which we aren't yet for global
+  // impls). For now, let's assume we are checking concrete impls OR we are just
+  // setting up the scope for "Self" to alias to "TypeName".
+
+  // Create a Type Object for the Impl's Target
+  // We use Type::fromString but we might want to resolve aliases.
+  SelfType = toka::Type::fromString(Impl->TypeName);
+
+  // If we can resolve it deeper (e.g. valid shape), do so.
+  SelfType = resolveType(SelfType);
+
+  // 2. Define "Self" in the Scope
+  if (SelfType) {
+    SymbolInfo Sym;
+    // Sym.Name = "Self"; // SymbolInfo doesn't store Name, Key does.
+    Sym.IsTypeAlias = true;
+    Sym.TypeObj = SelfType;
+    CurrentScope->define("Self", Sym);
+  } else {
+    // Should we error?
+  }
+
+  // 3. Check all methods
+  for (auto &Method : Impl->Methods) {
+    // Methods inside Impl are FunctionDecls.
+    checkFunction(Method.get());
+  }
+
+  exitScope();
 }
 
 void Sema::checkShapeSovereignty() {
