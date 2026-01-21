@@ -28,6 +28,36 @@ namespace toka {
 
 static SourceLocation getLoc(ASTNode *Node) { return Node->Loc; }
 
+static std::string getStringifyPath(Expr *E) {
+  if (!E)
+    return "";
+  if (auto *ve = dynamic_cast<VariableExpr *>(E)) {
+    return ve->Name;
+  }
+  if (auto *me = dynamic_cast<MemberExpr *>(E)) {
+    std::string member = me->Member;
+    // Strip morphology and attributes from member name
+    size_t start = 0;
+    while (start < member.size() &&
+           (member[start] == '^' || member[start] == '*' ||
+            member[start] == '~' || member[start] == '&' ||
+            member[start] == '?' || member[start] == '#' ||
+            member[start] == '!'))
+      start++;
+    size_t end = member.size();
+    while (end > start && (member[end - 1] == '?' || member[end - 1] == '#' ||
+                           member[end - 1] == '!'))
+      end--;
+    member = member.substr(start, end - start);
+
+    return getStringifyPath(me->Object.get()) + "." + member;
+  }
+  if (auto *ue = dynamic_cast<UnaryExpr *>(E)) {
+    return getStringifyPath(ue->RHS.get());
+  }
+  return "";
+}
+
 static bool isLValue(const Expr *expr) {
   if (dynamic_cast<const VariableExpr *>(expr))
     return true;
@@ -423,7 +453,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       HasError = true;
       return toka::Type::fromString("unknown");
     }
-    if (Info.Moved) {
+    if (Info.Moved && !m_InLHS) {
       DiagnosticEngine::report(getLoc(ve), DiagID::ERR_USE_MOVED, ve->Name);
       HasError = true;
     }
@@ -754,6 +784,13 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (auto *bin = dynamic_cast<BinaryExpr *>(ie->Condition.get())) {
       if (bin->Op == "is") {
         Expr *lhs = bin->LHS.get();
+        std::string path = getStringifyPath(lhs);
+        if (!path.empty()) {
+          m_NarrowedPaths.insert(path);
+          narrowed = true;
+          narrowedVar = path;
+        }
+
         VariableExpr *varExpr = dynamic_cast<VariableExpr *>(lhs);
         if (!varExpr) {
           if (auto *un = dynamic_cast<UnaryExpr *>(lhs)) {
@@ -764,30 +801,16 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         if (varExpr) {
           SymbolInfo *infoPtr = nullptr;
           if (CurrentScope->findSymbol(varExpr->Name, infoPtr)) {
-            narrowedVar = varExpr->Name;
+            if (!narrowed) {
+              narrowedVar = varExpr->Name;
+              narrowed = true;
+            }
             originalInfo = *infoPtr;
             // Sync TypeObj: Narrow type to non-nullable
             if (infoPtr->TypeObj) {
               infoPtr->TypeObj = infoPtr->TypeObj->withAttributes(
                   infoPtr->TypeObj->IsWritable, false);
             }
-
-            // Sync TypeObj
-            if (infoPtr->TypeObj) {
-              // Determine what nullability means for this type
-              // IsPointerNullable vs IsValueNullable
-              // For simplicity in Stage 3, we reconstruct or strip attributes
-              bool isPtrNull = false; // Should be false now
-              bool isValNull = false; // Should be false now
-              // Reconstruct from source of truth properties?
-              // Or just use withAttributes(writable, nullable=false)?
-              // Nullable means *either* pointer or value nullability in Toka?
-              // Narrowing removes nullability.
-              infoPtr->TypeObj = infoPtr->TypeObj->withAttributes(
-                  infoPtr->TypeObj->IsWritable, false);
-            }
-
-            narrowed = true;
           }
         }
       }
@@ -815,10 +838,13 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     // Restore if narrowed
     if (narrowed) {
-      SymbolInfo *infoPtr = nullptr;
-      if (CurrentScope->findSymbol(narrowedVar, infoPtr)) {
-        *infoPtr = originalInfo;
+      if (CurrentScope->lookup(narrowedVar, originalInfo)) { // If it was a var
+        SymbolInfo *infoPtr = nullptr;
+        if (CurrentScope->findSymbol(narrowedVar, infoPtr)) {
+          *infoPtr = originalInfo;
+        }
       }
+      m_NarrowedPaths.erase(narrowedVar);
     }
 
     std::string thenType = m_ControlFlowStack.back().ExpectedType;
@@ -1608,6 +1634,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     return toka::Type::fromString(resolvedInitName);
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
+    std::string path = getStringifyPath(Memb);
+    bool isNarrowed = m_NarrowedPaths.count(path);
 
     // [Fix] Visual Semantics Enforcement: Symmetry Rule
     // 1. Arrow '->' REQUIRES explicit pointer sigil (UnaryExpr with ^, *, ~, &)
@@ -1867,13 +1895,15 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               soulType = soulType->getPointeeType();
             }
             return soulType->withAttributes(objTypeObj->IsWritable,
-                                            fieldType->IsNullable);
+                                            isNarrowed ? false
+                                                       : fieldType->IsNullable);
           } else {
             // obj.&field, obj.^field, obj.*field (Hatted) -> Identiy Access.
             // The requestedPrefix confirms we want the pointer/reference
             // itself.
-            return fieldType->withAttributes(objTypeObj->IsWritable,
-                                             fieldType->IsNullable);
+            return fieldType->withAttributes(
+                objTypeObj->IsWritable,
+                isNarrowed ? false : fieldType->IsNullable);
           }
         }
       }
@@ -2299,6 +2329,7 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
 std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   std::cerr << "DEBUG: checkBinaryExpr ENTER. Op=" << Bin->Op << "\n";
   // 1. Resolve Operands using New API
+  bool oldLHS = m_InLHS;
   m_InLHS = (Bin->Op == "=" || Bin->Op == "+=" || Bin->Op == "-=" ||
              Bin->Op == "*=" || Bin->Op == "/=");
   // [FIX] Substitution
@@ -2307,7 +2338,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     Bin->LHS = foldGenericConstant(std::move(Bin->LHS));
 
   auto lhsType = checkExpr(Bin->LHS.get());
-  m_InLHS = false;
+  m_InLHS = oldLHS;
 
   Bin->RHS = foldGenericConstant(std::move(Bin->RHS)); // [FIX]
   auto rhsType = checkExpr(Bin->RHS.get());
@@ -2405,6 +2436,16 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         }
         CurrentScope->markMoved(RHSVar->Name);
       }
+    }
+
+    // [New] Assign to VariableExpr: Clear Moved State
+    Expr *LHSScan = Bin->LHS.get();
+    while (auto *un = dynamic_cast<UnaryExpr *>(LHSScan)) {
+      LHSScan = un->RHS.get();
+    }
+    if (auto *LHSVar = dynamic_cast<VariableExpr *>(LHSScan)) {
+      std::cerr << "DEBUG: resetMoved for " << LHSVar->Name << "\n";
+      CurrentScope->resetMoved(LHSVar->Name);
     }
 
     // Reference Assignment

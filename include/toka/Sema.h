@@ -123,6 +123,16 @@ public:
     }
     return false;
   }
+
+  // Clear moved flag. Returns true if found and updated.
+  bool resetMoved(const std::string &Name) {
+    SymbolInfo *ptr = nullptr;
+    if (findSymbol(Name, ptr)) {
+      ptr->Moved = false;
+      return true;
+    }
+    return false;
+  }
 };
 
 class Sema {
@@ -229,6 +239,9 @@ private:
   // Anonymous Records
   int AnonRecordCounter = 0;
   std::vector<std::unique_ptr<ShapeDecl>> SyntheticShapes;
+
+  // Path Narrowing
+  std::set<std::string> m_NarrowedPaths;
 
   void error(ASTNode *Node, const std::string &Msg);
 
