@@ -1891,7 +1891,7 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
     m_Symbols[pName] = sym;
 
     if (!m_ScopeStack.empty()) {
-      m_ScopeStack.back().push_back({pName, alloca, false, false});
+      m_ScopeStack.back().push_back({pName, alloca, targetType, false, false});
     }
   } else if (pat->PatternKind == MatchArm::Pattern::Decons) {
     if (targetType->isStructTy()) {

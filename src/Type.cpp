@@ -458,6 +458,23 @@ std::string Type::stripMorphology(const std::string &name) {
   }
   return s;
 }
+std::string Type::stripPrefixes(const std::string &name) {
+  std::string s = name;
+  if (s.empty())
+    return "";
+
+  size_t start = 0;
+  while (start < s.size()) {
+    char c = s[start];
+    if (c == '*' || c == '^' || c == '~' || c == '&' || c == '#' || c == '?' ||
+        c == '!' || c == '$') {
+      start++;
+    } else {
+      break;
+    }
+  }
+  return s.substr(start);
+}
 
 static std::string trim(const std::string &str) {
   size_t first = str.find_first_not_of(' ');

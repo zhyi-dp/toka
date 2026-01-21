@@ -193,24 +193,28 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
         if (kind == ShapeKind::Struct) {
           std::string prefixType = "";
           if (match(TokenType::Star)) {
+            m.HasPointer = true;
             prefixType = "*";
             if (previous().HasNull)
               prefixType += "?";
             else if (previous().IsSwappablePtr)
               prefixType += "!";
           } else if (match(TokenType::Caret)) {
+            m.IsUnique = true;
             prefixType = "^";
             if (previous().HasNull)
               prefixType += "?";
             else if (previous().IsSwappablePtr)
               prefixType += "!";
           } else if (match(TokenType::Tilde)) {
+            m.IsShared = true;
             prefixType = "~";
             if (previous().HasNull)
               prefixType += "?";
             else if (previous().IsSwappablePtr)
               prefixType += "!";
           } else if (match(TokenType::Ampersand)) {
+            m.IsReference = true;
             prefixType = "&";
             if (previous().HasNull)
               prefixType += "?";

@@ -325,7 +325,7 @@ private:
     }
 
     // 3. Soul Type
-    Signature += getTypeName(Arg);
+    Signature += toka::Type::stripPrefixes(getTypeName(Arg));
 
     // 4. Value Attributes
     if (Arg.IsPointerNullable || Arg.IsValueNullable) {
@@ -350,7 +350,7 @@ private:
     else if (Arg.HasPointer)
       Signature += "*";
 
-    Signature += Arg.Type;
+    Signature += toka::Type::stripPrefixes(Arg.Type);
     return Signature;
   }
 

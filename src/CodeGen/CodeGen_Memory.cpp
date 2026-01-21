@@ -493,13 +493,11 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
     const ShapeDecl *sh = m_Shapes[stName];
     if (idx >= 0 && idx < (int)sh->Members.size()) {
       memberTypeName = sh->Members[idx].Type;
-      // For Union, explicitly get logical type
-      if (isUnion) {
-        if (sh->Members[idx].ResolvedType)
-          irTy = getLLVMType(sh->Members[idx].ResolvedType);
-        else
-          irTy = resolveType(memberTypeName, false);
-      }
+      // [Fix] Always resolve member IR type from ResolvedType or resolveType
+      if (sh->Members[idx].ResolvedType)
+        irTy = getLLVMType(sh->Members[idx].ResolvedType);
+      else
+        irTy = resolveType(memberTypeName, false);
     }
   }
 

@@ -579,11 +579,8 @@ void Sema::checkShapeSovereignty() {
 
       // Check if Shape manages resources
       for (auto &memb : decl->Members) {
-        // 1. Raw Pointers (*T)
-        if (memb.HasPointer) {
-          needsDrop = true;
-          break;
-        }
+        // 1. Raw Pointers (*T) - DO NOT force drop (views/unsafe aliases)
+        // if (memb.HasPointer) { ... }
         // 2. Unique Pointers (^T)
         if (memb.IsUnique) {
           needsDrop = true;
@@ -631,28 +628,11 @@ void Sema::analyzeShapes(Module &M) {
       if (member.ResolvedType)
         continue; // Already resolved?
 
-      // 1. Construct Morphology Prefix
-      std::string prefix = "";
-      if (member.IsShared)
-        prefix += "~";
-      else if (member.IsUnique)
-        prefix += "^";
-      else if (member.IsReference)
-        prefix += "&";
-      else if (member.HasPointer)
-        prefix += "*";
-
-      // 2. Construct Full Type String
-      // Note: member.Type is the raw string from parser (e.g. "Node" or
-      // "i32")
-      std::string fullTypeStr = prefix + member.Type;
+      // Use member.Type directly as it already contains morphology sigils from
+      // the parser
+      std::string fullTypeStr = member.Type;
 
       // 3. Resolve to Canonical Name (handles imports, aliases)
-      // We use the full string so resolveType can handle the modifiers if it
-      // needs to, but usually resolveType expects the base name if we passed
-      // bools. However, type strings like "^Node" are valid for resolveType
-      // lookup if "Node" is a Shape. Let's use the standard
-      // resolveType(string) which handles everything.
       std::string resolvedName = resolveType(fullTypeStr);
 
       // 4. Create Type Object
@@ -741,11 +721,14 @@ void Sema::analyzeShapes(Module &M) {
         break;
     }
 
+    // Relaxed: Raw pointers don't force 'drop' (views/unsafe aliases)
+    /*
     if (props.HasRawPtr && !hasExplicitDrop) {
       DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RAW_PTR,
                                S->Name);
       HasError = true;
     }
+    */
 
     if (props.HasManualDrop && !hasExplicitDrop) {
       DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RESOURCE,

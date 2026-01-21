@@ -91,6 +91,7 @@ public:
   // Helper: Strip morphology characters (*, ^, &, ~, #, ?, !) to get the "Soul"
   // name
   static std::string stripMorphology(const std::string &name);
+  static std::string stripPrefixes(const std::string &name);
 
   bool isShape() const { return typeKind == Shape; }
   virtual std::string getSoulName() const { return toString(); }

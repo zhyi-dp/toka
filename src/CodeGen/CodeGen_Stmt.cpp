@@ -157,9 +157,8 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
   for (int i = (int)m_ScopeStack.size() - 1; i >= (int)targetDepth; --i) {
     auto &scope = m_ScopeStack[i];
     for (auto it = scope.rbegin(); it != scope.rend(); ++it) {
-      if (it->IsShared && it->Alloca) {
-        llvm::Type *shTy =
-            llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType();
+      if (it->IsShared && it->Alloca && it->AllocType) {
+        llvm::Type *shTy = it->AllocType;
         llvm::Value *sh = nullptr;
 
         if (shTy->isStructTy()) {
@@ -256,10 +255,8 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
             currBB = afterDecBB;
           }
         }
-      } else if (it->IsUniquePointer && it->Alloca) {
-        llvm::Value *ptr = m_Builder.CreateLoad(
-            llvm::cast<llvm::AllocaInst>(it->Alloca)->getAllocatedType(),
-            it->Alloca);
+      } else if (it->IsUniquePointer && it->Alloca && it->AllocType) {
+        llvm::Value *ptr = m_Builder.CreateLoad(it->AllocType, it->Alloca);
 
         // [Fix] Nullable Short-Circuit
         llvm::Value *notNull = m_Builder.CreateIsNotNull(ptr, "not_null");

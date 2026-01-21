@@ -143,8 +143,9 @@ private:
   struct VariableScopeInfo {
     std::string Name;
     llvm::Value *Alloca;
-    bool IsUniquePointer; // ^Type
-    bool IsShared;        // ~Type
+    llvm::Type *AllocType; // The type stored at Alloca (Soul or Envelope)
+    bool IsUniquePointer;  // ^Type
+    bool IsShared;         // ~Type
     bool HasDrop;
     std::string DropFunc;
   };

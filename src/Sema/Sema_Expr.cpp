@@ -78,42 +78,6 @@ static bool isLValue(const Expr *expr) {
   return false;
 }
 
-// [Sema.cpp]
-// 语义合成器：从 "变量形态(Flags)" 和 "灵魂类型(Type)" 合成完整的物理签名
-// 用于在函数调用检查时，生成期望的参数类型字符串
-template <typename T> static std::string synthesizePhysicalType(const T &Arg) {
-  std::string Signature = "";
-
-  // 1. Morphologies
-  if (Arg.IsUnique) {
-    Signature += "^";
-  } else if (Arg.IsShared) {
-    Signature += "~";
-  } else if (Arg.IsReference) {
-    Signature += "&";
-  } else if (Arg.HasPointer) {
-    Signature += "*";
-  }
-
-  // 2. Pointer Attributes (on prefix level if needed, but Type::fromString
-  // expects suffixes) Actually, for consistency with Type::fromString recursive
-  // parsing: *Data? means Pointer (isNullable=true) to Data. *Data# means
-  // Pointer (isWritable=true) to Data.
-
-  // 3. Soul Type
-  Signature += Arg.Type;
-
-  // 4. Value Attributes
-  if (Arg.IsPointerNullable || Arg.IsValueNullable) {
-    Signature += "?";
-  }
-  if (Arg.IsRebindable || Arg.IsValueMutable) {
-    Signature += "#";
-  }
-
-  return Signature;
-}
-
 std::string Sema::checkUnaryExprStr(UnaryExpr *Unary) {
   return checkUnaryExpr(Unary)->toString();
 }
@@ -1784,22 +1748,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                                ObjTypeFull);
       HasError = true;
     }
-    std::string ObjType = resolveType(objTypeObj)->toString();
-
-    // Auto-dereference if it's a pointer/ref (strips ^, &, *, ~)
-    if (ObjType.size() > 1 && (ObjType[0] == '^' || ObjType[0] == '&' ||
-                               ObjType[0] == '*' || ObjType[0] == '~')) {
-      ObjType = ObjType.substr(1);
-    }
-    // Strip suffix '?' if it was '^?Point' -> '?Point' -> 'Point'
-    while (!ObjType.empty() && (ObjType.back() == '?' ||
-                                ObjType.back() == '!' || ObjType.back() == '#'))
-      ObjType.pop_back();
-
-    // Secondary middle check if prefix icon remained somehow?
-    while (!ObjType.empty() &&
-           (ObjType[0] == '?' || ObjType[0] == '!' || ObjType[0] == '#'))
-      ObjType = ObjType.substr(1);
+    std::string ObjType =
+        toka::Type::stripMorphology(resolveType(objTypeObj)->toString());
 
     if (ShapeMap.count(ObjType)) {
       ShapeDecl *SD = ShapeMap[ObjType];
@@ -1881,11 +1831,11 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           }
 
           // Return type based on Toka 1.3 Pointer-Value Duality
-          std::string fullType = synthesizePhysicalType(Field);
+          std::string fullType = Sema::synthesizePhysicalType(Field);
           std::shared_ptr<toka::Type> fieldType =
               toka::Type::fromString(fullType);
 
-          if (requestedPrefix.empty()) {
+          if (requestedPrefix.empty() && !m_DisableSoulCollapse) {
             // obj.field (Hat-Off) -> Soul Collapse.
             // If the field is a pointer/reference, dereference it.
             auto soulType = fieldType;
@@ -2940,6 +2890,14 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   }
 
   if (Bin->Op == "is" || Bin->Op == "is!") {
+    // [Fix] Disable soul collapse for the LHS of 'is' so we can check the
+    // the pointer/handle itself.
+    bool oldDisable = m_DisableSoulCollapse;
+    m_DisableSoulCollapse = true;
+    auto lhsType = checkExpr(Bin->LHS.get());
+    m_DisableSoulCollapse = oldDisable;
+
+    auto rhsType = checkExpr(Bin->RHS.get());
     // Basic validation for 'is' / 'is!'
     if (auto *rhsVar = dynamic_cast<VariableExpr *>(Bin->RHS.get())) {
       // If RHS is just a Shape name, it's NOT a valid pattern (should be a
@@ -3413,14 +3371,16 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   if (Fn) {
     Call->ResolvedFn = Fn;
     for (auto &Arg : Fn->Args) {
-      ParamTypes.push_back(toka::Type::fromString(synthesizePhysicalType(Arg)));
+      ParamTypes.push_back(
+          toka::Type::fromString(Sema::synthesizePhysicalType(Arg)));
     }
     ReturnType = toka::Type::fromString(Fn->ReturnType);
     IsVariadic = Fn->IsVariadic;
   } else if (Ext) {
     Call->ResolvedExtern = Ext;
     for (auto &Arg : Ext->Args) {
-      ParamTypes.push_back(toka::Type::fromString(synthesizePhysicalType(Arg)));
+      ParamTypes.push_back(
+          toka::Type::fromString(Sema::synthesizePhysicalType(Arg)));
     }
     ReturnType = toka::Type::fromString(Ext->ReturnType);
     IsVariadic = Ext->IsVariadic;
