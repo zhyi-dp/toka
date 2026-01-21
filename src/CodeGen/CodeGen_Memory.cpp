@@ -373,8 +373,11 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
     }
   }
 
-  int idx = -1;
+  int idx = mem->Index;
   llvm::StructType *st = nullptr;
+  llvm::errs() << "DEBUG: genMemberExpr Member=" << mem->Member
+               << " Index=" << idx << " objType=" << (objType ? "set" : "null")
+               << "\n";
   if (objType && objType->isStructTy()) {
     st = llvm::cast<llvm::StructType>(objType);
   }
@@ -451,8 +454,12 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
     }
   }
 
-  if (idx == -1)
+  if (idx == -1) {
+    std::string typeDesc = stName.empty() ? "anonymous struct or tuple"
+                                          : ("struct '" + stName + "'");
+    error(mem, "Failed to resolve member '" + mem->Member + "' in " + typeDesc);
     return nullptr;
+  }
 
   llvm::Value *fieldAddr = nullptr;
   if (stName.empty() || !m_Shapes.count(stName) ||

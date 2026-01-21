@@ -61,7 +61,7 @@ fn test_enum() {
         }
     }
     
-    auto none_val = Option<i32>::None
+    auto none_val = Option<i32>::None()
     match none_val {
         auto Option<i32>::None => {
             assert(true, "Enum None matched")

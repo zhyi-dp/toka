@@ -102,7 +102,7 @@ fn simulate(e#: Entity) -> bool {
 
     // logic check
     if e.pos.x > 100.0:f32 {
-        e#.status = Status::Inactive
+        e#.status = Status::Inactive()
         return false
     }
 
@@ -137,7 +137,7 @@ fn main() -> i32 {
     auto e1# = Entity(
         id = 1,
         pos = Point(10.0:f32, 20.0:f32),
-        status = Status::Active,
+        status = Status::Active(),
         name = name_str 
     )
     println("hello {}",e1.name.c_str())

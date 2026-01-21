@@ -1,0 +1,39 @@
+import std/io::println
+fn get_ref(x:i32) -> &i32 {
+    return &x // EXPECT: Returning reference to parameter 'x' requires explicit dependency declaration (<- x)
+}
+
+fn bigger(x:i32, y:i32) -> &i32 <- x {
+    if (x > y) {
+        return &x
+    }
+    return &y // EXPECT: Returning reference to parameter 'y' requires explicit dependency declaration (<- y)
+}
+
+shape RefInt <- val
+(
+    &#val : i32
+)
+
+fn main() -> i32 {
+    auto y = 10
+    auto &ref = get_ref(y)
+    println("Ref: {}", ref)
+    auto z = 20
+    auto &big = bigger(y, z)
+    println("Big: {}", big)
+
+    auto a = 11
+    auto ref_a = RefInt(&val=&a)
+    println("RefA: {}", ref_a.val)
+
+    {
+        auto b = 12
+        ref_a.&#val = &b // EXPECT: Object 'ref_a' (lived longer) cannot depend on 'b' (lived shorter)
+        println("RefB: {}", ref_a.val)
+    }
+
+    println("RefB: {}", ref_a.val)   
+    return 0
+}
+    

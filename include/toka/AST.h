@@ -297,6 +297,7 @@ public:
   std::string Member;
   bool IsArrow;
   bool IsStatic;
+  int Index = -1;
   MemberExpr(std::unique_ptr<Expr> obj, const std::string &member,
              bool isArrow = false, bool isStatic = false)
       : Object(std::move(obj)), Member(member), IsArrow(isArrow),
@@ -307,6 +308,7 @@ public:
   std::unique_ptr<ASTNode> clone() const override {
     auto n = std::make_unique<MemberExpr>(cloneNode(Object), Member, IsArrow,
                                           IsStatic);
+    n->Index = Index;
     n->Loc = Loc;
     n->ResolvedType = ResolvedType;
     return n;

@@ -669,7 +669,8 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       else if (match(TokenType::Ampersand))
         prefix = "&";
 
-      if (match(TokenType::Identifier)) {
+      if (match(TokenType::Identifier) || match(TokenType::KwUnset) ||
+          match(TokenType::KwNull) || match(TokenType::KwSelf)) {
         std::string memberName = prefix + previous().Text;
         // Method Call check
         if (match(TokenType::LParen)) {
@@ -700,7 +701,9 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       }
     } else if (match(TokenType::Arrow)) {
       Token arrowTok = previous();
-      if (match(TokenType::Identifier) || match(TokenType::Integer)) {
+      if (match(TokenType::Identifier) || match(TokenType::Integer) ||
+          match(TokenType::KwUnset) || match(TokenType::KwNull) ||
+          match(TokenType::KwSelf)) {
         auto node = std::make_unique<MemberExpr>(std::move(expr),
                                                  previous().Text, true);
         node->setLocation(arrowTok, m_CurrentFile);

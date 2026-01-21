@@ -218,10 +218,9 @@ void CodeGen::error(const ASTNode *node, const std::string &message) {
   // but for now let's just delegate reporting.
 
   if (node) {
-    DiagnosticEngine::report(node->Loc, DiagID::ERR_GENERIC_CODEGEN, message);
+    DiagnosticEngine::report(node->Loc, DiagID::ERR_CODEGEN, message);
   } else {
-    DiagnosticEngine::report(SourceLocation{}, DiagID::ERR_GENERIC_CODEGEN,
-                             message);
+    DiagnosticEngine::report(SourceLocation{}, DiagID::ERR_CODEGEN, message);
   }
 }
 

@@ -61,9 +61,13 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
   std::vector<std::string> lifeDeps;
   if (match(TokenType::Dependency)) {
     do {
-      lifeDeps.push_back(
-          consume(TokenType::Identifier, "Expected dependency identifier")
-              .Text);
+      if (check(TokenType::Identifier) || check(TokenType::KwSelf) ||
+          check(TokenType::KwUpperSelf)) {
+        lifeDeps.push_back(advance().Text);
+      } else {
+        error(peek(), "Expected dependency identifier");
+        return nullptr;
+      }
     } while (match(TokenType::Pipe) || match(TokenType::Comma));
   }
 
@@ -345,7 +349,14 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
         isRebindable = t.IsSwappablePtr;
         isPtrNullable = t.HasNull;
       }
-      Token argName = consume(TokenType::Identifier, "Expected argument name");
+      Token argName;
+      if (check(TokenType::Identifier) || check(TokenType::KwSelf) ||
+          check(TokenType::KwUpperSelf)) {
+        argName = advance();
+      } else {
+        error(peek(), "Expected argument name");
+        return nullptr;
+      }
       std::string argType = "i64"; // fallback
       if (match(TokenType::Colon)) {
         argType = parseTypeString();
@@ -383,9 +394,13 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
   std::vector<std::string> lifeDeps;
   if (match(TokenType::Dependency)) {
     do {
-      lifeDeps.push_back(
-          consume(TokenType::Identifier, "Expected dependency identifier")
-              .Text);
+      if (check(TokenType::Identifier) || check(TokenType::KwSelf) ||
+          check(TokenType::KwUpperSelf)) {
+        lifeDeps.push_back(advance().Text);
+      } else {
+        error(peek(), "Expected dependency identifier");
+        return nullptr;
+      }
     } while (match(TokenType::Pipe) || match(TokenType::Comma));
   }
 
@@ -530,8 +545,8 @@ std::unique_ptr<ImportDecl> Parser::parseImport(bool isPub) {
   }
 
   // Special handling: 'import ... :: *' ends with *, which isEndOfStatement
-  // thinks is a binary op. We manually allow newline or semicolon here to avoid
-  // that check.
+  // thinks is a binary op. We manually allow newline or semicolon here to
+  // avoid that check.
   if (peek().HasNewlineBefore || check(TokenType::Semicolon) ||
       check(TokenType::EndOfFile) || check(TokenType::RBrace)) {
     match(TokenType::Semicolon);
@@ -595,8 +610,8 @@ std::unique_ptr<ImplDecl> Parser::parseImpl() {
     // impl Type@Trait
     typeName = firstTypeStr;
     // Trait might also be generic? For now assume identifier or
-    // parseTypeString? Let's assume Traits are strictly Identifiers for now, or
-    // use parseTypeString if Traits can be generic. Existing code used
+    // parseTypeString? Let's assume Traits are strictly Identifiers for now,
+    // or use parseTypeString if Traits can be generic. Existing code used
     // Identifier. Let's upgrade to parseTypeString for future proofing or
     // consistency.
     traitName = parseTypeString();

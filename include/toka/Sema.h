@@ -210,6 +210,7 @@ private:
   Module *CurrentModule = nullptr;
   bool m_InUnsafeContext = false;
   bool m_InLHS = false;
+  bool m_IsUnsetInitCall = false;     // [NEW] Track .unset() intrinsic
   bool m_DisableSoulCollapse = false; // [NEW] Track context for soul collapse
   TokenType m_OuterPointerSigil =
       TokenType::TokenNone; // [NEW] Track outer pointer sigil for nested member

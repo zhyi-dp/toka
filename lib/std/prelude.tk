@@ -11,6 +11,22 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// std/prelude.tk
 pub import core/prelude::*
 pub import std/io::println 
 pub import std/string::String
+
+import std/sys/macOS::*
+
+/*
+pub fn panic(message: str) {
+    __toka_panic_handler(message)
+}
+
+pub fn assert(condition: bool, message: str) {
+    if (!condition) {
+        panic(message)
+    }
+}
+*/

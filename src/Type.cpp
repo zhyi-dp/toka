@@ -563,6 +563,30 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
   if (s == "unknown")
     return std::make_shared<UnresolvedType>(s);
 
+  if (!s.empty() && s[0] == '(' && s.back() == ')') {
+    std::string argsStr = s.substr(1, s.size() - 2);
+    std::vector<std::shared_ptr<Type>> elements;
+    int balance = 0;
+    size_t start = 0;
+    for (size_t i = 0; i < argsStr.size(); ++i) {
+      if (argsStr[i] == '<' || argsStr[i] == '(' || argsStr[i] == '[')
+        balance++;
+      else if (argsStr[i] == '>' || argsStr[i] == ')' || argsStr[i] == ']')
+        balance--;
+      else if (argsStr[i] == ',' && balance == 0) {
+        elements.push_back(Type::fromString(argsStr.substr(start, i - start)));
+        start = i + 1;
+      }
+    }
+    if (start < argsStr.size()) {
+      elements.push_back(Type::fromString(argsStr.substr(start)));
+    }
+    auto tup = std::make_shared<TupleType>(std::move(elements));
+    tup->IsWritable = isWritable;
+    tup->IsNullable = isNullable;
+    return tup;
+  }
+
   // Check for generics: Name<Arg1, Arg2>
   size_t lt = s.find('<');
   size_t gt = s.rfind('>');

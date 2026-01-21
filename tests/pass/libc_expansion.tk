@@ -31,7 +31,7 @@ fn main() -> i32 {
         libc_free(*ptr)
 
         // Test time (just check it returns something > 0)
-        auto t = libc_time()
+        auto t = libc_time(nullptr)
         println("time: {}", t)
         if t <= 0:i64 { return 6 }
     }

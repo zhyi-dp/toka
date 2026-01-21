@@ -674,7 +674,11 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
       }
     } else {
       if (lhsType != rhsType) {
-        error(bin, "Type mismatch in binary expression");
+        std::string ls, rs;
+        llvm::raw_string_ostream los(ls), ros(rs);
+        lhsType->print(los);
+        rhsType->print(ros);
+        error(bin, "Type mismatch in binary expression: " + ls + " vs " + rs);
         return nullptr;
       }
     }

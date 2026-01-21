@@ -1,9 +1,10 @@
 import std/io::println
+//import std/prelude::*
 fn get_ref(x:i32) -> &i32 <- x {
     return &x
 }
 
-fn bigger(x:i32, y:i32) -> &i32 <- x|y {
+fn bigger<T>(x:T, y:T) -> &T <- x|y {
     if (x > y) {
         return &x
     }
@@ -24,8 +25,12 @@ fn main() -> i32 {
     println("Big: {}", big)
 
     auto a = 11
-    auto ref_a = RefInt(&val=&a)
+    auto ref_a# = RefInt(&val=&a)
     println("RefA: {}", ref_a.val)
+
+    auto b = 12
+    ref_a#.&val = &b
+    println("RefB: {}", ref_a.val)
    
     return 0
 }

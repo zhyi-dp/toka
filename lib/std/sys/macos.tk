@@ -15,13 +15,13 @@ import core/types::{char, usize, Addr, ADDR0}
 import std/string::{String}
 import core/libc::*
 
+/*
+
 // macOS specific argument retrieval externs.
 extern fn _NSGetArgc() -> *i32
 extern fn _NSGetArgv() -> *Addr 
 
-/**
- * Returns the number of command-line arguments.
- */
+// Returns the number of command-line arguments.
 pub fn args_impl() -> i32 {
     unsafe {
         auto *argc = _NSGetArgc()
@@ -29,9 +29,7 @@ pub fn args_impl() -> i32 {
     }
 }
 
-/**
- * Retrieves a specific command-line argument by index.
- */
+// Retrieves a specific command-line argument by index.
 pub fn get_arg_impl(i: i32) -> String {
     unsafe {
         auto *handle_ptr = _NSGetArgv()
@@ -146,4 +144,10 @@ pub fn unsetenv_impl(name: String) -> bool {
     unsafe {
         return libc_unsetenv(name.c_str()) == 0
     }
+}
+*/
+
+pub fn __toka_panic_handler(msg: str) {
+    // macOS 特有的实现：写 stderr + 退出
+    libc_abort()
 }

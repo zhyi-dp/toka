@@ -1332,6 +1332,36 @@ void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
 }
 
 PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
+  // [Intrinsic] unset & unwrap
+  if (expr->Method == "unset") {
+    PhysEntity obj = genExpr(expr->Object.get());
+    return PhysEntity(obj.value, "", obj.irType,
+                      true); // Return address as LValue
+  }
+  if (expr->Method == "unwrap") {
+    llvm::Value *objVal = genExpr(expr->Object.get()).load(m_Builder);
+    if (!objVal)
+      return nullptr;
+
+    llvm::Value *nn = m_Builder.CreateIsNotNull(objVal, "unwrap.nn");
+    llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *okBB =
+        llvm::BasicBlock::Create(m_Context, "unwrap.ok", f);
+    llvm::BasicBlock *panicBB =
+        llvm::BasicBlock::Create(m_Context, "unwrap.panic", f);
+    m_Builder.CreateCondBr(nn, okBB, panicBB);
+
+    m_Builder.SetInsertPoint(panicBB);
+    // [TODO] Call __toka_panic properly. For now, trap or abort.
+    llvm::Function *trap =
+        llvm::Intrinsic::getDeclaration(m_Module.get(), llvm::Intrinsic::trap);
+    m_Builder.CreateCall(trap);
+    m_Builder.CreateUnreachable();
+
+    m_Builder.SetInsertPoint(okBB);
+    return objVal;
+  }
+
   llvm::Value *objVal = genExpr(expr->Object.get()).load(m_Builder);
   if (!objVal)
     return nullptr;

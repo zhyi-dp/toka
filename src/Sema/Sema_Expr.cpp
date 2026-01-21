@@ -39,6 +39,12 @@ static bool isLValue(const Expr *expr) {
     if (ue->Op == TokenType::Star)
       return true;
   }
+  if (auto *met = dynamic_cast<const MethodCallExpr *>(expr)) {
+    // [Intrinsic] unset() and unwrap() can be L-values if their object is
+    if (met->Method == "unset" || met->Method == "unwrap") {
+      return isLValue(met->Object.get());
+    }
+  }
   return false;
 }
 
@@ -330,6 +336,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         }
 
         m_LastBorrowSource = Var->Name;
+        m_LastLifeDependencies.insert(Var->Name);
         m_CurrentStmtBorrows.push_back({Var->Name, wantMutable});
       }
     }
@@ -1289,6 +1296,19 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         return toka::Type::fromString(MethodMap[pSoul][Met->Method]);
       }
     }
+    // [Intrinsic] unset() & unwrap()
+    if (Met->Method == "unset") {
+      m_IsUnsetInitCall = true;
+      return ObjTypeObj;
+    }
+    if (Met->Method == "unwrap") {
+      if (!ObjTypeObj->IsNullable) {
+        // Warning or Silent - constitution says it's programmer's承担
+        // return type is already non-nullable?
+      }
+      return ObjTypeObj->withAttributes(ObjTypeObj->IsWritable, false);
+    }
+
     error(Met,
           "method '" + Met->Method + "' not found on type '" + ObjType + "'");
     return toka::Type::fromString("unknown");
@@ -1764,8 +1784,10 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         requestedMember = requestedMember.substr(1);
       }
 
-      for (const auto &Field : SD->Members) {
+      for (int i = 0; i < (int)SD->Members.size(); ++i) {
+        const auto &Field = SD->Members[i];
         if (toka::Type::stripMorphology(Field.Name) == requestedMember) {
+          Memb->Index = i; // [FIX] Set index for CodeGen
           // Visibility Check: God-eye view (same file)
           std::string membFile =
               DiagnosticEngine::SrcMgr->getFullSourceLoc(Memb->Loc).FileName;
@@ -1846,17 +1868,32 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       }
       error(Memb, "struct/union '" + ObjType + "' has no member named '" +
                       Memb->Member + "'");
-    } else if (ObjType == "tuple" || ObjType.find("(") == 0) {
-      // Tuple access: .0, .1
-      // If we knew the tuple type string, e.g. "(i32, str)", we could parse
-      // it. For now, accept integer members on anything resembling a tuple.
-      // And return "unknown" or "i32" fallback?
-      // test.tk uses .0 which is i32, .1 which is string/i32.
-      // Let's return "unknown" to suppress error but allow it to pass
-      // checks if we are lenient.
       return toka::Type::fromString("unknown");
-    } else if (ObjType != "unknown") {
-      error(Memb, "member access on non-struct type '" + ObjType + "'");
+    } else {
+      auto soulType = objTypeObj;
+      while (soulType && (soulType->isPointer() || soulType->isReference() ||
+                          soulType->isSmartPointer())) {
+        soulType = soulType->getPointeeType();
+      }
+
+      auto resSoul = resolveType(soulType);
+      if (auto TT = std::dynamic_pointer_cast<toka::TupleType>(resSoul)) {
+        // Tuple access: .0, .1
+        try {
+          int idx = std::stoi(Memb->Member);
+          if (idx >= 0 && idx < (int)TT->Elements.size()) {
+            Memb->Index = idx; // Set index for CodeGen
+            return TT->Elements[idx];
+          } else {
+            error(Memb, "tuple index " + Memb->Member + " out of range");
+          }
+        } catch (...) {
+          error(Memb, "invalid member access on tuple: " + Memb->Member);
+        }
+        return toka::Type::fromString("unknown");
+      } else if (ObjType != "unknown") {
+        error(Memb, "member access on non-struct type '" + ObjType + "'");
+      }
     }
     return toka::Type::fromString("unknown");
   } else if (auto *Post = dynamic_cast<PostfixExpr *>(E)) {
@@ -1919,15 +1956,11 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return toka::Type::fromString(
         "unknown"); // Placeholder for element type derivation
   } else if (auto *Tup = dynamic_cast<TupleExpr *>(E)) {
-    std::string s = "(";
+    std::vector<std::shared_ptr<toka::Type>> elements;
     for (size_t i = 0; i < Tup->Elements.size(); ++i) {
-      if (i > 0)
-        s += ", ";
-      auto elTypeObj = checkExpr(Tup->Elements[i].get());
-      s += elTypeObj->toString();
+      elements.push_back(checkExpr(Tup->Elements[i].get()));
     }
-    s += ")";
-    return toka::Type::fromString(s);
+    return std::make_shared<toka::TupleType>(std::move(elements));
   } else if (auto *Repeat = dynamic_cast<RepeatedArrayExpr *>(E)) {
     auto elemType = checkExpr(Repeat->Value.get());
 
@@ -2030,7 +2063,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   // [FIX] Context-Aware Arrow Access (Precedence Handling)
   // If we are wrapping a MemberExpr with Arrow, pass the sigil down.
-  // This MUST happen before checkExpr(Unary->RHS) to set the context properly.
+  // This MUST happen before checkExpr(Unary->RHS) to set the context
+  // properly.
   if (auto *Memb = dynamic_cast<MemberExpr *>(Unary->RHS.get())) {
     if (Memb->IsArrow) {
       if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
@@ -2090,6 +2124,7 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           Info->ImmutableBorrowCount++;
         }
         m_LastBorrowSource = Var->Name;
+        m_LastLifeDependencies.insert(Var->Name);
         m_CurrentStmtBorrows.push_back({Var->Name, wantMutable});
 
         // Use TypeObj if available, else generic logic
@@ -2321,6 +2356,12 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     }
   }
   bool isRefAssign = false;
+  bool isUnsetInit = false;
+  if (m_IsUnsetInitCall) {
+    isRefAssign = true;
+    isUnsetInit = true;
+    m_IsUnsetInitCall = false;
+  }
 
   // Rebinding Logic: Unwrap &ref on LHS
   if (Bin->Op == "=") {
@@ -2356,25 +2397,12 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     }
 
     // Reference Assignment
-    if (auto *VarLHS = dynamic_cast<VariableExpr *>(Bin->LHS.get())) {
-      SymbolInfo Info;
-      if (CurrentScope->lookup(VarLHS->Name, Info)) {
-        if (Info.IsReference()) {
-          // Check against Pointee
-          if (lhsType->isReference()) {
-            auto inner =
-                lhsType->getPointeeType(); // Correct: Reference's inner
-            if (!inner)
-              inner = lhsType; // Fallback
-            if (!isTypeCompatible(inner, rhsType)) {
-              error(Bin, "assignment type mismatch (ref): cannot assign '" +
-                             RHS + "' to '" + inner->toString() + "'");
-            }
-            // return inner; // [Fix] FALLTHROUGH to back-propagation logic
-          }
-          isRefAssign = true;
-        }
-      }
+    // [Constitution] Reference Rebinding Detection
+    // If the LHS resolved to a Reference type (due to explicit hatted syntax
+    // &#z), then it's a rebinding. If it collapsed to the Soul (Hat-Off),
+    // it's Soul modification.
+    if (lhsType->isReference()) {
+      isRefAssign = true;
     }
   }
 
@@ -2424,8 +2452,11 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     if (auto *Var = dynamic_cast<VariableExpr *>(Traverse)) {
       SymbolInfo *InfoPtr = nullptr;
       if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {
-        if (InfoPtr->IsMutablyBorrowed || InfoPtr->ImmutableBorrowCount > 0) {
-          error(Bin, "cannot modify '" + Var->Name + "' while it is borrowed");
+        if (!isUnsetInit && InfoPtr) {
+          if (InfoPtr->IsMutablyBorrowed || InfoPtr->ImmutableBorrowCount > 0) {
+            error(Bin,
+                  "cannot modify '" + Var->Name + "' while it is borrowed");
+          }
         }
         if (InfoPtr->IsMutable() || Var->IsValueMutable)
           isLHSWritable = true;
@@ -2460,13 +2491,10 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       }
     }
 
-    // [FIX] Assignment Promotion: ptr# = val
-    // If LHS is a writable pointer (Identity Writable), but RHS matches
-    // Pointee (Soul), promote to Implicit Dereference Assignment.
-    if (!isSmartNew && !isRefAssign &&
-        (lhsType->isPointer() || lhsType->isSmartPointer())) {
+    if (isUnsetInit)
+      isLHSWritable = true;
 
-      bool isPointerIdentityWrite = false;
+    if (!isUnsetInit && !isLHSWritable) {
       // Check if we are writing to the pointer variable itself (ptr#)
       // Usually `ptr = val` (rebind). But here `val` is Pointee type.
       // It implies `*ptr = val`.
@@ -2553,7 +2581,46 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     auto lhsCompatType = lhsType->withAttributes(false, lhsType->IsNullable);
 
     // [FIX] Reference Rebinding Morphology Mirror
-    if (isRefAssign) {
+    // [NEW] Lifetime Safety Check: Scope(LHS_Object) >= Scope(RHS_Dependency)
+    std::string targetObjName = "";
+    Expr *lhsObj = Bin->LHS.get();
+    while (auto *me = dynamic_cast<MemberExpr *>(lhsObj)) {
+      lhsObj = me->Object.get();
+    }
+    if (auto *ve = dynamic_cast<VariableExpr *>(lhsObj)) {
+      targetObjName = ve->Name;
+    }
+
+    if (!targetObjName.empty()) {
+      SymbolInfo *targetInfo = nullptr;
+      if (CurrentScope->findSymbol(targetObjName, targetInfo)) {
+        std::set<std::string> rhsDeps = m_LastLifeDependencies;
+        if (!m_LastBorrowSource.empty())
+          rhsDeps.insert(m_LastBorrowSource);
+        if (auto *rv = dynamic_cast<VariableExpr *>(Bin->RHS.get())) {
+          SymbolInfo *ri = nullptr;
+          if (CurrentScope->findSymbol(rv->Name, ri)) {
+            for (const auto &d : ri->LifeDependencySet)
+              rhsDeps.insert(d);
+          }
+        }
+
+        int targetDepth = getScopeDepth(targetObjName);
+        for (const auto &dep : rhsDeps) {
+          int depDepth = getScopeDepth(dep);
+          if (targetDepth < depDepth) { // outer < inner => error
+            DiagnosticEngine::report(getLoc(Bin), DiagID::ERR_BORROW_LIFETIME,
+                                     targetObjName, dep);
+            HasError = true;
+          }
+          targetInfo->LifeDependencySet.insert(dep);
+        }
+      }
+    }
+    m_LastBorrowSource = "";
+    m_LastLifeDependencies.clear();
+
+    if (isRefAssign && !isUnsetInit) {
       // If LHS is Ref (&#), RHS must be Ref (&)
       if (!rhsType->isReference()) {
         error(Bin->RHS.get(), "Reference rebinding requires '&' morphology on "
@@ -2629,45 +2696,6 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       error(Bin, "assignment type mismatch: cannot assign '" + RHS + "' to '" +
                      LHS + "'");
     }
-
-    // [NEW] Lifetime Safety Check: Scope(LHS_Object) >= Scope(RHS_Dependency)
-    std::string targetObjName = "";
-    Expr *lhsObj = Bin->LHS.get();
-    while (auto *me = dynamic_cast<MemberExpr *>(lhsObj)) {
-      lhsObj = me->Object.get();
-    }
-    if (auto *ve = dynamic_cast<VariableExpr *>(lhsObj)) {
-      targetObjName = ve->Name;
-    }
-
-    if (!targetObjName.empty()) {
-      SymbolInfo *targetInfo = nullptr;
-      if (CurrentScope->findSymbol(targetObjName, targetInfo)) {
-        std::set<std::string> rhsDeps = m_LastLifeDependencies;
-        if (!m_LastBorrowSource.empty())
-          rhsDeps.insert(m_LastBorrowSource);
-        if (auto *rv = dynamic_cast<VariableExpr *>(Bin->RHS.get())) {
-          SymbolInfo *ri = nullptr;
-          if (CurrentScope->findSymbol(rv->Name, ri)) {
-            for (const auto &d : ri->LifeDependencySet)
-              rhsDeps.insert(d);
-          }
-        }
-
-        int targetDepth = getScopeDepth(targetObjName);
-        for (const auto &dep : rhsDeps) {
-          int depDepth = getScopeDepth(dep);
-          if (targetDepth < depDepth) { // outer < inner => error
-            DiagnosticEngine::report(getLoc(Bin), DiagID::ERR_BORROW_LIFETIME,
-                                     targetObjName, dep);
-            HasError = true;
-          }
-          targetInfo->LifeDependencySet.insert(dep);
-        }
-      }
-    }
-    m_LastBorrowSource = "";
-    m_LastLifeDependencies.clear();
 
     // [Fix] Update InitMask logic for 'unset' variables
     Expr *LHSExpr = Bin->LHS.get();

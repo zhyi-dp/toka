@@ -14,7 +14,7 @@ impl<T> Box<T> {
     }
 
     // Instance Method
-    pub fn unwrap(self) -> T {
+    pub fn unwrap_val(self) -> T {
         return self.val
     }
 
@@ -36,15 +36,15 @@ fn main() -> i32 {
     // 1. Static Method: Box<i32>::new
     // Compiler must infer T=i32 from context or explicit specifier
     auto b# = Box<i32>::new(100)
-    assert(b.unwrap() == 100, "Unwrap failed")
+    assert(b.unwrap_val() == 100, "Unwrap failed")
 
     // 2. Instance Method
     b#.set(200)
-    assert(b.unwrap() == 200, "Set failed")
+    assert(b.unwrap_val() == 200, "Set failed")
 
     // 3. Namespace Call (Self::new)
     auto b2 = b.replace(300)
-    assert(b2.unwrap() == 300, "Replace/Self::new failed")
+    assert(b2.unwrap_val() == 300, "Replace/Self::new failed")
 
     println("Generic Impl Verification: PASS")
     return 0

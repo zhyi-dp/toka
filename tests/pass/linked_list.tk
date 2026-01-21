@@ -4,38 +4,49 @@ import std/memory::assert
 
 shape Node(
     val: i32,
-    ^?next: Node
+    ~?next: Node
 )
+impl Node {
+    fn unwrap(~?self: Node) -> &Node <- self {
+        if ~?self is ~self {
+            return &self
+        }
+        assert(false, "unwrap null")
+        return &self
+    }
+}
 
 pub fn main() -> i32 {
     unsafe {
         // User's logic + Print checks
-        auto ^head = new Node(val=101, ^?next=unset)  
+        auto ~head = new Node(val=101, ~?next=nullptr)  
         //println("head: {}", head.val)
         //assert(head.val == 101, "check head.val")
         // Push 1
         {
-            auto &#iter = &head //上面刚new完，显然head是有效的，所以&iter不必有可空属性
             for auto i in [1,2,3,4,5] {
-                iter.^next.unset() = new Node(val=i, ^?next=unset)//初始化iter.^next 他之前是 unset 的
-                println("[{}]pushed: {}", i, iter.val)
-                &#iter = &(iter.next.unwrap()) //unwrap可以减轻编译器负担。同样 iter.next是有效的（因为刚刚new完），所以&iter不必有可空属性
+                auto ~next = ~head
+                ~head = new Node(val=i, ~?next=~next)//初始化iter.~next 他之前是 unset 的
+                println("[{}]pushed: {}", i, head.val)
             }
-            iter.^?next.unset() = nullptr //将iter.^?next初始化为空（他之前是 unset），这需要编译器进行数据流分析才能搞定
         }
+        return 0
 
+        /*
         auto &#iter = &head
         loop {
             println("iter: {}", iter.val)
-            if (iter.^next == nullptr) //因为iter.^?next是可空的，所以这里必须判空
-            {
-                assert(iter.^next == nullptr, "check null")
-                break
-            }
-            else {
-                &#iter = &(iter.next.unwrap())//if是空，else那就一定不是空
+            match iter.~?next {
+                auto ~n => {
+                    &#iter = &n
+                }
+                _ => {
+                    assert(false, "check null")
+                    break
+                }
             }
         }
+        */
     }
     return 0
 }

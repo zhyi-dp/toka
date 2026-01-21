@@ -1,27 +1,28 @@
 import std/io::println
-
-// Strong types
-pub type char = i8
-pub type Char = u32
-pub type BoolAlias = bool
-
-// Enum Declaration (Sum Type)
-shape MyEnum ( A | B )
-// Alias to Shape
-pub type StrictEnum = MyEnum
+import std/memory::assert
 
 // Allowed Types Union
 shape SafeUnionType (
-    as c: char |
-    as wc: Char |
-    as b: u8
+    as c: u8 |
+    as wc: u32 |
+    as b: u16
 )
 
 fn main() -> i32 {
-    auto u = SafeUnionType(c = 65 as char)
-    println("Union initialized with char: {}", u.c as i32)
+    auto u = SafeUnionType(wc = 65 as u32)
+    println("Union access with u8: {}", u.c)
+    println("Union access with u32: {}", u.wc)
+    println("Union access with u16: {}", u.b)
+    assert(u.c == 65, "Union access with u8 mismatch")
+    assert(u.wc == 65, "Union access with u32 mismatch")
+    assert(u.b == 65, "Union access with u16 mismatch")
     
-    auto u2 = SafeUnionType(wc = 0x1F600 as Char)
-    println("Union initialized with Char: {}", u2.wc as u32)
+    auto u2 = SafeUnionType(wc = 0x0000ABCD as u32)
+    println("Union access with u8: {}", u2.c)
+    println("Union access with u32: {}", u2.wc)
+    println("Union access with u16: {}", u2.b)
+    assert(u2.c == 205, "Union access with u8 mismatch")
+    assert(u2.wc == 0xAABBCCDD, "Union access with u32 mismatch")
+    assert(u2.b == 65, "Union access with u16 mismatch")
     return 0
 }
