@@ -661,13 +661,13 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
 
       std::string prefix = "";
       if (match(TokenType::Star))
-        prefix = "*";
+        prefix = previous().Text;
       else if (match(TokenType::Caret))
-        prefix = "^";
+        prefix = previous().Text;
       else if (match(TokenType::Tilde))
-        prefix = "~";
+        prefix = previous().Text;
       else if (match(TokenType::Ampersand))
-        prefix = "&";
+        prefix = previous().Text;
 
       if (match(TokenType::Identifier) || match(TokenType::KwUnset) ||
           match(TokenType::KwNull) || match(TokenType::KwSelf)) {

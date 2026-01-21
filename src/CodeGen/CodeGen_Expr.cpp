@@ -2766,6 +2766,12 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
 
     llvm::Value *fieldAddr =
         m_Builder.CreateStructGEP(st, alloca, idx, "field_" + f.first);
+
+    // [Constitution] Shared Pointer RC Acquisition
+    if (f.second->ResolvedType && f.second->ResolvedType->isSharedPtr()) {
+      emitAcquire(fieldVal);
+    }
+
     m_Builder.CreateStore(fieldVal, fieldAddr);
   }
 
@@ -2829,6 +2835,12 @@ PhysEntity CodeGen::genTupleExpr(const TupleExpr *expr) {
     if (!v)
       return nullptr;
     values.push_back(v);
+
+    // [Constitution] Shared Pointer RC Acquisition for Tuples
+    if (e->ResolvedType && e->ResolvedType->isSharedPtr()) {
+      emitAcquire(v);
+    }
+
     if (auto *c = llvm::dyn_cast<llvm::Constant>(v)) {
       consts.push_back(c);
     } else {
@@ -2934,6 +2946,13 @@ PhysEntity CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
 
     // GEP to element i (Struct layout matches Fields order)
     llvm::Value *ptr = m_Builder.CreateStructGEP(recType, alloca, i);
+
+    // [Constitution] Shared Pointer RC Acquisition for Anonymous Records
+    if (expr->Fields[i].second->ResolvedType &&
+        expr->Fields[i].second->ResolvedType->isSharedPtr()) {
+      emitAcquire(val);
+    }
+
     m_Builder.CreateStore(val, ptr);
   }
 

@@ -39,7 +39,6 @@ pub fn main() -> i32 {
         }
     }
     
-    // 使用共享指针游标，前缀为 # (可重绑定)，后缀为 $ (只读)
     auto ~#cursor = ~head 
     auto i# = 5
     loop {
@@ -51,9 +50,8 @@ pub fn main() -> i32 {
             break
         }
         
-        // 尝试获取下一个节点
         if cursor.~?next is cursor.~next {
-            ~#cursor = cursor.~next // 重绑定句柄，RC 自动处理
+            ~#cursor = cursor.~next 
         } else {
             break
         }

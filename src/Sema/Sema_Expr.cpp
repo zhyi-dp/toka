@@ -1780,8 +1780,19 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       if (!requestedMember.empty() &&
           (requestedMember[0] == '*' || requestedMember[0] == '^' ||
            requestedMember[0] == '~' || requestedMember[0] == '&')) {
-        requestedPrefix = requestedMember.substr(0, 1);
-        requestedMember = requestedMember.substr(1);
+        size_t prefixEnd = 0;
+        while (prefixEnd < requestedMember.size() &&
+               (requestedMember[prefixEnd] == '*' ||
+                requestedMember[prefixEnd] == '^' ||
+                requestedMember[prefixEnd] == '~' ||
+                requestedMember[prefixEnd] == '&' ||
+                requestedMember[prefixEnd] == '?' ||
+                requestedMember[prefixEnd] == '#' ||
+                requestedMember[prefixEnd] == '!')) {
+          prefixEnd++;
+        }
+        requestedPrefix = requestedMember.substr(0, prefixEnd);
+        requestedMember = requestedMember.substr(prefixEnd);
       }
 
       for (int i = 0; i < (int)SD->Members.size(); ++i) {
