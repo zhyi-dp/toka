@@ -303,34 +303,42 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
           // Check if member needs drop
           // We check if a drop function exists for the member type
           std::string memberType = it->Type;
-          // Strip morphology
-          while (!memberType.empty() &&
-                 (memberType[0] == '*' || memberType[0] == '#' ||
-                  memberType[0] == '&')) {
-            memberType = memberType.substr(1);
+          // Strip morphology to find base type for drop method lookup
+          std::string baseType = memberType;
+          while (!baseType.empty() &&
+                 (baseType[0] == '*' || baseType[0] == '#' ||
+                  baseType[0] == '&' || baseType[0] == '^' ||
+                  baseType[0] == '~' || baseType[0] == '!')) {
+            baseType = baseType.substr(1);
+          }
+          while (!baseType.empty() &&
+                 (baseType.back() == '#' || baseType.back() == '?' ||
+                  baseType.back() == '!')) {
+            baseType.pop_back();
           }
 
-          std::string baseType = it->Type;
           bool hasDrop = false;
           std::string dropFunc = "";
+
+          // Resolve drop function for member
+          std::string try1 = "encap_" + baseType + "_drop";
+          std::string try2 = baseType + "_encap_drop";
+          std::string try3 = baseType + "_drop"; // Legacy
+
+          if (m_Module->getFunction(try1)) {
+            dropFunc = try1;
+          } else if (m_Module->getFunction(try2)) {
+            dropFunc = try2;
+          } else if (m_Module->getFunction(try3)) {
+            dropFunc = try3;
+          }
 
           if (it->IsUnique || it->IsShared) {
             hasDrop = true;
           } else if (it->HasPointer || it->IsReference) {
             hasDrop = false; // Raw pointers don't drop
-          } else {
-            // Value type. Check for drop method
-            // Try encap_Type_drop
-            std::string try1 = "encap_" + it->Type + "_drop";
-            std::string try2 = it->Type + "_drop"; // Legacy
-
-            if (m_Functions.count(try1)) {
-              hasDrop = true;
-              dropFunc = try1;
-            } else if (m_Functions.count(try2)) {
-              hasDrop = true;
-              dropFunc = try2;
-            }
+          } else if (!dropFunc.empty()) {
+            hasDrop = true;
           }
 
           if (hasDrop) {
@@ -899,9 +907,14 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       // Simple mangling check: Type_encap_drop
       // Need to strip morphology
       std::string base = typeName;
-      while (!base.empty() && (base[0] == '^' || base[0] == '*' ||
-                               base[0] == '&' || base[0] == '~'))
+      while (!base.empty() &&
+             (base[0] == '^' || base[0] == '*' || base[0] == '&' ||
+              base[0] == '~' || base[0] == '!' || base[0] == '#' ||
+              base[0] == '?'))
         base = base.substr(1);
+      while (!base.empty() &&
+             (base.back() == '#' || base.back() == '?' || base.back() == '!'))
+        base.pop_back();
 
       std::string tryName = base + "_encap_drop";
       if (m_Module->getFunction(tryName)) {
@@ -912,6 +925,12 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
         if (m_Module->getFunction(altName)) {
           hasDrop = true;
           dropFunc = altName;
+        } else {
+          std::string try3 = base + "_drop";
+          if (m_Module->getFunction(try3)) {
+            hasDrop = true;
+            dropFunc = try3;
+          }
         }
       }
     }

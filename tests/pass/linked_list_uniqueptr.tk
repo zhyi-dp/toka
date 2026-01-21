@@ -1,11 +1,21 @@
 
 import std/io::println
 import std/memory::assert
+import std/memory
+import core/traits::{@encap}
 
 shape Node(
     val: i32,
     ^?next: Node
 )
+impl Node@encap {
+    //pub val
+    //pub ^?next
+    fn drop(self#) {
+        println("dropping {}", self.val)
+    }
+}
+
 impl Node {
     fn unwrap(^?self: Node) -> &Node <- self {
         if ^?self is ^self {
@@ -25,6 +35,16 @@ fn unwrap(^?p: Node) -> &Node <- p {
 }
 
 pub fn main() -> i32 {
+    {
+        auto node111 = Node(val=111, ^?next=nullptr)
+        auto ^node222 = new Node(val=222, ^?next=nullptr) 
+        auto ~node333 = new Node(val=333, ^?next=nullptr) 
+
+        auto *node444 = unsafe alloc Node(val=444, ^?next=nullptr) 
+        unsafe free *node444
+
+        auto ^node2 = ^node222
+    }
     // User's logic + Print checks
     auto ^#head = new Node(val=0, ^?next=nullptr)  
     println("head: {}", head.val)
@@ -47,7 +67,7 @@ pub fn main() -> i32 {
         assert(cursor.val == i, "check cursor.val")
         i# -= 1
         if i < 0 {
-            break
+            //break
         }
         
         if cursor.^?next is cursor.^next {
