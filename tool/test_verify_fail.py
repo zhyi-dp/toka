@@ -57,7 +57,6 @@ def main():
                             expected_errors.append(msg)
         
         # 2. Run Compiler
-        # We assume fail tests are standalone (no complex imports for now)
         try:
             result = subprocess.run(
                 [TOKAC, test_file],
@@ -69,8 +68,18 @@ def main():
             total_failed += 1
             continue
 
-        compiler_output = result.stderr + result.stdout
+        raw_output = result.stderr + result.stdout
         exit_code = result.returncode
+
+        # --- KEY CHANGE: Filter output to only keep 'error:' lines ---
+        # This ignores 'note:', 'warning:', or debug prints.
+        error_lines = [
+            line for line in raw_output.splitlines() 
+            if "error:" in line
+        ]
+        # Reconstruct the "clean" output for verification
+        filtered_output = "\n".join(error_lines)
+        # -------------------------------------------------------------
 
         # 3. Verification Logic
         
@@ -80,27 +89,34 @@ def main():
             total_failed += 1
             continue
             
-        # Case B: No Expectations defined -> Default to "Fail is Good"
+        # Case B: No Expectations defined
         if not expected_errors:
-            # For backward compatibility, if no expectations are set, any failure is a pass
-            # But we might want to warn about this
             print(f"Testing {test_name:<35} {GREEN}PASS (Rejected - No Checks){NC}")
             total_passed += 1
             continue
 
-        # Case C: Check Expectations
+        # Case C: Check Expectations against FILTERED output
         missing_expectations = []
         for expect in expected_errors:
-            if expect not in compiler_output:
+            # We check if the expected text is in the ERROR lines only
+            if expect not in filtered_output:
                 missing_expectations.append(expect)
         
         if missing_expectations:
             print(f"Testing {test_name:<35} {RED}FAIL (Missing Expected Errors){NC}")
-            print(f"  {YELLOW}Expected but not found:{NC}")
+            print(f"  {YELLOW}Expected but not found in error lines:{NC}")
             for m in missing_expectations:
                 print(f"    - '{m}'")
-            print(f"  {YELLOW}Actual Output Snippet:{NC}")
-            print("\n".join(compiler_output.splitlines()[:10])) # Show first 10 lines
+            
+            print(f"  {YELLOW}Actual Error Output (Notes Hidden):{NC}")
+            if error_lines:
+                for line in error_lines:
+                    print(f"    {line}")
+            else:
+                print(f"    (No lines containing 'error:' found)")
+                # Optionally print raw output if no errors were found but it failed
+                # print("\nRaw Output:\n" + raw_output) 
+
             total_failed += 1
         else:
             print(f"Testing {test_name:<35} {GREEN}PASS (Verified){NC}")

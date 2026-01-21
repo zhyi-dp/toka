@@ -47,7 +47,7 @@ pub fn main() -> i32 {
         println("[{}]val: {}", i, cursor.val)
         assert(cursor.val == i, "check cursor.val")
         i# -= 1
-        if i == 0 {
+        if i < 0 {
             break
         }
         
