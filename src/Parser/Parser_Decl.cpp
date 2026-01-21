@@ -58,6 +58,15 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
     consume(TokenType::Greater, "Expected '>' to close generic parameters");
   }
 
+  std::vector<std::string> lifeDeps;
+  if (match(TokenType::Dependency)) {
+    do {
+      lifeDeps.push_back(
+          consume(TokenType::Identifier, "Expected dependency identifier")
+              .Text);
+    } while (match(TokenType::Pipe) || match(TokenType::Comma));
+  }
+
   ShapeKind kind = isUnion ? ShapeKind::Union : ShapeKind::Struct;
   std::vector<ShapeMember> members;
   int64_t arraySize = 0;
@@ -230,7 +239,8 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
   }
 
   auto decl = std::make_unique<ShapeDecl>(isPub, name.Text, genericParams, kind,
-                                          std::move(members), packed);
+                                          std::move(members), packed,
+                                          std::move(lifeDeps));
   decl->ArraySize = arraySize;
   // decl->FileName = m_CurrentFile;
   decl->setLocation(name, m_CurrentFile);

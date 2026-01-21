@@ -1241,4 +1241,15 @@ FunctionDecl *Sema::instantiateGenericFunction(
   InstantiationCache[mangledName] = Instance;
   return Instance;
 }
+
+int Sema::getScopeDepth(const std::string &Name) {
+  Scope *S = CurrentScope;
+  while (S) {
+    if (S->Symbols.count(Name))
+      return S->Depth;
+    S = S->Parent;
+  }
+  return 0; // Global or not found (Global is 0)
+}
+
 } // namespace toka

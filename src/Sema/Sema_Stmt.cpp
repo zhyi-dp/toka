@@ -403,6 +403,16 @@ void Sema::checkStmt(Stmt *S) {
     }
     if (morph == "&" && !m_LastBorrowSource.empty()) {
       Info.BorrowedFrom = m_LastBorrowSource;
+      Info.LifeDependencySet.insert(m_LastBorrowSource);
+
+      // [NEW] Lifetime check: Depth(Me) >= Depth(Src)
+      int srcDepth = getScopeDepth(m_LastBorrowSource);
+      int myDepth = CurrentScope->Depth;
+      if (myDepth < srcDepth) {
+        DiagnosticEngine::report(getLoc(Var), DiagID::ERR_BORROW_LIFETIME,
+                                 Var->Name, m_LastBorrowSource);
+        HasError = true;
+      }
 
       // [Hot Potato] Propagate InitMask from Source to Reference
       SymbolInfo *srcPtr = nullptr;
@@ -445,6 +455,20 @@ void Sema::checkStmt(Stmt *S) {
       //              m_LastBorrowSource
       //              << "\n";
     }
+    if (!m_LastLifeDependencies.empty()) {
+      for (const auto &dep : m_LastLifeDependencies) {
+        Info.LifeDependencySet.insert(dep);
+        int srcDepth = getScopeDepth(dep);
+        int myDepth = CurrentScope->Depth;
+        if (myDepth < srcDepth) {
+          DiagnosticEngine::report(getLoc(Var), DiagID::ERR_BORROW_LIFETIME,
+                                   Var->Name, dep);
+          HasError = true;
+        }
+      }
+      m_LastLifeDependencies.clear();
+    }
+
     m_LastBorrowSource = ""; // Clear for next var
 
     // Construct Type Object manually to avoid string ambiguity

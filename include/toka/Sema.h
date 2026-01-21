@@ -43,6 +43,7 @@ struct SymbolInfo {
   bool IsMutablyBorrowed = false;
   std::string BorrowedFrom =
       ""; // If this is a reference, name of the source variable
+  std::set<std::string> LifeDependencySet; // [NEW] Shadow Dependency Set
 
   void *ReferencedModule = nullptr; // Pointer to ModuleScope (opaque here)
 
@@ -75,7 +76,11 @@ public:
   // elsewhere Map: ReferenceName -> {SourceVarName, IsMutable}
   std::map<std::string, std::pair<std::string, bool>> ActiveBorrows;
 
-  Scope(Scope *P = nullptr) : Parent(P) {}
+  int Depth = 0; // [NEW] Scope depth for lifetime comparison
+  Scope(Scope *P = nullptr) : Parent(P) {
+    if (P)
+      Depth = P->Depth + 1;
+  }
 
   void define(const std::string &Name, const SymbolInfo &Info) {
     Symbols[Name] = Info;
@@ -184,6 +189,9 @@ private:
   FunctionDecl *CurrentFunction =
       nullptr; // [NEW] Track current function for dependencies
   std::string m_LastBorrowSource;
+  std::set<std::string>
+      m_LastLifeDependencies; // [NEW] Track shape dependencies
+  std::shared_ptr<toka::Type> m_ExpectedType;
   // {VarName, IsMutable}
   std::vector<std::pair<std::string, bool>> m_CurrentStmtBorrows;
   struct ModuleScope {
@@ -203,8 +211,6 @@ private:
   bool m_InUnsafeContext = false;
   bool m_InLHS = false;
   bool m_DisableSoulCollapse = false; // [NEW] Track context for soul collapse
-  std::shared_ptr<toka::Type>
-      m_ExpectedType; // [NEW] Track expected type for inference
   TokenType m_OuterPointerSigil =
       TokenType::TokenNone; // [NEW] Track outer pointer sigil for nested member
                             // access
@@ -228,6 +234,8 @@ private:
   void enterScope();
   void exitScope();
   void clearStmtBorrows();
+  int getScopeDepth(const std::string &
+                        Name); // [NEW] Get depth of scope where name is defined
 
   // Passes
   void registerGlobals(Module &M);

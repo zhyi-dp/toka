@@ -10,6 +10,11 @@ fn bigger(x:i32, y:i32) -> &i32 <- x|y {
     return &y
 }
 
+shape RefInt <- val
+(
+    &val : i32
+)
+
 fn main() -> i32 {
     auto y = 10
     auto &ref = get_ref(y)
@@ -17,6 +22,11 @@ fn main() -> i32 {
     auto z = 20
     auto &big = bigger(y, z)
     println("Big: {}", big)
+
+    auto a = 11
+    auto ref_a = RefInt(&val=&a)
+    println("RefA: {}", ref_a.val)
+   
     return 0
 }
     

@@ -69,7 +69,7 @@ impl SplitIterator {
              
              while i < self.source_len {
                  // dereference
-                 if self.source[i] == self.delimiter {
+                 if self.*source[i] == self.delimiter {
                      found# = true
                      break
                  }

@@ -69,6 +69,8 @@ DIAG(ERR_MEMBER_SIGIL_MISMATCH, Error, "Dot operator '.' cannot be used with exp
 DIAG(ERR_ARROW_SIGIL_REQUIRED,  Error, "Arrow operator '->' requires explicit pointer sigil on variable. Did you mean '^ptr->member'?")
 DIAG(ERR_LIFETIME_UNION_REQUIRED, Error, "Returning reference to parameter '{}' requires explicit dependency declaration (<- {})")
 DIAG(ERR_ESCAPE_LOCAL,           Error, "Returning reference to local variable '{}' is unsafe")
+DIAG(ERR_BORROW_LIFETIME,        Error, "Object '{}' (lived longer) cannot depend on '{}' (lived shorter)")
+DIAG(ERR_LIFETIME_UNION_VIOLATION, Error, "Lifetime union violation: '{}' does not live long enough")
 
 // --- Sema: Memory Safety ---
 DIAG(ERR_UNSAFE_ALLOC_CTX,   Error, "Operation 'alloc' is only allowed in unsafe context")

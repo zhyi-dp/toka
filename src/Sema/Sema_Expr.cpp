@@ -1432,6 +1432,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       }
 
       // Check fields exist and types match
+      m_LastLifeDependencies.clear();
       std::set<std::string> providedFields;
       for (const auto &pair : Init->Members) {
         if (providedFields.count(pair.first)) {
@@ -1486,6 +1487,16 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                                    DiagID::ERR_MEMBER_TYPE_MISMATCH, pair.first,
                                    memberTypeObj->toString(), exprType);
           HasError = true;
+        }
+
+        // [NEW] Lifetime dependency tracking
+        std::string cleanName = toka::Type::stripMorphology(pDefMember->Name);
+        for (const auto &dep : SD->LifeDependencies) {
+          if (dep == cleanName) {
+            if (!m_LastBorrowSource.empty()) {
+              m_LastLifeDependencies.insert(m_LastBorrowSource);
+            }
+          }
         }
       }
 
@@ -1814,15 +1825,20 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               toka::Type::fromString(fullType);
 
           if (requestedPrefix.empty()) {
-            // obj.field -> Identity of the field (no soul collapse on member
-            // access)
-            return fieldType->withAttributes(objTypeObj->IsWritable,
-                                             fieldType->IsNullable);
-          } else if (requestedPrefix == "&") {
-            // obj.&field -> Reference to the field identity/slot
-            return std::make_shared<toka::ReferenceType>(fieldType);
+            // obj.field (Hat-Off) -> Soul Collapse.
+            // If the field is a pointer/reference, dereference it.
+            auto soulType = fieldType;
+            while (soulType &&
+                   (soulType->isPointer() || soulType->isReference() ||
+                    soulType->isSmartPointer())) {
+              soulType = soulType->getPointeeType();
+            }
+            return soulType->withAttributes(objTypeObj->IsWritable,
+                                            fieldType->IsNullable);
           } else {
-            // obj.^field, obj.*field -> Identity access
+            // obj.&field, obj.^field, obj.*field (Hatted) -> Identiy Access.
+            // The requestedPrefix confirms we want the pointer/reference
+            // itself.
             return fieldType->withAttributes(objTypeObj->IsWritable,
                                              fieldType->IsNullable);
           }
@@ -2613,6 +2629,45 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       error(Bin, "assignment type mismatch: cannot assign '" + RHS + "' to '" +
                      LHS + "'");
     }
+
+    // [NEW] Lifetime Safety Check: Scope(LHS_Object) >= Scope(RHS_Dependency)
+    std::string targetObjName = "";
+    Expr *lhsObj = Bin->LHS.get();
+    while (auto *me = dynamic_cast<MemberExpr *>(lhsObj)) {
+      lhsObj = me->Object.get();
+    }
+    if (auto *ve = dynamic_cast<VariableExpr *>(lhsObj)) {
+      targetObjName = ve->Name;
+    }
+
+    if (!targetObjName.empty()) {
+      SymbolInfo *targetInfo = nullptr;
+      if (CurrentScope->findSymbol(targetObjName, targetInfo)) {
+        std::set<std::string> rhsDeps = m_LastLifeDependencies;
+        if (!m_LastBorrowSource.empty())
+          rhsDeps.insert(m_LastBorrowSource);
+        if (auto *rv = dynamic_cast<VariableExpr *>(Bin->RHS.get())) {
+          SymbolInfo *ri = nullptr;
+          if (CurrentScope->findSymbol(rv->Name, ri)) {
+            for (const auto &d : ri->LifeDependencySet)
+              rhsDeps.insert(d);
+          }
+        }
+
+        int targetDepth = getScopeDepth(targetObjName);
+        for (const auto &dep : rhsDeps) {
+          int depDepth = getScopeDepth(dep);
+          if (targetDepth < depDepth) { // outer < inner => error
+            DiagnosticEngine::report(getLoc(Bin), DiagID::ERR_BORROW_LIFETIME,
+                                     targetObjName, dep);
+            HasError = true;
+          }
+          targetInfo->LifeDependencySet.insert(dep);
+        }
+      }
+    }
+    m_LastBorrowSource = "";
+    m_LastLifeDependencies.clear();
 
     // [Fix] Update InitMask logic for 'unset' variables
     Expr *LHSExpr = Bin->LHS.get();

@@ -511,13 +511,41 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
     }
   }
 
-  bool isPointerField = irTy->isPointerTy();
+  // [Constitution] Hat Rule: "指针必须带帽，脱帽就是解指针/解引用"
+  // If the member is defined as a pointer/reference (hatted) but accessed
+  // without hats, we must perform implicit dereferences.
+  auto getHatCount = [](const std::string &s) {
+    int count = 0;
+    for (char c : s) {
+      if (c == '^' || c == '*' || c == '~' || c == '&')
+        count++;
+      else
+        break;
+    }
+    return count;
+  };
 
-  if (!mem->Member.empty() && mem->Member[0] == '*') {
-    finalAddr = fieldAddr;
+  int defHats = 0;
+  if (!stName.empty() && m_Shapes.count(stName)) {
+    defHats = getHatCount(m_Shapes[stName]->Members[idx].Type);
+  }
+  int accessHats = getHatCount(mem->Member);
+
+  // If definition has more hats than access, we are "Hat-Off", so dereference.
+  int derefCount = defHats - accessHats;
+  for (int i = 0; i < derefCount; ++i) {
+    // Current finalAddr is the address of the pointer.
+    // Load it to get the target address.
+    finalAddr =
+        m_Builder.CreateLoad(m_Builder.getPtrTy(), finalAddr, "hat_off_deref");
   }
 
-  return PhysEntity(finalAddr, memberTypeName, irTy, true);
+  llvm::Type *finalIrTy = irTy;
+  if (mem->ResolvedType) {
+    finalIrTy = getLLVMType(mem->ResolvedType);
+  }
+
+  return PhysEntity(finalAddr, memberTypeName, finalIrTy, true);
 }
 
 PhysEntity CodeGen::genIndexExpr(const ArrayIndexExpr *idxExpr) {
