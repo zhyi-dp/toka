@@ -22,7 +22,7 @@ if [ ! -f "$TK_FILE" ]; then
     exit 1
 fi
 
-BASE_NAME="${TK_FILE%.*}"
+BASE_NAME=$(basename "$TK_FILE")
 LL_FILE="${BASE_NAME}.ll"
 LOG_FILE="${BASE_NAME}.log"
 # Configuration

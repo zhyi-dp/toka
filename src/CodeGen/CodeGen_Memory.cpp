@@ -375,9 +375,6 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
 
   int idx = mem->Index;
   llvm::StructType *st = nullptr;
-  llvm::errs() << "DEBUG: genMemberExpr Member=" << mem->Member
-               << " Index=" << idx << " objType=" << (objType ? "set" : "null")
-               << "\n";
   if (objType && objType->isStructTy()) {
     st = llvm::cast<llvm::StructType>(objType);
   }

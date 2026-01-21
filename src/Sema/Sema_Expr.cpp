@@ -2436,8 +2436,18 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       }
     }
 
-    // Writability & Borrow Check
+    // [Constitution 1.3] Covenant-based Writability Check
     bool isLHSWritable = false;
+    bool isRebind = false;
+
+    // Detect Rebind: Assigning to the pointer variable/handle itself
+    // e.g. "p = ..." where p is smart pointer, or "~#p = ..."
+    if (!isImplicitDerefAssign && !isRefAssign) {
+      if (lhsType->isSmartPointer()) {
+        isRebind = true;
+      }
+    }
+
     Expr *Traverse = Bin->LHS.get();
     while (true) {
       if (auto *M = dynamic_cast<MemberExpr *>(Traverse)) {
@@ -2458,11 +2468,25 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
                   "cannot modify '" + Var->Name + "' while it is borrowed");
           }
         }
-        if (InfoPtr->IsMutable() || Var->IsValueMutable)
-          isLHSWritable = true;
 
-        // [Unset Safety] Allow writing to immutable variables if they are
-        // unset (Initializing)
+        // [Constitution] Rebind (# prefix) check
+        if (isRebind) {
+          // Rebinding requires explicit '#' or '!' prefix in morphology
+          if (InfoPtr->IsRebindable || Var->IsValueMutable) {
+            isLHSWritable = true;
+          } else {
+            // If the variable was unset, allow initialization as a rebind
+            // exemption
+            if (InfoPtr->InitMask != ~0ULL)
+              isLHSWritable = true;
+          }
+        } else {
+          // Soul Mutation
+          if (InfoPtr->IsMutable() || Var->IsValueMutable)
+            isLHSWritable = true;
+        }
+
+        // [Unset Safety] Allow writing to immutable variables if they are unset
         if (InfoPtr->IsReference()) {
           if (InfoPtr->DirtyReferentMask != ~0ULL)
             isLHSWritable = true;
@@ -2472,38 +2496,49 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         }
       }
     } else if (auto *Un = dynamic_cast<UnaryExpr *>(Traverse)) {
-      if (Un->Op == TokenType::Star || Un->Op == TokenType::Caret ||
-          Un->Op == TokenType::Tilde || Un->Op == TokenType::Ampersand) {
-        Expr *rhs = Un->RHS.get();
-        // Skip PostfixExpr if it's p#
-        if (auto *Post = dynamic_cast<PostfixExpr *>(rhs)) {
-          rhs = Post->LHS.get();
-        }
-        if (auto *Var = dynamic_cast<VariableExpr *>(rhs)) {
-          SymbolInfo *InfoPtr = nullptr;
-          if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {
-            // Rebindable check or explicit identity access
+      // [Constitution] Explicit Rebind/Access check
+      if (Un->Op == TokenType::Star) { // *p
+        isLHSWritable = true; // Pointer deref allows mutation if target type
+                              // allows (checked below via Soul)
+      } else if (Un->Op == TokenType::Caret || Un->Op == TokenType::Tilde ||
+                 Un->Op == TokenType::Ampersand ||
+                 Un->Op == TokenType::Star) { // ^p, ~p, &p, *p
+        // These are Rebindable handles or access handles.
+        // If they are on the LHS without a deref, they are rebinds.
+        if (isRebind) {
+          // Check if the UnaryExpr itself carries the rebind intent (#/!)
+          if (Un->IsRebindable || Un->Op == TokenType::TokenWrite) {
             isLHSWritable = true;
           }
+        } else {
+          isLHSWritable = true; // Soul view
         }
-      } else {
-        isLHSWritable = true;
       }
     }
 
     if (isUnsetInit)
       isLHSWritable = true;
 
-    if (!isUnsetInit && !isLHSWritable) {
-      // Check if we are writing to the pointer variable itself (ptr#)
-      // Usually `ptr = val` (rebind). But here `val` is Pointee type.
-      // It implies `*ptr = val`.
+    if (!isLHSWritable) {
+      error(Bin, "Cannot assign to immutable entity. Missing writable token "
+                 "'#' or '!'.");
+      HasError = true;
+    }
 
-      auto inner = lhsType->getPointeeType();
-      if (inner && isTypeCompatible(inner, rhsType)) {
-        // Promotion! Treat as soul assignment.
-        lhsType = inner;
-        isImplicitDerefAssign = true;
+    // [Constitution] Soul Permission Elevation Audit
+    // RHS soul must not exceed LHS soul's permissions if they share objects
+    // (Shared/Ref)
+    if (lhsType->isSharedPtr() || lhsType->isReference()) {
+      auto lhsSoul = lhsType->getPointeeType();
+      auto rhsSoul = rhsType->getPointeeType();
+      if (lhsSoul && rhsSoul) {
+        // Check suffix: if RHS soul is Immutable ($/?) and LHS soul is Writable
+        // (#/!) -> Error
+        if (!rhsSoul->IsWritable && lhsSoul->IsWritable) {
+          error(Bin, "Covenant Violation: Cannot elevate write permission from "
+                     "ReadOnly soul to Writable container.");
+          HasError = true;
+        }
       }
     }
 

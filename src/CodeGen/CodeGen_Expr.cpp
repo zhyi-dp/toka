@@ -294,7 +294,9 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
     // Scene B: Envelope Rebind
     if (symLHS->morphology == Morphology::Shared &&
         rhsVal->getType()->isPointerTy()) {
-      rhsVal = emitPromotion(rhsVal, symLHS->soulType, *symLHS);
+      // Correctly pass the Handle Struct type
+      rhsVal =
+          emitPromotion(rhsVal, getLLVMType(lhsExpr->ResolvedType), *symLHS);
     }
     emitEnvelopeRebind(lhsAlloca, rhsVal, *symLHS, lhsExpr);
   } else {
@@ -542,6 +544,9 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
       // shared pointer: extract raw pointer
       lhsVal = m_Builder.CreateExtractValue(lhsVal, 0, "shared_ptr_val");
       lhsTy = lhsVal->getType();
+    } else if (lhsTy->isStructTy() && lhsTy->getStructNumElements() == 1) {
+      lhsVal = m_Builder.CreateExtractValue(lhsVal, 0);
+      lhsTy = lhsVal->getType();
     }
 
     // Special Case: 'expr is nullptr' (Null check)
@@ -665,11 +670,29 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     } else if (lhsType->isIntegerTy() && rhsType->isIntegerTy()) {
       // Promote to widest
       if (lhsType->getIntegerBitWidth() < rhsType->getIntegerBitWidth()) {
-        lhs = m_Builder.CreateSExt(lhs, rhsType, "lhs_ext");
+        bool isUnsigned = false;
+        if (bin->LHS->ResolvedType) {
+          std::string lty = bin->LHS->ResolvedType->toString();
+          if (lty.size() >= 1 && lty[0] == 'u')
+            isUnsigned = true;
+        }
+        if (isUnsigned)
+          lhs = m_Builder.CreateZExt(lhs, rhsType, "lhs_ext");
+        else
+          lhs = m_Builder.CreateSExt(lhs, rhsType, "lhs_ext");
         lhsType = rhsType;
       } else if (lhsType->getIntegerBitWidth() >
                  rhsType->getIntegerBitWidth()) {
-        rhs = m_Builder.CreateSExt(rhs, lhsType, "rhs_ext");
+        bool isUnsigned = false;
+        if (bin->RHS->ResolvedType) {
+          std::string rty = bin->RHS->ResolvedType->toString();
+          if (rty.size() >= 1 && rty[0] == 'u')
+            isUnsigned = true;
+        }
+        if (isUnsigned)
+          rhs = m_Builder.CreateZExt(rhs, lhsType, "rhs_ext");
+        else
+          rhs = m_Builder.CreateSExt(rhs, lhsType, "rhs_ext");
         rhsType = lhsType;
       }
     } else {
@@ -694,6 +717,21 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
                    "(integers/pointers).");
     return nullptr;
   }
+
+  // Final check to avoid assertion
+  auto unwrapHandle = [&](llvm::Value *v) -> llvm::Value * {
+    if (!v)
+      return nullptr;
+    while (v->getType()->isStructTy()) {
+      unsigned numElems = v->getType()->getStructNumElements();
+      if (numElems == 1 || numElems == 2) {
+        v = m_Builder.CreateExtractValue(v, 0);
+      } else {
+        break;
+      }
+    }
+    return v;
+  };
 
   if (lhsType->isFloatingPointTy() && rhsType->isFloatingPointTy()) {
     if (bin->Op == "+")
@@ -760,9 +798,13 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   if (bin->Op == "/")
     return m_Builder.CreateSDiv(lhs, rhs, "divtmp");
   if (bin->Op == "<") {
+    lhs = unwrapHandle(lhs);
+    rhs = unwrapHandle(rhs);
     return m_Builder.CreateICmpSLT(lhs, rhs, "lt_tmp");
   }
   if (bin->Op == ">") {
+    lhs = unwrapHandle(lhs);
+    rhs = unwrapHandle(rhs);
     return m_Builder.CreateICmpSGT(lhs, rhs, "gt_tmp");
   }
   if (bin->Op == "<=") {
@@ -773,16 +815,8 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   }
   if (bin->Op == "==" || bin->Op == "!=") {
     // 1. Unwrap Single-Element Structs (Strong Types)
-    auto unwrap = [&](llvm::Value *v) -> llvm::Value * {
-      while (v->getType()->isStructTy() &&
-             v->getType()->getStructNumElements() == 1) {
-        v = m_Builder.CreateExtractValue(v, 0);
-      }
-      return v;
-    };
-
-    lhs = unwrap(lhs);
-    rhs = unwrap(rhs);
+    lhs = unwrapHandle(lhs);
+    rhs = unwrapHandle(rhs);
 
     if (lhs->getType() != rhs->getType()) {
       if (lhs->getType()->isIntegerTy() && rhs->getType()->isIntegerTy()) {
@@ -2084,6 +2118,12 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
           } else if (ty->isIntegerTy()) {
             spec = (semanticType.size() > 0 && semanticType[0] == 'u') ? "%u"
                                                                        : "%d";
+            if (ty->getIntegerBitWidth() < 32) {
+              if (semanticType.size() > 0 && semanticType[0] == 'u')
+                pVal = m_Builder.CreateZExt(val, m_Builder.getInt32Ty());
+              else
+                pVal = m_Builder.CreateSExt(val, m_Builder.getInt32Ty());
+            }
           } else if (ty->isDoubleTy()) {
             spec = "%f";
           } else if (ty->isFloatTy()) {

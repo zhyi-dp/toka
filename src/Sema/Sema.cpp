@@ -197,7 +197,10 @@ void Sema::registerGlobals(Module &M) {
       }
       // [NEW] Define local global in scope
       std::string fullT = synthesizePhysicalType(*v);
-      CurrentScope->define(v->Name, {toka::Type::fromString(fullT)});
+      SymbolInfo globalInfo;
+      globalInfo.TypeObj = toka::Type::fromString(fullT);
+      globalInfo.IsRebindable = v->IsRebindable;
+      CurrentScope->define(v->Name, globalInfo);
     }
   }
 
@@ -275,8 +278,11 @@ void Sema::registerGlobals(Module &M) {
             if (v->IsPointerNullable || v->IsValueNullable)
               fullType += "?";
 
+            SymbolInfo globalInfo;
+            globalInfo.TypeObj = toka::Type::fromString(fullType);
+            globalInfo.IsRebindable = v->IsRebindable;
             CurrentScope->define(item.Alias.empty() ? name : item.Alias,
-                                 {toka::Type::fromString(fullType)});
+                                 globalInfo);
           }
         } else {
           // Import specific
@@ -324,7 +330,10 @@ void Sema::registerGlobals(Module &M) {
             if (v->IsPointerNullable || v->IsValueNullable)
               fullType += "?";
 
-            CurrentScope->define(name, {toka::Type::fromString(fullType)});
+            SymbolInfo globalInfo;
+            globalInfo.TypeObj = toka::Type::fromString(fullType);
+            globalInfo.IsRebindable = v->IsRebindable;
+            CurrentScope->define(name, globalInfo);
             found = true;
           }
 
@@ -494,6 +503,7 @@ void Sema::checkFunction(FunctionDecl *Fn) {
 
     // Assign to AST Node for CodeGen
     Arg.ResolvedType = Info.TypeObj;
+    Info.IsRebindable = Arg.IsRebindable;
 
     CurrentScope->define(Arg.Name, Info);
   }

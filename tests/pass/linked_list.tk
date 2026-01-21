@@ -16,37 +16,47 @@ impl Node {
     }
 }
 
-pub fn main() -> i32 {
-    unsafe {
-        // User's logic + Print checks
-        auto ~head = new Node(val=101, ~?next=nullptr)  
-        //println("head: {}", head.val)
-        //assert(head.val == 101, "check head.val")
-        // Push 1
-        {
-            for auto i in [1,2,3,4,5] {
-                auto ~next = ~head
-                ~head = new Node(val=i, ~?next=~next)//初始化iter.~next 他之前是 unset 的
-                println("[{}]pushed: {}", i, head.val)
-            }
-        }
-        return 0
+fn unwrap(~?p: Node) -> &Node <- p {
+    if ~?p is ~p {
+        return &p
+    }
+    assert(false, "unwrap null")
+    return &p
+}
 
-        /*
-        auto &#iter = &head
-        loop {
-            println("iter: {}", iter.val)
-            match iter.~?next {
-                auto ~n => {
-                    &#iter = &n
-                }
-                _ => {
-                    assert(false, "check null")
-                    break
-                }
-            }
+pub fn main() -> i32 {
+    // User's logic + Print checks
+    auto ~#head = new Node(val=0, ~?next=nullptr)  
+    println("head: {}", head.val)
+    assert(head.val == 0, "check head.val")
+    // Push 1
+    {
+        for auto i in [1,2,3,4,5] {
+            auto ~next = ~head
+            ~#head = new Node(val=i, ~?next=~next)
+            println("[{}]pushed: {}", i, head.val)
+            assert(head.val == i, "check head.val")
         }
-        */
+    }
+    
+    // 使用共享指针游标，前缀为 # (可重绑定)，后缀为 $ (只读)
+    auto ~#cursor = ~head 
+    auto i# = 5
+    loop {
+        assert(i >= 0, "check i >= 0")
+        println("[{}]val: {}", i, cursor.val)
+        assert(cursor.val == i, "check cursor.val")
+        i# -= 1
+        if i == 0 {
+            break
+        }
+        
+        // 尝试获取下一个节点
+        if cursor.~?next is cursor.~next {
+            ~#cursor = cursor.~next // 重绑定句柄，RC 自动处理
+        } else {
+            break
+        }
     }
     return 0
 }

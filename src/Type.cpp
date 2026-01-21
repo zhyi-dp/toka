@@ -560,6 +560,17 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     return prim;
   }
 
+  // Trim whitespace
+  auto trim = [](std::string s) {
+    size_t first = s.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+      return std::string("");
+    size_t last = s.find_last_not_of(" \t\r\n");
+    return s.substr(first, (last - first + 1));
+  };
+
+  s = trim(s);
+
   if (s == "unknown")
     return std::make_shared<UnresolvedType>(s);
 
@@ -574,12 +585,20 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
       else if (argsStr[i] == '>' || argsStr[i] == ')' || argsStr[i] == ']')
         balance--;
       else if (argsStr[i] == ',' && balance == 0) {
-        elements.push_back(Type::fromString(argsStr.substr(start, i - start)));
+        std::string elem = trim(argsStr.substr(start, i - start));
+        size_t colon = elem.find(':');
+        if (colon != std::string::npos)
+          elem = trim(elem.substr(colon + 1));
+        elements.push_back(Type::fromString(elem));
         start = i + 1;
       }
     }
     if (start < argsStr.size()) {
-      elements.push_back(Type::fromString(argsStr.substr(start)));
+      std::string elem = trim(argsStr.substr(start));
+      size_t colon = elem.find(':');
+      if (colon != std::string::npos)
+        elem = trim(elem.substr(colon + 1));
+      elements.push_back(Type::fromString(elem));
     }
     auto tup = std::make_shared<TupleType>(std::move(elements));
     tup->IsWritable = isWritable;

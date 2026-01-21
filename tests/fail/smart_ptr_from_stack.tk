@@ -12,7 +12,7 @@ fn main() {
     auto ~p2 = ~a
     
     // 3. Illegal raw pointer cast from non-Addr
-    // EXPECT: Invalid cast: cannot convert 'i32' to '*i32' via 'as'; only 'Addr' and '*' conversions are supported
+    // EXPECT: Smart pointer sigil '*' cannot be applied to stack variable; use 'new' or assign from existing smart pointer
     auto *p3 = a as *i32
     
     // 4. Illegal smart pointer cast

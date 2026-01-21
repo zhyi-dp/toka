@@ -10,7 +10,7 @@ fn main() -> i32 {
         auto ^p2# = new Point(x=3, y=4)
         
         // FAIL 2: Dot with sigil
-        ^p2.x = 10
+        (^p2).x = 10
         // EXPECT: Dot operator '.' cannot be used with explicit pointer sigil
         
         // FAIL 3: Arrow without sigil
