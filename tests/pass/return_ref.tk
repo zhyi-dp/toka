@@ -1,0 +1,22 @@
+import std/io::println
+fn get_ref(x:i32) -> &i32 <- x {
+    return &x
+}
+
+fn bigger(x:i32, y:i32) -> &i32 <- x|y {
+    if (x > y) {
+        return &x
+    }
+    return &y
+}
+
+fn main() -> i32 {
+    auto y = 10
+    auto &ref = get_ref(y)
+    println("Ref: {}", ref)
+    auto z = 20
+    auto &big = bigger(y, z)
+    println("Big: {}", big)
+    return 0
+}
+    

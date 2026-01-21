@@ -450,6 +450,8 @@ void Sema::checkFunction(FunctionDecl *Fn) {
 
   std::string savedRet =
       CurrentFunctionReturnType; // [FIX] Save state for recursion
+  FunctionDecl *savedFn = CurrentFunction;
+  CurrentFunction = Fn;
   CurrentFunctionReturnType = Fn->ReturnType;
   enterScope(); // Function scope
 
@@ -511,6 +513,7 @@ void Sema::checkFunction(FunctionDecl *Fn) {
 
   exitScope();
   CurrentFunctionReturnType = savedRet; // [FIX] Restore state
+  CurrentFunction = savedFn;
 }
 
 void Sema::checkImpl(ImplDecl *Impl) {

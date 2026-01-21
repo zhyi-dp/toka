@@ -182,6 +182,51 @@ void Sema::checkStmt(Stmt *S) {
           }
         }
       }
+
+      // [NEW] Lifetime Union Exemption & Escape Analysis
+      if (auto *AddrOf = dynamic_cast<UnaryExpr *>(Ret->ReturnValue.get())) {
+        if (AddrOf->Op == TokenType::Ampersand) {
+          if (auto *Var = dynamic_cast<VariableExpr *>(AddrOf->RHS.get())) {
+            bool isParam = false;
+            if (CurrentFunction) {
+              for (const auto &Arg : CurrentFunction->Args) {
+                if (Arg.Name == Var->Name) {
+                  isParam = true;
+                  break;
+                }
+              }
+            }
+
+            if (isParam) {
+              // It's a parameter. Is it in LifeDependencies?
+              bool isDependent = false;
+              if (CurrentFunction) {
+                for (const auto &dep : CurrentFunction->LifeDependencies) {
+                  if (dep == Var->Name) {
+                    isDependent = true;
+                    break;
+                  }
+                }
+              }
+
+              if (!isDependent) {
+                // Return of parameter address NOT in LifeDependencies is
+                // UNSAFE (Escaping Local)
+                DiagnosticEngine::report(getLoc(Ret),
+                                         DiagID::ERR_LIFETIME_UNION_REQUIRED,
+                                         Var->Name, Var->Name);
+                HasError = true;
+              }
+            } else {
+              // It's a local variable (not a parameter). Returning its address
+              // is ALWAYS unsafe.
+              DiagnosticEngine::report(getLoc(Ret), DiagID::ERR_ESCAPE_LOCAL,
+                                       Var->Name);
+              HasError = true;
+            }
+          }
+        }
+      }
     }
     clearStmtBorrows();
 

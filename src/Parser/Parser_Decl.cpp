@@ -370,6 +370,15 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
     retType = parseTypeString();
   }
 
+  std::vector<std::string> lifeDeps;
+  if (match(TokenType::Dependency)) {
+    do {
+      lifeDeps.push_back(
+          consume(TokenType::Identifier, "Expected dependency identifier")
+              .Text);
+    } while (match(TokenType::Pipe) || match(TokenType::Comma));
+  }
+
   std::unique_ptr<BlockStmt> body = nullptr;
   if (check(TokenType::LBrace)) {
     body = parseBlock();
@@ -377,7 +386,8 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
     expectEndOfStatement();
   }
   auto decl = std::make_unique<FunctionDecl>(
-      isPub, name.Text, args, std::move(body), retType, genericParams);
+      isPub, name.Text, args, std::move(body), retType, genericParams,
+      std::move(lifeDeps));
   decl->IsVariadic = isVariadic;
   decl->setLocation(name, m_CurrentFile);
   return decl;

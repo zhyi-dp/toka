@@ -146,7 +146,8 @@ std::string Parser::parseTypeString() {
          // e.g. alias A = B<T>\n
          (previous().Kind == TokenType::Greater && peek().HasNewlineBefore) ||
          check(TokenType::LBrace) || check(TokenType::Greater) ||
-         check(TokenType::Pipe) || check(TokenType::KwFor)))
+         check(TokenType::Pipe) || check(TokenType::KwFor) ||
+         check(TokenType::Dependency)))
       break;
 
     // Special handling for @: stop only if it's not following 'dyn'

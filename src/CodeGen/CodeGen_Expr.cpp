@@ -2321,12 +2321,17 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
       // Force Capture for Unique Pointers to enable In-Place Move / Borrow
       // [ABI Fix] Force Capture for Shared Pointers to pass by Pointer
       // (avoiding ABI split)
-      if (arg.IsUnique || arg.IsShared) {
-        isCaptured = true;
+      // [NEW] Lifetime Union: Force capture if param is a dependency
+      for (const auto &dep : funcDecl->LifeDependencies) {
+        if (dep == arg.Name) {
+          isCaptured = true;
+          break;
+        }
       }
+
       // Only capture if it's a Value Type (Struct/Array/Mutable) AND NOT a
       // Pointer/Shared/Reference
-      else if (!arg.HasPointer && !arg.IsReference) {
+      if (!isCaptured && !arg.HasPointer && !arg.IsReference) {
         if (arg.IsValueMutable) {
           isCaptured = true;
         } else {

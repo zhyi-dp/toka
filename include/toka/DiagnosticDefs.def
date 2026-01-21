@@ -67,6 +67,8 @@ DIAG(ERR_CAST_MISMATCH,       Error, "Invalid cast: cannot convert '{}' to '{}' 
 DIAG(ERR_POINTER_SIGIL_MISSING, Error, "Variable '{}' implies pointer type '{}' but lacks explicit sigil. Use 'auto {}{}' or dereference.")
 DIAG(ERR_MEMBER_SIGIL_MISMATCH, Error, "Dot operator '.' cannot be used with explicit pointer sigil. Did you mean '^ptr->member' or 'ptr.member'?")
 DIAG(ERR_ARROW_SIGIL_REQUIRED,  Error, "Arrow operator '->' requires explicit pointer sigil on variable. Did you mean '^ptr->member'?")
+DIAG(ERR_LIFETIME_UNION_REQUIRED, Error, "Returning reference to parameter '{}' requires explicit dependency declaration (<- {})")
+DIAG(ERR_ESCAPE_LOCAL,           Error, "Returning reference to local variable '{}' is unsafe")
 
 // --- Sema: Memory Safety ---
 DIAG(ERR_UNSAFE_ALLOC_CTX,   Error, "Operation 'alloc' is only allowed in unsafe context")

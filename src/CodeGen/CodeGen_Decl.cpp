@@ -96,6 +96,14 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
            (isAggregate || arg.IsValueMutable || arg.IsRebindable)) ||
           arg.IsUnique || arg.IsShared;
 
+      // [NEW] Lifetime Union: Force capture if param is a dependency
+      for (const auto &dep : func->LifeDependencies) {
+        if (dep == arg.Name) {
+          needsCapture = true;
+          break;
+        }
+      }
+
       // [ABI Fix] Shared Pointers must be passed by Single Pointer (Reference
       // to Handle) to avoid ABI dissecting the struct {ptr, ptr} across
       // registers.
@@ -179,6 +187,14 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
         (isDirectValue &&
          (isAggregate || argDecl.IsValueMutable || argDecl.IsRebindable)) ||
         argDecl.IsUnique || argDecl.IsShared;
+
+    // [NEW] Lifetime Union: Force capture if param is a dependency
+    for (const auto &dep : func->LifeDependencies) {
+      if (dep == argDecl.Name) {
+        needsCapture = true;
+        break;
+      }
+    }
 
     if (needsCapture) {
       // Argument passed by pointer

@@ -1063,6 +1063,7 @@ public:
   std::string Name;
   std::vector<Arg> Args;
   std::string ReturnType;
+  std::vector<std::string> LifeDependencies; // [NEW] e.g., <- x|y
   std::unique_ptr<BlockStmt> Body;
 
   bool IsVariadic = false;
@@ -1070,9 +1071,11 @@ public:
 
   FunctionDecl(bool isPub, const std::string &name, std::vector<Arg> args,
                std::unique_ptr<BlockStmt> body, const std::string &retType,
-               std::vector<GenericParam> generics = {})
+               std::vector<GenericParam> generics = {},
+               std::vector<std::string> lifeDeps = {})
       : IsPub(isPub), Name(name), Args(std::move(args)), ReturnType(retType),
-        Body(std::move(body)), GenericParams(std::move(generics)) {}
+        Body(std::move(body)), GenericParams(std::move(generics)),
+        LifeDependencies(std::move(lifeDeps)) {}
   std::string toString() const override {
     return std::string(IsPub ? "Pub" : "") + "Fn(" + Name + ")";
   }
@@ -1091,7 +1094,7 @@ public:
 
     auto n = std::make_unique<FunctionDecl>(IsPub, Name, clonedArgs,
                                             std::move(clonedBody), ReturnType,
-                                            GenericParams);
+                                            GenericParams, LifeDependencies);
     n->IsVariadic = IsVariadic;
     n->Loc = Loc;
     // FunctionDecl is NOT an Expr, does not have ResolvedType?

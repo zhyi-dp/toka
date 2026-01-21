@@ -181,6 +181,8 @@ private:
   std::map<std::string, std::map<std::string, FunctionDecl *>> ImplMap;
   std::map<std::string, std::vector<EncapEntry>> EncapMap;
   std::string CurrentFunctionReturnType;
+  FunctionDecl *CurrentFunction =
+      nullptr; // [NEW] Track current function for dependencies
   std::string m_LastBorrowSource;
   // {VarName, IsMutable}
   std::vector<std::pair<std::string, bool>> m_CurrentStmtBorrows;
