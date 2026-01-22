@@ -343,6 +343,10 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
       }
     }
 
+    if (!destType && bin->LHS->ResolvedType) {
+      destType = getLLVMType(bin->LHS->ResolvedType);
+    }
+
     if (!destType) {
       destType = rhsVal->getType(); // Fallback
     }
@@ -350,13 +354,48 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     // Standard Compound Logic
     llvm::Value *lhsVal =
         m_Builder.CreateLoad(destType, soulAddr, "compound.lhs");
-    if (lhsVal->getType() != rhsVal->getType()) {
-      error(bin, "Type mismatch in compound assignment");
-      return nullptr;
+
+    llvm::Type *lhsTy = lhsVal->getType();
+    llvm::Type *rhsTy = rhsVal->getType();
+
+    // [Fix] Handle Pointer Arithmetic in Compound Assignment
+    if (lhsTy->isPointerTy() && rhsTy->isIntegerTy()) {
+      if (bin->Op == "+=" || bin->Op == "-=") {
+        llvm::Type *elemTy = nullptr;
+        if (bin->LHS->ResolvedType && bin->LHS->ResolvedType->isPointer()) {
+          elemTy = getLLVMType(bin->LHS->ResolvedType->getPointeeType());
+        }
+        if (!elemTy)
+          elemTy = llvm::Type::getInt8Ty(m_Context);
+
+        if (rhsTy->getIntegerBitWidth() < 64) {
+          rhsVal = m_Builder.CreateSExt(
+              rhsVal, llvm::Type::getInt64Ty(m_Context), "idx_ext");
+        }
+        if (bin->Op == "-=")
+          rhsVal = m_Builder.CreateNeg(rhsVal);
+
+        llvm::Value *res =
+            m_Builder.CreateInBoundsGEP(elemTy, lhsVal, {rhsVal}, "ptradd");
+        m_Builder.CreateStore(res, soulAddr);
+        return PhysEntity(res, "void", res->getType(), false);
+      }
+    }
+
+    // [Fix] Type Promotion for Compound Assignment
+    if (lhsTy != rhsTy) {
+      if (lhsTy->isIntegerTy() && rhsTy->isIntegerTy()) {
+        rhsVal = m_Builder.CreateIntCast(rhsVal, lhsTy, false);
+      } else if (lhsTy->isFloatingPointTy() && rhsTy->isFloatingPointTy()) {
+        rhsVal = m_Builder.CreateFPCast(rhsVal, lhsTy);
+      } else {
+        error(bin, "Type mismatch in compound assignment");
+        return nullptr;
+      }
     }
 
     llvm::Value *res = nullptr;
-    if (lhsVal->getType()->isFloatingPointTy()) {
+    if (lhsTy->isFloatingPointTy()) {
       if (bin->Op == "+=")
         res = m_Builder.CreateFAdd(lhsVal, rhsVal);
       else if (bin->Op == "-=")

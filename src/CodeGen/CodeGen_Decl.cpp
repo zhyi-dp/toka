@@ -127,7 +127,13 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     }
 
     // Return Type
-    std::shared_ptr<Type> retTypeObj = Type::fromString(func->ReturnType);
+    std::shared_ptr<Type> retTypeObj;
+    if (func->ResolvedReturnType) {
+      retTypeObj = func->ResolvedReturnType;
+    } else {
+      retTypeObj = Type::fromString(func->ReturnType);
+    }
+
     llvm::Type *retType = getLLVMType(retTypeObj);
     if (!retType) {
       std::cerr
@@ -1539,7 +1545,12 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
   }
 
   std::string typeName;
-  if (structTy && m_TypeToName.count(structTy)) {
+  if (expr->Object->ResolvedType) {
+    typeName =
+        toka::Type::stripMorphology(expr->Object->ResolvedType->getSoulName());
+  }
+
+  if (typeName.empty() && structTy && m_TypeToName.count(structTy)) {
     typeName = m_TypeToName[structTy];
   }
 

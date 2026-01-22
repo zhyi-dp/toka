@@ -234,14 +234,6 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
       std::dynamic_pointer_cast<ShapeType>(NewShapeTy->withAttributes(
           GenericShape->IsWritable, GenericShape->IsNullable));
 
-  // [NEW] Synchronous Impl Instantiation
-  // If this shape has generic impls, instantiate them now so that
-  // m_ShapeProps (HasDrop) and MethodMap are populated before sovereignty
-  // checks.
-  if (GenericImplMap.count(templateName)) {
-    instantiateGenericImpl(GenericImplMap[templateName], mangledName);
-  }
-
   // Now resolve members with recursion enabled using substMap...
   // Wait, we need to return ResultTy but the members are in storedDecl.
   // storedDecl is shared by all attributes versions. Correct.
@@ -457,6 +449,16 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
     }
   }
 
+  // [NEW] Synchronous Impl Instantiation
+  // If this shape has generic impls, instantiate them now so that
+  // m_ShapeProps (HasDrop) and MethodMap are populated before sovereignty
+  // checks.
+  // [FIX] Moved here to ensure storedDecl->Members is populated first.
+  if (GenericImplMap.count(templateName)) {
+    instantiateGenericImpl(GenericImplMap[templateName], mangledName,
+                           GenericShape->GenericArgs);
+  }
+
   auto result = std::dynamic_pointer_cast<ShapeType>(instance->withAttributes(
       GenericShape->IsWritable, GenericShape->IsNullable));
   return result;
@@ -629,31 +631,16 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
     }
   }
 
-  // Nullptr Logic
-  bool sIsNull = false;
-  if (primS && primS->Name == "nullptr")
-    sIsNull = true;
-  else if (auto sShape = std::dynamic_pointer_cast<toka::ShapeType>(S)) {
-    if (sShape->Name == "nullptr")
-      sIsNull = true;
-  }
-
-  if (sIsNull) {
-    if (T->isPointer() || std::dynamic_pointer_cast<toka::PointerType>(T))
+  // 6. Universal Null Compatibility
+  // nullptr (internally *?void) is compatible with any pointer or smart pointer
+  auto sStr = S->toString();
+  auto tStr = T->toString();
+  if (sStr == "*?void" || sStr == "nullptr") {
+    if (T->isPointer() || T->isSmartPointer() || T->isReference())
       return true;
   }
-
-  // Symmetric Nullptr (for Comparisons like nullptr == ptr)
-  bool tIsNull = false;
-  if (primT && primT->Name == "nullptr")
-    tIsNull = true;
-  else if (auto tShape = std::dynamic_pointer_cast<toka::ShapeType>(T)) {
-    if (tShape->Name == "nullptr")
-      tIsNull = true;
-  }
-
-  if (tIsNull) {
-    if (S->isPointer() || std::dynamic_pointer_cast<toka::PointerType>(S))
+  if (tStr == "*?void" || tStr == "nullptr") {
+    if (S->isPointer() || S->isSmartPointer() || S->isReference())
       return true;
   }
 

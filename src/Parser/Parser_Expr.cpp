@@ -758,6 +758,19 @@ std::unique_ptr<Expr> Parser::parseAllocExpr() {
       consume(TokenType::Identifier, "Expected type name after 'alloc'");
   std::string typeName = typeTok.Text;
 
+  // [NEW] Handle Generics for Alloc Type: RcWrapper<T>
+  if (check(TokenType::GenericLT)) {
+    typeName += advance().Text; // <
+    int balance = 1;
+    while (balance > 0 && !check(TokenType::EndOfFile)) {
+      if (check(TokenType::GenericLT))
+        balance++;
+      else if (check(TokenType::Greater))
+        balance--;
+      typeName += advance().Text;
+    }
+  }
+
   std::unique_ptr<Expr> init = nullptr;
   if (match(TokenType::LParen)) {
     // Check if it's named field initialization: Hero(id = 1, hp = 2)

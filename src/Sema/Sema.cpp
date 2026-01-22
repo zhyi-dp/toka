@@ -353,8 +353,13 @@ void Sema::registerGlobals(Module &M) {
     // If impl has generic params, OR it points to a generic shape, it's a
     // template.
     bool typeIsGeneric = false;
-    if (ShapeMap.count(Impl->TypeName) &&
-        !ShapeMap[Impl->TypeName]->GenericParams.empty()) {
+    std::string baseShapeName = Impl->TypeName;
+    size_t lt_check = baseShapeName.find('<');
+    if (lt_check != std::string::npos)
+      baseShapeName = baseShapeName.substr(0, lt_check);
+
+    if (ShapeMap.count(baseShapeName) &&
+        !ShapeMap[baseShapeName]->GenericParams.empty()) {
       typeIsGeneric = true;
     }
 
@@ -475,6 +480,15 @@ void Sema::checkFunction(FunctionDecl *Fn) {
   FunctionDecl *savedFn = CurrentFunction;
   CurrentFunction = Fn;
   CurrentFunctionReturnType = Fn->ReturnType;
+
+  // [New] Annotated AST: Resolve Return Type Object
+  if (Fn->ReturnType != "void") {
+    std::string resolvedRetStr = resolveType(Fn->ReturnType);
+    Fn->ResolvedReturnType = toka::Type::fromString(resolvedRetStr);
+  } else {
+    Fn->ResolvedReturnType = toka::Type::fromString("void");
+  }
+
   enterScope(); // Function scope
 
   // Register arguments

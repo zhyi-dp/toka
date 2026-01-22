@@ -27,27 +27,27 @@ namespace toka {
 static std::string
 substituteTypeString(const std::string &Input,
                      const std::map<std::string, std::string> &Map) {
-  std::string Output;
-  Output.reserve(Input.size());
+  std::string Output = Input;
+  for (auto const &[K, V] : Map) {
+    size_t pos = 0;
+    while ((pos = Output.find(K, pos)) != std::string::npos) {
+      // Check boundaries: must not be preceded or followed by alphanumeric
+      // chars EXCEPT '_' which IS allowed as a boundary for mangled names.
+      bool startOk =
+          (pos == 0) || !std::isalnum((unsigned char)Output[pos - 1]);
+      bool endOk = (pos + K.size() == Output.size()) ||
+                   !std::isalnum((unsigned char)Output[pos + K.size()]);
 
-  size_t i = 0;
-  while (i < Input.size()) {
-    char c = Input[i];
-    if (isalnum(c) || c == '_') {
-      size_t start = i;
-      while (i < Input.size() && (isalnum(Input[i]) || Input[i] == '_')) {
-        i++;
-      }
-      std::string word = Input.substr(start, i - start);
-      if (Map.count(word)) {
-        Output += Map.at(word);
+      if (startOk && endOk) {
+        Output.replace(pos, K.size(), V);
+        pos += V.size();
       } else {
-        Output += word;
+        pos += K.size();
       }
-    } else {
-      Output += c;
-      i++;
     }
+  }
+  if (Input != Output) {
+    llvm::errs() << "DEBUG: sub [" << Input << "] -> [" << Output << "]\n";
   }
   return Output;
 }
@@ -105,7 +105,8 @@ public:
     } else if (auto *Del = dynamic_cast<DeleteStmt *>(S)) {
       visitExpr(Del->Expression.get());
     } else if (auto *Uns = dynamic_cast<UnsafeStmt *>(S)) {
-      visitStmt(Uns->Statement.get());
+      if (Uns->Statement)
+        visitStmt(Uns->Statement.get());
     }
   }
 
@@ -141,7 +142,8 @@ public:
       visitExpr(Addr->Expression.get());
     } else if (auto *Mem = dynamic_cast<MemberExpr *>(E)) {
       visitExpr(Mem->Object.get());
-      // Member can be generic? No, member name is ident.
+    } else if (auto *VarE = dynamic_cast<VariableExpr *>(E)) {
+      VarE->Name = sub(VarE->Name);
     } else if (auto *Call = dynamic_cast<CallExpr *>(E)) {
       // Call->Callee could rely on T? e.g. T::new() -> i32::new()
       // T::new is parsed as "T::new" string in Callee.
@@ -169,6 +171,36 @@ public:
         visitExpr(F.second.get());
       if (!Rec->AssignedTypeName.empty())
         Rec->AssignedTypeName = sub(Rec->AssignedTypeName);
+    } else if (auto *MetCall = dynamic_cast<MethodCallExpr *>(E)) {
+      visitExpr(MetCall->Object.get());
+      for (auto &Arg : MetCall->Args)
+        visitExpr(Arg.get());
+    } else if (auto *Init = dynamic_cast<InitStructExpr *>(E)) {
+      Init->ShapeName = sub(Init->ShapeName);
+      for (auto &F : Init->Members)
+        visitExpr(F.second.get());
+    } else if (auto *Tup = dynamic_cast<TupleExpr *>(E)) {
+      for (auto &El : Tup->Elements)
+        visitExpr(El.get());
+    } else if (auto *Rep = dynamic_cast<RepeatedArrayExpr *>(E)) {
+      visitExpr(Rep->Value.get());
+      visitExpr(Rep->Count.get());
+    } else if (auto *Match = dynamic_cast<MatchExpr *>(E)) {
+      visitExpr(Match->Target.get());
+      for (auto &Arm : Match->Arms) {
+        visitStmt(Arm->Body.get());
+        if (Arm->Guard)
+          visitExpr(Arm->Guard.get());
+      }
+    } else if (auto *Pass = dynamic_cast<PassExpr *>(E)) {
+      visitExpr(Pass->Value.get());
+    } else if (auto *UnsE = dynamic_cast<UnsafeExpr *>(E)) {
+      visitExpr(UnsE->Expression.get());
+    } else if (auto *Brk = dynamic_cast<BreakExpr *>(E)) {
+      if (Brk->Value)
+        visitExpr(Brk->Value.get());
+    } else if (auto *Cont = dynamic_cast<ContinueExpr *>(E)) {
+      // Nothing to substitute in labels usually
     }
 
     // Reset ResolvedType
@@ -176,24 +208,12 @@ public:
   }
 };
 
-void Sema::instantiateGenericImpl(ImplDecl *Template,
-                                  const std::string &ConcreteTypeName) {
-  // 1. Extract Concrete Generic Args from ConcreteTypeName
-  // e.g. "Box<i32>" -> Generic Args: ["i32"]
-  // Helper to parse the top-level generics
+void Sema::instantiateGenericImpl(
+    ImplDecl *Template, const std::string &ConcreteTypeName,
+    const std::vector<std::shared_ptr<toka::Type>> &GenericArgs) {
+  // 1. Verify generic args count
 
-  std::vector<std::string> ConcreteArgs;
-  auto TypeObj = Type::fromString(ConcreteTypeName);
-  if (auto ShapeTy = std::dynamic_pointer_cast<ShapeType>(TypeObj)) {
-    for (auto &Arg : ShapeTy->GenericArgs) {
-      ConcreteArgs.push_back(Arg->toString());
-    }
-  } else if (auto ArrTy = std::dynamic_pointer_cast<ArrayType>(TypeObj)) {
-    // Array generic? Not implicit impl generally, but Impl Array<T, N>
-    // possible? For now assume ShapeType.
-  }
-
-  if (ConcreteArgs.size() != Template->GenericParams.size()) {
+  if (GenericArgs.size() != Template->GenericParams.size()) {
     // Mismatch or non-generic concrete type?
     // If implicit instantiation of "Box" without args? Error.
     return;
@@ -202,7 +222,7 @@ void Sema::instantiateGenericImpl(ImplDecl *Template,
   // 2. Build Substitution Map
   std::map<std::string, std::string> Replacements;
   for (size_t i = 0; i < Template->GenericParams.size(); ++i) {
-    Replacements[Template->GenericParams[i].Name] = ConcreteArgs[i];
+    Replacements[Template->GenericParams[i].Name] = GenericArgs[i]->toString();
   }
 
   // 3. Clone and Substitute

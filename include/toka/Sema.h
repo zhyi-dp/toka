@@ -160,8 +160,9 @@ private:
     ShapeAnalysisStatus Status = ShapeAnalysisStatus::Unvisited;
   };
 
-  void instantiateGenericImpl(ImplDecl *Template,
-                              const std::string &ConcreteTypeName);
+  void instantiateGenericImpl(
+      ImplDecl *Template, const std::string &ConcreteTypeName,
+      const std::vector<std::shared_ptr<toka::Type>> &GenericArgs);
 
   std::map<std::string, ShapeProperties> m_ShapeProps;
 

@@ -123,18 +123,36 @@ class NullExpr : public Expr {
 public:
   NullExpr() {}
   std::string toString() const override { return "nullptr"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<NullExpr>();
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class NoneExpr : public Expr {
 public:
   NoneExpr() {}
   std::string toString() const override { return "none"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<NoneExpr>();
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class UnsetExpr : public Expr {
 public:
   UnsetExpr() {}
   std::string toString() const override { return "unset"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<UnsetExpr>();
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
 };
 
 class VariableExpr : public Expr {
@@ -1070,6 +1088,7 @@ public:
   std::string Name;
   std::vector<Arg> Args;
   std::string ReturnType;
+  std::shared_ptr<toka::Type> ResolvedReturnType;
   std::vector<std::string> LifeDependencies; // [NEW] e.g., <- x|y
   std::unique_ptr<BlockStmt> Body;
 
@@ -1104,6 +1123,7 @@ public:
                                             GenericParams, LifeDependencies);
     n->IsVariadic = IsVariadic;
     n->Loc = Loc;
+    n->ResolvedReturnType = ResolvedReturnType;
     // FunctionDecl is NOT an Expr, does not have ResolvedType?
     // FunctionDecl inherits ASTNode directly (Line 993).
     // ASTNode doesn't have ResolvedType.

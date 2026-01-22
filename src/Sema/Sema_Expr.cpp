@@ -282,6 +282,15 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return toka::Type::fromString("unknown");
   }
 
+  if (auto *Null = dynamic_cast<NullExpr *>(E)) {
+    // nullptr is conceptually a raw pointer to any type
+    return toka::Type::fromString("*?void");
+  }
+
+  if (auto *None = dynamic_cast<NoneExpr *>(E)) {
+    return toka::Type::fromString("void");
+  }
+
   if (auto *Num = dynamic_cast<NumberExpr *>(E)) {
     if (Num->Value > 9223372036854775807ULL)
       return toka::Type::fromString("u64");
@@ -625,10 +634,6 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     return Info.TypeObj;
-  } else if (auto *Null = dynamic_cast<NullExpr *>(E)) {
-    return toka::Type::fromString("nullptr");
-  } else if (auto *None = dynamic_cast<NoneExpr *>(E)) {
-    return toka::Type::fromString("none");
   } else if (auto *Cast = dynamic_cast<CastExpr *>(E)) {
     auto srcType = checkExpr(Cast->Expression.get());
     auto targetType = toka::Type::fromString(Cast->TargetType);
@@ -1126,17 +1131,6 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         }
       }
     }
-
-    if (!target) {
-      error(be, "Target for break not found");
-    } else {
-      if (valType != "void") {
-        if (target->ExpectedType == "void")
-          target->ExpectedType = valType;
-        else if (!isTypeCompatible(target->ExpectedType, valType))
-          error(be, "Break value type mismatch");
-      }
-    }
     return toka::Type::fromString("void");
   } else if (auto *ce = dynamic_cast<ContinueExpr *>(E)) {
     // Continue target must be a loop
@@ -1187,7 +1181,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
     // Mapping to __toka_alloc
     // Returning raw pointer identity: *Type
-    std::string baseType = AllocE->TypeName;
+    std::string baseType = resolveType(AllocE->TypeName);
     if (AllocE->IsArray) {
       if (AllocE->ArraySize) {
         checkExpr(AllocE->ArraySize.get());
@@ -1251,7 +1245,20 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       if (lt != std::string::npos) {
         BaseName = BaseName.substr(0, lt);
         if (GenericImplMap.count(BaseName)) {
-          instantiateGenericImpl(GenericImplMap[BaseName], ConcreteTypeName);
+          // [FIX] Pass generic arguments to instantiateGenericImpl
+          std::vector<std::shared_ptr<toka::Type>> genericArgs;
+          auto soulType = ObjTypeObj->getSoulType();
+          if (auto *ST = dynamic_cast<ShapeType *>(soulType.get())) {
+            genericArgs = ST->GenericArgs;
+          } else {
+            // Fallback: parse from string
+            auto parsed = Type::fromString(ConcreteTypeName);
+            if (auto *PST = dynamic_cast<ShapeType *>(parsed.get())) {
+              genericArgs = PST->GenericArgs;
+            }
+          }
+          instantiateGenericImpl(GenericImplMap[BaseName], ConcreteTypeName,
+                                 genericArgs);
         }
       }
     }
@@ -1550,8 +1557,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     // Mask Calculation for Struct
     std::string resolvedInitName =
-        resolvedName; // Use the already resolved (and potentially inferred)
-                      // name
+        resolvedName; // Use the already resolved (and
+                      // potentially inferred) name
     if (ShapeMap.count(resolvedInitName)) {
       ShapeDecl *SD = ShapeMap[resolvedInitName];
       uint64_t mask = 0;
@@ -1562,7 +1569,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           if (pair.first == memName) {
             // Check the expression again to get its mask
             // (Optimization: cache this? calling checkExpr twice might be
-            // expensive or verify idempotence. checkExpr sets m_LastInitMask)
+            // expensive or verify idempotence. checkExpr sets
+            // m_LastInitMask)
             checkExpr(pair.second.get());
 
             uint64_t subMask = 1;
@@ -1571,8 +1579,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
             // If member is shape?
             // Current limitation: Flattened masks not fully supported for
             // nested shapes in one integer. But we treat fully initialized
-            // nested shape as "1". So if m_LastInitMask indicates full init, we
-            // set bit i.
+            // nested shape as "1". So if m_LastInitMask indicates full
+            // init, we set bit i.
 
             // How to check full init?
             // If Member is Shape:
@@ -1605,7 +1613,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
             break;
           }
         }
-        // If not found (missing member), bit remains 0. Error reported above.
+        // If not found (missing member), bit remains 0. Error reported
+        // above.
       }
       m_LastInitMask = mask;
     } else {
@@ -1620,7 +1629,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     bool isNarrowed = m_NarrowedPaths.count(path);
 
     // [Fix] Visual Semantics Enforcement: Symmetry Rule
-    // 1. Arrow '->' REQUIRES explicit pointer sigil (UnaryExpr with ^, *, ~, &)
+    // 1. Arrow '->' REQUIRES explicit pointer sigil (UnaryExpr with ^, *,
+    // ~, &)
     // 2. Dot '.' FORBIDS explicit pointer sigil
     bool isExplicitPtr = false;
     if (auto *UE = dynamic_cast<UnaryExpr *>(Memb->Object.get())) {
@@ -1655,9 +1665,10 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     // [FIX] Manual Peeling for Explicit Semantic Access
-    // If Object is (^p)->x or *p->x, checkMemberExpr receives UnaryExpr(^p).
-    // checking ^p via verifyUnaryExpr triggers "stack variable" error.
-    // We must manually peel it, verify morphology, and proceed.
+    // If Object is (^p)->x or *p->x, checkMemberExpr receives
+    // UnaryExpr(^p). checking ^p via verifyUnaryExpr triggers "stack
+    // variable" error. We must manually peel it, verify morphology, and
+    // proceed.
     std::shared_ptr<toka::Type> objTypeObj;
     bool isExplicitPeel = false;
     TokenType explicitOp = TokenType::TokenNone;
@@ -1866,9 +1877,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                                             isNarrowed ? false
                                                        : fieldType->IsNullable);
           } else {
-            // obj.&field, obj.^field, obj.*field (Hatted) -> Identiy Access.
-            // The requestedPrefix confirms we want the pointer/reference
-            // itself.
+            // obj.&field, obj.^field, obj.*field (Hatted) -> Identiy
+            // Access. The requestedPrefix confirms we want the
+            // pointer/reference itself.
             return fieldType->withAttributes(
                 objTypeObj->IsWritable,
                 isNarrowed ? false : fieldType->IsNullable);
@@ -2065,6 +2076,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     return toka::Type::fromString(resultType);
   }
+
   return toka::Type::fromString("unknown");
 }
 
@@ -2318,8 +2330,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   std::string RHS = rhsType->toString();
 
   // [Optimization] Literal Adaptation
-  // Allow mixed comparison like (i64 < 2) by auto-casting the literal to the
-  // explicit type.
+  // Allow mixed comparison like (i64 < 2) by auto-casting the literal to
+  // the explicit type.
   Expr *lhsExpr = Bin->LHS.get();
   Expr *rhsExpr = Bin->RHS.get();
 
@@ -2418,7 +2430,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
     // Reference Assignment
     // [Constitution] Reference Rebinding Detection
-    // If the LHS resolved to a Reference type (due to explicit hatted syntax
+    // If the LHS resolved to a Reference type (due to explicit hatted
+    // syntax
     // &#z), then it's a rebinding. If it collapsed to the Soul (Hat-Off),
     // it's Soul modification.
     if (lhsType->isReference()) {
@@ -2506,7 +2519,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
             isLHSWritable = true;
         }
 
-        // [Unset Safety] Allow writing to immutable variables if they are unset
+        // [Unset Safety] Allow writing to immutable variables if they are
+        // unset
         if (InfoPtr->IsReference()) {
           if (InfoPtr->DirtyReferentMask != ~0ULL)
             isLHSWritable = true;
@@ -2518,8 +2532,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     } else if (auto *Un = dynamic_cast<UnaryExpr *>(Traverse)) {
       // [Constitution] Explicit Rebind/Access check
       if (Un->Op == TokenType::Star) { // *p
-        isLHSWritable = true; // Pointer deref allows mutation if target type
-                              // allows (checked below via Soul)
+        isLHSWritable = true; // Pointer deref allows mutation if target
+                              // type allows (checked below via Soul)
       } else if (Un->Op == TokenType::Caret || Un->Op == TokenType::Tilde ||
                  Un->Op == TokenType::Ampersand ||
                  Un->Op == TokenType::Star) { // ^p, ~p, &p, *p
@@ -2552,7 +2566,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       auto lhsSoul = lhsType->getPointeeType();
       auto rhsSoul = rhsType->getPointeeType();
       if (lhsSoul && rhsSoul) {
-        // Check suffix: if RHS soul is Immutable ($/?) and LHS soul is Writable
+        // Check suffix: if RHS soul is Immutable ($/?) and LHS soul is
+        // Writable
         // (#/!) -> Error
         if (!rhsSoul->IsWritable && lhsSoul->IsWritable) {
           error(Bin, "Covenant Violation: Cannot elevate write permission from "
@@ -2562,8 +2577,9 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       }
     }
 
-    // [FIX] Unset Safety: Allow writing to immutable fields if they are unset
-    // [FIX] Unset Safety: Allow writing to immutable fields if they are unset
+    // [FIX] Unset Safety: Allow writing to immutable fields if they are
+    // unset [FIX] Unset Safety: Allow writing to immutable fields if they
+    // are unset
     bool isLHSUnset = false;
     if (auto *M = dynamic_cast<MemberExpr *>(Bin->LHS.get())) {
       Expr *Traverse = M->Object.get();
@@ -2636,7 +2652,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     auto lhsCompatType = lhsType->withAttributes(false, lhsType->IsNullable);
 
     // [FIX] Reference Rebinding Morphology Mirror
-    // [NEW] Lifetime Safety Check: Scope(LHS_Object) >= Scope(RHS_Dependency)
+    // [NEW] Lifetime Safety Check: Scope(LHS_Object) >=
+    // Scope(RHS_Dependency)
     std::string targetObjName = "";
     Expr *lhsObj = Bin->LHS.get();
     while (auto *me = dynamic_cast<MemberExpr *>(lhsObj)) {
@@ -2713,32 +2730,34 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         // If LHS is *p or ^p etc.
         targetMorph = getSyntacticMorphology(Bin->LHS.get());
 
-        // If LHS is a variable declaration, we don't handle it here (handled
-        // in checkVariableDecl). But this is assignment to existing variable.
-        // If LHS is 'p' (VariableExpr) and p is a pointer type, Morph is None
-        // (hidden). If p is pointer, targetMorph=None. SourceMorph check...
-        // User rule: "auto ^p = x" (Invalid). "auto p = ^x" (Invalid).
-        // "p = q" (Hidden = Hidden)?
+        // If LHS is a variable declaration, we don't handle it here
+        // (handled in checkVariableDecl). But this is assignment to
+        // existing variable. If LHS is 'p' (VariableExpr) and p is a
+        // pointer type, Morph is None (hidden). If p is pointer,
+        // targetMorph=None. SourceMorph check... User rule: "auto ^p = x"
+        // (Invalid). "auto p = ^x" (Invalid). "p = q" (Hidden = Hidden)?
         // "Strict explicit morphology matching".
         // If LHS has no sigil, but is a pointer type?
         // "auto p = ^x". p is pointer. LHS sigil None. RHS sigil Unique.
         // Mismatch. So checks apply.
 
         // However, we need to know if LHS *is* a pointer type to enforce
-        // strictness. If LHS is i32, and RHS is i32. None == None. OK. If LHS
-        // is *i32 (via `*p` deref? No, `*p` assigns to `i32`). If `p` is
+        // strictness. If LHS is i32, and RHS is i32. None == None. OK. If
+        // LHS is *i32 (via `*p` deref? No, `*p` assigns to `i32`). If `p`
+        // is
         // `*i32`. `p = q`. LHS `p` has Morph::None. If strictness requires
         // `*p` to be assigned? No, `*p` assigns to the *pointee*. We are
-        // assigning TO the pointer `p`. So `p = q` is "Value = Value" syntax.
-        // Does user want `*p = *q` for pointer assignment? No, that's partial
-        // update/deref assignment. `p = q` rebinds the pointer. If the rule
-        // is about *Declarations* majorly (`auto *p = ...`), maybe assignment
-        // `p=q` is exempt or `Valid`. The prompt says: "pointer morphology
-        // symbols... on both sides of an assignment... must explicitly
-        // match." Example: `auto *p = ^q` -> Invalid. `p = q` where p, q are
-        // pointers. Sigils are None. None == None. Matches. `p = ^q`. None !=
-        // Unique. Mismatch. Correct. So `getSyntacticMorphology` returning
-        // None for VariableExpr is correct.
+        // assigning TO the pointer `p`. So `p = q` is "Value = Value"
+        // syntax. Does user want `*p = *q` for pointer assignment? No,
+        // that's partial update/deref assignment. `p = q` rebinds the
+        // pointer. If the rule is about *Declarations* majorly (`auto *p =
+        // ...`), maybe assignment `p=q` is exempt or `Valid`. The prompt
+        // says: "pointer morphology symbols... on both sides of an
+        // assignment... must explicitly match." Example: `auto *p = ^q` ->
+        // Invalid. `p = q` where p, q are pointers. Sigils are None. None
+        // == None. Matches. `p = ^q`. None != Unique. Mismatch. Correct. So
+        // `getSyntacticMorphology` returning None for VariableExpr is
+        // correct.
 
         MorphKind sourceMorph = getSyntacticMorphology(Bin->RHS.get());
         checkStrictMorphology(Bin, targetMorph, sourceMorph, LHS);
@@ -2759,8 +2778,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     auto propagateInit = [&](std::string startVar, uint64_t updateBits,
                              bool isPartial) {
       std::string current = startVar;
-      // Limit depth to avoid infinite loops in circular refs (though illegal
-      // in Toka)
+      // Limit depth to avoid infinite loops in circular refs (though
+      // illegal in Toka)
       int depth = 0;
       while (!current.empty() && depth < 20) {
         SymbolInfo *Sym = nullptr;
@@ -3036,8 +3055,11 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   size_t pos = CallName.find("::");
   if (pos != std::string::npos) {
     std::string RawPrefix = CallName.substr(0, pos);
-    // [NEW] Resolve prefix as a type (handles Option<i32> -> Option_M_i32)
     std::string ShapeName = resolveType(RawPrefix);
+    // [FIX] resolveType might return a type string "SharedPtr_M_i32" or
+    // similar. If it contains sigils, strip them for Map lookup.
+    ShapeName = Type::stripMorphology(ShapeName);
+
     std::string VariantName = CallName.substr(pos + 2);
 
     if (ShapeMap.count(ShapeName)) {
@@ -3052,7 +3074,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
           Arg = foldGenericConstant(std::move(Arg)); // [FIX]
           checkExpr(Arg.get());
         }
-        return toka::Type::fromString(MethodMap[ShapeName][VariantName]);
+        auto retObj = toka::Type::fromString(MethodMap[ShapeName][VariantName]);
+        return resolveType(retObj);
       } else {
         // [NEW] Lazy Impl Instantiation
         std::string BaseName = RawPrefix;
@@ -3060,7 +3083,14 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         if (lt != std::string::npos) {
           BaseName = BaseName.substr(0, lt);
           if (GenericImplMap.count(BaseName)) {
-            instantiateGenericImpl(GenericImplMap[BaseName], RawPrefix);
+            // [FIX] Pass generic arguments to instantiateGenericImpl
+            std::vector<std::shared_ptr<toka::Type>> genericArgs;
+            auto parsed = Type::fromString(RawPrefix);
+            if (auto *ST = dynamic_cast<ShapeType *>(parsed.get())) {
+              genericArgs = ST->GenericArgs;
+            }
+            instantiateGenericImpl(GenericImplMap[BaseName], RawPrefix,
+                                   genericArgs);
             // Retry lookup
             if (MethodMap.count(ShapeName) &&
                 MethodMap[ShapeName].count(VariantName)) {
@@ -3068,7 +3098,9 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
                 Arg = foldGenericConstant(std::move(Arg));
                 checkExpr(Arg.get());
               }
-              return toka::Type::fromString(MethodMap[ShapeName][VariantName]);
+              auto retObj =
+                  toka::Type::fromString(MethodMap[ShapeName][VariantName]);
+              return resolveType(retObj);
             }
           }
         }
@@ -3091,6 +3123,11 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
           }
         }
       }
+      // If we are here, it means we found the Shape but not the
+      // Method/Variant
+      error(Call, "static method or variant '" + VariantName +
+                      "' not found in shape '" + ShapeName + "'");
+      return toka::Type::fromString("unknown");
     }
   }
   // 4. Regular Function Lookup
@@ -3099,8 +3136,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   ShapeDecl *Sh = nullptr; // Constructor
 
   // [NEW] Generic Constructor Pre-Check
-  // If CallName looks like a generic type "Box<i32>", try to resolve it as a
-  // Type. This triggers monomorphization in resolveType.
+  // If CallName looks like a generic type "Box<i32>", try to resolve it as
+  // a Type. This triggers monomorphization in resolveType.
   if (CallName.find('<') != std::string::npos) {
     auto possibleType = toka::Type::fromString(CallName);
     if (possibleType && !possibleType->isUnknown()) {
@@ -3118,10 +3155,10 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
             if (Call->Args.size() == 1) {
               // Check if the argument is a named argument
               // Actually the Parser produces named args as BinaryExpr with
-              // "="? Wait, Toka syntax for named args is `Func(name = val)`.
-              // In CallExpr::Args, this is parsed as BinaryExpr("=",
-              // Var(name), Val). But checkCallExpr usually iterates args and
-              // checks them. We need to peek at the arg structure.
+              // "="? Wait, Toka syntax for named args is `Func(name =
+              // val)`. In CallExpr::Args, this is parsed as BinaryExpr("=",
+              // Var(name), Val). But checkCallExpr usually iterates args
+              // and checks them. We need to peek at the arg structure.
 
               // Moved logic to "4. Regular Function Lookup" section below
               // because Sh might be found there too.
@@ -3172,15 +3209,16 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
                 std::dynamic_pointer_cast<toka::ShapeType>(resolved)) {
           if (shapeT->Decl) {
             Sh = shapeT->Decl;
-            // Update Callee to the concrete mangled name (e.g. Generic_M_i32)
-            // This ensures CodeGen calls the correct function.
+            // Update Callee to the concrete mangled name (e.g.
+            // Generic_M_i32) This ensures CodeGen calls the correct
+            // function.
             Call->Callee = shapeT->Name;
           }
         }
       }
 
-      // Legacy/Simple Fallback (if resolveType didn't yield a ShapeDecl logic
-      // above covers most)
+      // Legacy/Simple Fallback (if resolveType didn't yield a ShapeDecl
+      // logic above covers most)
       if (!Sh && ShapeMap.count(target)) {
         Sh = ShapeMap[target];
         // If simple alias, we might also want to update Callee?
@@ -3267,8 +3305,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
 
         const auto &Param = Fn->Args[i];
         std::string PType = Param.Type;
-        // [FIX] Parse Sigils from PType string (since Parser might leave them
-        // in string)
+        // [FIX] Parse Sigils from PType string (since Parser might leave
+        // them in string)
         bool locHasPointer = Param.HasPointer;
         bool locIsUnique = Param.IsUnique;
         bool locIsShared = Param.IsShared;
@@ -3487,7 +3525,24 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         if (isNamed) {
           bool found = false;
           for (auto &M : Sh->Members) {
-            if (M.Name == fieldName) {
+            // [Constitution] Initialization Exemption: Normalize field name
+            // for comparison
+            std::string normalizedFieldName = fieldName;
+            while (!normalizedFieldName.empty() &&
+                   (normalizedFieldName.back() == '#' ||
+                    normalizedFieldName.back() == '?' ||
+                    normalizedFieldName.back() == '!')) {
+              normalizedFieldName.pop_back();
+            }
+            std::string normalizedMName = M.Name;
+            while (!normalizedMName.empty() &&
+                   (normalizedMName.back() == '#' ||
+                    normalizedMName.back() == '?' ||
+                    normalizedMName.back() == '!')) {
+              normalizedMName.pop_back();
+            }
+
+            if (normalizedMName == normalizedFieldName) {
               found = true;
               expectedTypeStr = M.Type;
               break;
@@ -3615,9 +3670,9 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
                 // Simple sum for now (ignoring padding/alignment for
                 // simplicity in Sema check) Ideally should use TypeLayout,
                 // but this is a safety check. If we underestimate struct
-                // size, we might allow partial init of a larger union? No, if
-                // struct is member of union, we need its size. Let's assume
-                // packed or simple accumulation.
+                // size, we might allow partial init of a larger union? No,
+                // if struct is member of union, we need its size. Let's
+                // assume packed or simple accumulation.
                 uint64_t sum = 0;
                 for (auto &m : Decl->Members)
                   sum += getTypeSize(m.ResolvedType);
@@ -3679,11 +3734,11 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         if (exactMatchCount == 1) {
           Call->MatchedMemberIdx = exactMatchIdx;
         } else if (exactMatchCount > 1) {
-          DiagnosticEngine::report(
-              getLoc(Call), DiagID::ERR_GENERIC_PARSE,
-              "Ambiguous Union constructor: multiple exact matches found for "
-              "type " +
-                  argType->toString());
+          DiagnosticEngine::report(getLoc(Call), DiagID::ERR_GENERIC_PARSE,
+                                   "Ambiguous Union constructor: multiple "
+                                   "exact matches found for "
+                                   "type " +
+                                       argType->toString());
           HasError = true;
           return toka::Type::fromString("unknown");
         } else if (fitMatchCount == 1) {
