@@ -1,15 +1,16 @@
 import std/io::println
 
 shape Node(
-    next: ~?#Node,
+    ~?next: Node,
     val: i32
 )
 
 fn main() -> i32 {
-    auto ~head = new Node(next = unset, val = 1)
+    auto ~head = new Node(~next = unset, val = 1)
     
     // ERROR: Missing '#' for rebind
-    ~head = new Node(next = unset, val = 2) // CHECK: error: Cannot assign to immutable entity
+    // EXPECT: Cannot assign to immutable entity. Missing writable token '#' or '!'.
+    ~head = new Node(~next = unset, val = 2) // CHECK: error: Cannot assign to immutable entity
     
     return 0
 }

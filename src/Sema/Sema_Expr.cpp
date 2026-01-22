@@ -647,6 +647,17 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     bool srcIsRaw = srcType->isRawPointer();
     bool targetIsRaw = targetType->isRawPointer();
 
+    bool srcIsOAddr = (srcType->toString() == "OAddr" ||
+                       resolveType("OAddr") == srcType->toString());
+    bool targetIsOAddr = (Cast->TargetType == "OAddr" ||
+                          resolveType("OAddr") == Cast->TargetType);
+
+    if (srcIsOAddr && !targetIsOAddr) {
+      DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
+                               srcType->toString(), Cast->TargetType);
+      HasError = true;
+    }
+
     if (srcIsNumeric && targetIsNumeric) {
       // Normal numeric cast, allow.
     } else if (targetType->isSmartPointer() && !srcType->isSmartPointer()) {
@@ -675,6 +686,13 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     } else if (srcIsAddr) {
       // Rule: Addr can be cast to Addr, Raw Pointer, or Numeric
       if (!(targetIsAddr || targetIsRaw || targetIsNumeric)) {
+        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
+                                 srcType->toString(), Cast->TargetType);
+        HasError = true;
+      }
+    } else if (targetIsOAddr) {
+      // Rule: Pointer to OAddr is always allowed
+      if (!srcType->isPointer()) {
         DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
                                  srcType->toString(), Cast->TargetType);
         HasError = true;

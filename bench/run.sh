@@ -39,7 +39,7 @@ build/src/tokac "$TK_FILE" > "$LL_FILE"
 
 echo "--- Step 2: 编译 LLVM IR 到 Native 二进制 ---"
 SDK_PATH=$(xcrun --show-sdk-path)
-/usr/bin/clang -x ir "$LL_FILE" -O3 -o "$TOKA_BIN" -isysroot "$SDK_PATH" -mllvm -opaque-pointers
+/usr/bin/clang -x ir "$LL_FILE" -O3 -o "$TOKA_BIN" -isysroot "$SDK_PATH" # -mllvm # -opaque-pointers
 
 echo "=== 运行 Toka (Native) ==="
 time "./$TOKA_BIN"

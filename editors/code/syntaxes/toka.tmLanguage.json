@@ -32,10 +32,97 @@
         "comments": {
             "patterns": [
                 {
-                    "name": "comment.line.double-slash.toka",
-                    "match": "//.*$"
+                    "include": "#gate-container-inactive-start"
+                },
+                {
+                    "include": "#gate-container-active-start"
+                },
+                {
+                    "include": "#comment-block-standard"
+                },
+                {
+                    "include": "#comment-line-standard"
                 }
             ]
+        },
+        "gate-container-inactive-start": {
+            "comment": "情况 1: /- 开头。关键点：这里不能设 contentName，否则子区域无法摆脱灰色阴影。",
+            "begin": "\\/\\-",
+            "end": "\\+-\\/",
+            "beginCaptures": {
+                "0": {
+                    "name": "keyword.control.gate.start.inactive.toka"
+                }
+            },
+            "endCaptures": {
+                "0": {
+                    "name": "keyword.control.gate.terminator.toka"
+                }
+            },
+            "patterns": [
+                {
+                    "comment": "优先级1：检测翻转符 +/-。一旦匹配，进入高亮模式 (include $self)",
+                    "begin": "\\+\\/\\-",
+                    "end": "(?=\\+\\/\\-)|(?=\\+-\\/)",
+                    "beginCaptures": {
+                        "0": {
+                            "name": "keyword.control.gate.flipper.toka"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "include": "$self"
+                        }
+                    ]
+                },
+                {
+                    "comment": "优先级2：手动染色。匹配任何【不是】翻转符或结束符的内容，染成灰色。",
+                    "match": "(?:(?!\\+\\/\\-|\\+-\\/).)+",
+                    "name": "comment.block.toka"
+                }
+            ]
+        },
+        "gate-container-active-start": {
+            "comment": "情况 2: /+ 开头。默认就是高亮，无需 contentName。",
+            "begin": "\\/\\+",
+            "end": "\\+-\\/",
+            "beginCaptures": {
+                "0": {
+                    "name": "keyword.control.gate.start.active.toka"
+                }
+            },
+            "endCaptures": {
+                "0": {
+                    "name": "keyword.control.gate.terminator.toka"
+                }
+            },
+            "patterns": [
+                {
+                    "comment": "优先级1：检测翻转符 +/-。一旦匹配，进入强制灰色模式。",
+                    "begin": "\\+\\/\\-",
+                    "end": "(?=\\+\\/\\-)|(?=\\+-\\/)",
+                    "beginCaptures": {
+                        "0": {
+                            "name": "keyword.control.gate.flipper.toka"
+                        }
+                    },
+                    "contentName": "comment.block.toka",
+                    "patterns": []
+                },
+                {
+                    "comment": "优先级2：正常代码高亮",
+                    "include": "$self"
+                }
+            ]
+        },
+        "comment-block-standard": {
+            "name": "comment.block.toka",
+            "begin": "/\\*",
+            "end": "\\*/"
+        },
+        "comment-line-standard": {
+            "name": "comment.line.double-slash.toka",
+            "match": "//.*$"
         },
         "strings": {
             "name": "string.quoted.double.toka",
@@ -55,62 +142,50 @@
         "keywords": {
             "patterns": [
                 {
-                    "comment": "Danger zone keyword - Targeted for Red",
                     "name": "keyword.other.unsafe.toka",
                     "match": "\\bunsafe\\b"
                 },
                 {
-                    "comment": "Conditional and branching control",
                     "name": "keyword.control.conditional.toka",
                     "match": "\\b(if|else|match|case)\\b"
                 },
                 {
-                    "comment": "Loop and iteration control",
                     "name": "keyword.control.repeat.toka",
                     "match": "\\b(for|while|loop|to|in)\\b"
                 },
                 {
-                    "comment": "Control flow redirection",
                     "name": "keyword.control.flow.toka",
                     "match": "\\b(break|continue|return|yield|defer|pass)\\b"
                 },
                 {
-                    "comment": "Asynchronous and concurrency control",
                     "name": "keyword.control.async.toka",
                     "match": "\\b(async|await|suspend|cancel)\\b"
                 },
                 {
-                    "comment": "Structural and type definition keywords",
                     "name": "storage.type.toka",
                     "match": "\\b(fn|shape|trait|impl|type|alias|extern|crate)\\b"
                 },
                 {
-                    "comment": "Storage and access modifiers",
                     "name": "storage.modifier.toka",
                     "match": "\\b(pub|mut|const|packed|dyn|final|move|auto)\\b"
                 },
                 {
-                    "comment": "Memory management keywords",
                     "name": "keyword.other.memory.toka",
                     "match": "\\b(new|delete|del|alloc|free)\\b"
                 },
                 {
-                    "comment": "Expression and type-utility keywords",
                     "name": "keyword.operator.expression.toka",
                     "match": "\\b(as|is|where|default|or)\\b"
                 },
                 {
-                    "comment": "Module system",
                     "name": "keyword.other.import.toka",
                     "match": "\\bimport\\b"
                 },
                 {
-                    "comment": "Language constants",
                     "name": "constant.language.toka",
                     "match": "\\b(true|false|none|nullptr)\\b"
                 },
                 {
-                    "comment": "Special language identifiers",
                     "name": "variable.language.special.toka",
                     "match": "\\b(self|Self|main)\\b"
                 }
@@ -119,12 +194,10 @@
         "types": {
             "patterns": [
                 {
-                    "comment": "Primitive and built-in types",
                     "name": "support.type.primitive.toka",
                     "match": "\\b(i8|u8|i16|u16|i32|u32|i64|u64|f32|f64|bool|void|char|byte|str|Task|Channel|Fn)\\b"
                 },
                 {
-                    "comment": "User defined types (PascalCase)",
                     "name": "entity.name.type.toka",
                     "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
                 }
@@ -145,22 +218,18 @@
         "storage": {
             "patterns": [
                 {
-                    "comment": "Writable modifier (#) - Targeted for Red",
                     "name": "storage.modifier.mutability.writable.toka",
                     "match": "#"
                 },
                 {
-                    "comment": "Writable and Nullable modifier (!) - Targeted for Red",
                     "name": "storage.modifier.mutability.nullable.writable.toka",
                     "match": "!"
                 },
                 {
-                    "comment": "Nullable modifier (?)",
                     "name": "storage.modifier.nullable.toka",
                     "match": "\\?"
                 },
                 {
-                    "comment": "Immutable modifier ($) - Follows variable color",
                     "name": "punctuation.definition.variable.toka",
                     "match": "\\$"
                 }
@@ -193,7 +262,6 @@
         "functions": {
             "patterns": [
                 {
-                    "comment": "Function calls",
                     "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
                     "captures": {
                         "1": {

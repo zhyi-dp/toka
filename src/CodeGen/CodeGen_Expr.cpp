@@ -1096,8 +1096,20 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
         PhysEntity ent = genExpr(unary->RHS.get());
         return ent.load(m_Builder);
       }
+    } else if (auto *me = dynamic_cast<const MemberExpr *>(unary->RHS.get())) {
+      PhysEntity meEnt = genAddr(me);
+      if (meEnt.value && meEnt.isAddress) {
+        llvm::Value *val = m_Builder.CreateLoad(
+            m_Builder.getPtrTy(), meEnt.value, me->Member + ".move");
+        m_Builder.CreateStore(
+            llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), meEnt.value);
+        return val;
+      } else {
+        return genExpr(unary->RHS.get()).load(m_Builder);
+      }
+    } else {
+      return genExpr(unary->RHS.get()).load(m_Builder);
     }
-    return genExpr(unary->RHS.get()).load(m_Builder);
   }
 
   if (unary->Op == TokenType::Tilde) {
@@ -1119,7 +1131,44 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
 }
 
 PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
-  PhysEntity srcEnt = genExpr(cast->Expression.get());
+  if (!cast->Expression)
+    return nullptr;
+
+  bool targetIsOAddr = (cast->TargetType == "OAddr");
+  const UnaryExpr *UE = dynamic_cast<const UnaryExpr *>(cast->Expression.get());
+  bool isCaret = (UE && UE->Op == TokenType::Caret);
+
+  PhysEntity srcEnt;
+  if (targetIsOAddr && isCaret) {
+    if (const VariableExpr *v =
+            dynamic_cast<const VariableExpr *>(UE->RHS.get())) {
+      std::string vName = v->Name;
+      while (!vName.empty() && (vName.back() == '?' || vName.back() == '!'))
+        vName.pop_back();
+      llvm::Value *alloca = getIdentityAddr(vName);
+      if (alloca) {
+        llvm::Value *ptrVal =
+            m_Builder.CreateLoad(m_Builder.getPtrTy(), alloca, vName + ".peek");
+        srcEnt = PhysEntity(ptrVal, v->Name, m_Builder.getPtrTy(), false);
+      } else {
+        srcEnt = genExpr(cast->Expression.get());
+      }
+    } else if (const MemberExpr *m =
+                   dynamic_cast<const MemberExpr *>(UE->RHS.get())) {
+      PhysEntity meEnt = genAddr(m);
+      if (meEnt.value && meEnt.isAddress) {
+        llvm::Value *ptrVal = m_Builder.CreateLoad(
+            m_Builder.getPtrTy(), meEnt.value, m->Member + ".peek");
+        srcEnt = PhysEntity(ptrVal, m->Member, m_Builder.getPtrTy(), false);
+      } else {
+        srcEnt = genExpr(cast->Expression.get());
+      }
+    } else {
+      srcEnt = genExpr(cast->Expression.get());
+    }
+  } else {
+    srcEnt = genExpr(cast->Expression.get());
+  }
 
   // Rule: Union L-Value Reinterpretation
   std::shared_ptr<Type> srcTypeObj = cast->Expression->ResolvedType;
@@ -1127,7 +1176,12 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
     auto st = std::dynamic_pointer_cast<ShapeType>(srcTypeObj);
     if (st->Decl && st->Decl->Kind == ShapeKind::Union) {
       llvm::Value *addr = srcEnt.value;
-      llvm::Type *destTy = resolveType(cast->TargetType, false);
+      llvm::Type *destTy = nullptr;
+      if (cast->ResolvedType) {
+        destTy = getLLVMType(cast->ResolvedType);
+      } else {
+        destTy = resolveType(cast->TargetType, false);
+      }
       // [CRITICAL] bitcast address, preserving L-Value. DO NOT LOAD.
       llvm::Value *newAddr =
           m_Builder.CreateBitCast(addr, destTy->getPointerTo());
@@ -1139,9 +1193,27 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
   llvm::Value *val = val_ent.load(m_Builder);
   if (!val)
     return nullptr;
-  llvm::Type *targetType = resolveType(cast->TargetType, false);
+  llvm::Type *targetType = nullptr;
+  if (cast->ResolvedType) {
+    targetType = getLLVMType(cast->ResolvedType);
+  } else {
+    targetType = resolveType(cast->TargetType, false);
+  }
   if (!targetType)
     return val;
+
+  // Rule: Unwrap Smart Pointer handles (like SharedPtr) if casting to
+  // integer/pointer
+  if (val->getType()->isStructTy()) {
+    while (val->getType()->isStructTy()) {
+      unsigned numElems = val->getType()->getStructNumElements();
+      if (numElems == 1 || numElems == 2) {
+        val = m_Builder.CreateExtractValue(val, 0, "handle_unwrap");
+      } else {
+        break;
+      }
+    }
+  }
 
   llvm::Type *srcType = val->getType();
   if (srcType->isIntegerTy() && targetType->isIntegerTy()) {
@@ -2698,15 +2770,20 @@ PhysEntity CodeGen::genUnsafeExpr(const UnsafeExpr *ue) {
 }
 
 PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
-  llvm::StructType *st = m_StructTypes[init->ShapeName];
+  std::string shapeName = init->ShapeName;
+  if (init->ResolvedType && init->ResolvedType->isShape()) {
+    shapeName = init->ResolvedType->getSoulName();
+  }
+
+  llvm::StructType *st = m_StructTypes[shapeName];
   if (!st) {
-    error(init, "Unknown struct type " + init->ShapeName);
+    error(init, "Unknown struct type " + shapeName);
     return nullptr;
   }
 
   llvm::Value *alloca =
       m_Builder.CreateAlloca(st, nullptr, init->ShapeName + "_init");
-  auto &fields = m_StructFieldNames[init->ShapeName];
+  auto &fields = m_StructFieldNames[shapeName];
 
   for (const auto &f : init->Members) {
     int idx = -1;
@@ -2747,18 +2824,12 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
     }
 
     llvm::Value *fieldVal = nullptr;
-
     if (dynamic_cast<const UnsetExpr *>(f.second.get())) {
-      // [Fix] Handle UnsetExpr with context type
       llvm::Type *elemTy = st->getElementType(idx);
-      if (elemTy->isPointerTy()) {
-        fieldVal = llvm::Constant::getNullValue(elemTy);
-      } else {
-        fieldVal = llvm::UndefValue::get(elemTy);
-      }
+      fieldVal = elemTy->isPointerTy() ? llvm::Constant::getNullValue(elemTy)
+                                       : llvm::UndefValue::get(elemTy);
     } else {
-      PhysEntity fieldVal_ent = genExpr(f.second.get()).load(m_Builder);
-      fieldVal = fieldVal_ent.load(m_Builder);
+      fieldVal = genExpr(f.second.get()).load(m_Builder);
     }
 
     if (!fieldVal)
@@ -2767,8 +2838,8 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
     llvm::Value *fieldAddr =
         m_Builder.CreateStructGEP(st, alloca, idx, "field_" + f.first);
 
-    // [Constitution] Shared Pointer RC Acquisition
-    if (f.second->ResolvedType && f.second->ResolvedType->isSharedPtr()) {
+    if (f.second && f.second->ResolvedType &&
+        f.second->ResolvedType->isSharedPtr()) {
       emitAcquire(fieldVal);
     }
 
@@ -2779,7 +2850,19 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
 }
 
 PhysEntity CodeGen::genNewExpr(const NewExpr *newExpr) {
-  llvm::Type *type = resolveType(newExpr->Type, false);
+  llvm::Type *type = nullptr;
+  if (newExpr->ResolvedType) {
+    auto rt = newExpr->ResolvedType;
+    if (rt->isPointer() || rt->isSmartPointer()) {
+      if (auto ptr = std::dynamic_pointer_cast<PointerType>(rt)) {
+        rt = ptr->PointeeType;
+      }
+    }
+    type = getLLVMType(rt);
+  } else {
+    type = resolveType(newExpr->Type, false);
+  }
+
   if (!type)
     return nullptr;
 
@@ -2807,9 +2890,7 @@ PhysEntity CodeGen::genNewExpr(const NewExpr *newExpr) {
   llvm::Value *heapPtr = voidPtr;
 
   if (newExpr->Initializer) {
-    PhysEntity initVal_ent =
-        genExpr(newExpr->Initializer.get()).load(m_Builder);
-    llvm::Value *initVal = initVal_ent.load(m_Builder);
+    llvm::Value *initVal = genExpr(newExpr->Initializer.get()).load(m_Builder);
     if (initVal) {
       if (initVal->getType() != type) {
         // Attempt cast
@@ -2923,17 +3004,19 @@ PhysEntity CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
     return nullptr;
   }
 
-  llvm::Type *recType = resolveType(uniqueName, false);
-  if (!recType) {
-    // It's possible the type wasn't created if it's unused?
-    // No, Sema moves it to Module, so discover() should have seen it.
-    // Try to fallback/check if it's in m_StructTypes directly?
-    if (m_StructTypes.count(uniqueName)) {
+  llvm::Type *recType = nullptr;
+  if (expr->ResolvedType) {
+    recType = getLLVMType(expr->ResolvedType);
+  } else {
+    recType = resolveType(uniqueName, false);
+    if (!recType && m_StructTypes.count(uniqueName)) {
       recType = m_StructTypes[uniqueName];
-    } else {
-      error(expr, "Anonymous record type '" + uniqueName + "' not found");
-      return nullptr;
     }
+  }
+
+  if (!recType) {
+    error(expr, "Anonymous record type '" + uniqueName + "' not found");
+    return nullptr;
   }
 
   llvm::Value *alloca = m_Builder.CreateAlloca(recType, nullptr, "anon_rec");
@@ -3080,4 +3163,5 @@ PhysEntity CodeGen::genRepeatedArrayExpr(const RepeatedArrayExpr *expr) {
       "[" + val_ent.typeName + "; " + std::to_string(count) + "]";
   return PhysEntity(alloca, arrayTypeName, arrTy, true);
 }
+
 } // namespace toka

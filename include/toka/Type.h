@@ -24,7 +24,7 @@ namespace toka {
 
 class ShapeDecl; // Forward declaration
 
-class Type {
+class Type : public std::enable_shared_from_this<Type> {
 public:
   enum Kind {
     Primitive,
@@ -95,6 +95,9 @@ public:
 
   bool isShape() const { return typeKind == Shape; }
   virtual std::string getSoulName() const { return toString(); }
+
+  // [NEW] Get the "Soul" Type (underlying non-pointer type)
+  virtual std::shared_ptr<Type> getSoulType() { return shared_from_this(); }
 };
 
 // --- Basic Types ---
@@ -142,6 +145,11 @@ public:
   bool equals(const Type &other) const override;
   bool isCompatibleWith(const Type &target) const override;
   std::shared_ptr<Type> getPointeeType() const override { return PointeeType; }
+  std::shared_ptr<Type> getSoulType() override {
+    if (PointeeType)
+      return PointeeType->getSoulType();
+    return shared_from_this();
+  }
 };
 
 class RawPointerType : public PointerType {
@@ -214,6 +222,7 @@ public:
   bool equals(const Type &other) const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
   bool isCompatibleWith(const Type &target) const override;
+  std::string getSoulName() const override { return Name; }
 };
 
 class TupleType : public Type {

@@ -11,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+
+import core/traits::{@encap}
+
 //Defines a weak type alias: creates a symbolic synonym for an existing type. 
 //It is semantically identical and transparent to the compiler, allowing seamless interchanging with the underlying type without explicit casting.
 pub alias usize = u64
@@ -21,6 +25,7 @@ pub type byte = u8
 //Defines a strong type: creates a unique semantic identity that shares the same physical memory layout as the base type.
 //It enforces strict type isolation, requiring explicit conversion to prevent accidental type confusion and enhance memory safety.
 pub type Addr = u64
+pub type OAddr = u64
 
 pub type char = i8     // encoding-neutral character, C-style
 pub type Char16 = u16  // UTF-16 code point, UCS-2(Strict BMP) only

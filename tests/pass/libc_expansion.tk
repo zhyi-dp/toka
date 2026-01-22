@@ -27,7 +27,7 @@ fn main() -> i32 {
 
         // Test malloc/free
         auto *ptr = libc_malloc(10:u64)
-        if *ptr == (0:u64 as *void) { return 5 }
+        if *ptr == nullptr { return 5 }
         libc_free(*ptr)
 
         // Test time (just check it returns something > 0)

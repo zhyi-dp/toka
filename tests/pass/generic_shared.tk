@@ -1,0 +1,106 @@
+import std/io::println
+
+// --- 基础类型 ---
+impl u64 {
+    fn fetch_add(self#) {
+        self# += 1 
+    }
+    fn fetch_sub(self#) { 
+        self# -= 1 
+    }
+    fn load(self) -> u64 { 
+        return self 
+    }
+}
+
+// --- 引用计数控制块 ---
+shape RcWrapper<T>(
+    ref_count#: u64,
+    *data: T
+)
+
+// --- 智能指针主体 ---
+shape SharedPtr<T>(
+    *#wrapper: RcWrapper<T>
+)
+
+impl SharedPtr<T> {
+    
+    // 1. 构造函数：完全遵照你的 alloc 语法
+    pub fn new(val: T) -> SharedPtr<T> {
+        unsafe {
+            // [Alloc Syntax]: 按照你的要求，*data 接收 *ptr
+            auto *data_ptr = unsafe alloc T(val)
+            
+            auto *cb_ptr = unsafe alloc RcWrapper<T>(
+                ref_count = 1, 
+                *data = *data_ptr 
+            )
+            
+            return SharedPtr<T>(*wrapper = *cb_ptr)
+        }
+    }
+
+    // 2. 拷贝赋值：修复了逻辑顺序和帽子规则解引用
+    fn assign(self#, rhs: SharedPtr<T>) {
+        // [帽子规则]: 比较指针地址不需要解引用
+        if self.*#wrapper == rhs.*#wrapper {
+            return
+        }
+
+        // [逻辑修复]: 必须先释放旧值 (DecRef/Free)
+        self.drop() 
+
+        // 接纳新值
+        self.*#wrapper = rhs.*wrapper
+
+        // [帽子规则]: 原始指针必须显式解包 (*ptr) 才能访问成员
+        if self.*wrapper != nullptr {
+            self.wrapper.ref_count#.fetch_add()
+        }
+    }
+
+    // 3. 析构函数：帽子规则严谨版
+    fn drop(self#) {
+        if self.*wrapper == nullptr {
+            return
+        }
+
+        // [帽子规则]: (*ptr).member
+        self.wrapper.ref_count#.fetch_sub()
+
+        if self.wrapper.ref_count.load() == 0 {
+            
+                // 1. 先释放数据
+                // (*self.wrapper) -> 拿到 RcWrapper
+                // .data -> 拿到 *T
+                unsafe free self.wrapper.*data
+                
+                // 2. 再释放控制块
+                unsafe free self.*wrapper
+        }
+        
+        // 置空
+        self.*wrapper = nullptr 
+    }
+}
+
+// --- 测试逻辑 ---
+fn main() -> i32 {
+    unsafe {
+        auto sp1 = SharedPtr<i32>::new(100)
+        
+        auto sp2 = SharedPtr<i32>::new(0) 
+        sp2.assign(sp1) // sp2 Drop old(0), Acquire sp1(100)
+        
+        auto sp3 = SharedPtr<i32>::new(0)
+        sp3.assign(sp1)
+        
+        // 此时 ref_count 应该是 3
+        
+        sp2.drop()
+        sp1.drop()
+        sp3.drop() // Count -> 0, Free
+    }
+    return 0
+}

@@ -350,7 +350,15 @@ void Sema::registerGlobals(Module &M) {
 
   for (auto &Impl : M.Impls) {
     // [NEW] Generic Impl Registration (Lazy)
-    if (!Impl->GenericParams.empty()) {
+    // If impl has generic params, OR it points to a generic shape, it's a
+    // template.
+    bool typeIsGeneric = false;
+    if (ShapeMap.count(Impl->TypeName) &&
+        !ShapeMap[Impl->TypeName]->GenericParams.empty()) {
+      typeIsGeneric = true;
+    }
+
+    if (!Impl->GenericParams.empty() || typeIsGeneric) {
       std::string baseName = Impl->TypeName;
       size_t lt = baseName.find('<');
       if (lt != std::string::npos)
@@ -447,6 +455,11 @@ void Sema::registerImpl(ImplDecl *Impl) {
   if (Impl->TraitName == "@encap") {
     if (implemented.count("drop")) {
       m_ShapeProps[resolvedTypeName].HasDrop = true;
+      // [Single Source of Truth] Store the authoritative mangled name
+      if (ShapeMap.count(resolvedTypeName)) {
+        ShapeMap[resolvedTypeName]->MangledDestructorName =
+            "encap_" + resolvedTypeName + "_drop";
+      }
     }
   }
 }
@@ -574,6 +587,9 @@ void Sema::checkImpl(ImplDecl *Impl) {
 
 void Sema::checkShapeSovereignty() {
   for (auto const &[name, decl] : ShapeMap) {
+    if (!decl->GenericParams.empty())
+      continue;
+
     if (decl->Kind == ShapeKind::Struct) {
       bool needsDrop = false;
 

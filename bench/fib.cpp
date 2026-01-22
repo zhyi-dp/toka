@@ -1,4 +1,3 @@
-#include <iostream>
 long long fib(long long n) {
   if (n < 2) {
     return n;
@@ -9,8 +8,5 @@ long long fib(long long n) {
 int main() {
   long long start_n = 45;
   long long res = fib(start_n);
-  if (res == 0xDEADBEEF) {
-    std::cout << "never see me" << std::endl;
-  }
-  return 0;
+  return res == 0xDEADBEEF;
 }

@@ -1002,6 +1002,9 @@ public:
     s += ")";
     return s;
   }
+
+  // [NEW] Cache for the mangled name of the destructor (drop method)
+  std::string MangledDestructorName;
 };
 
 // Deprecated: Use ShapeDecl

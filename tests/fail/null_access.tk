@@ -14,7 +14,9 @@
 shape Data (v: i32)
 fn main() -> i32 {
     auto ^?p = new Data(v = 42)
-    auto x = p.v // Error: p is nullable
+    
     // EXPECT: Accessing member of nullable type '^?Data' requires explicit 'is' check
+    auto x = p.v // Error: p is nullable
+    
     return 0
 }

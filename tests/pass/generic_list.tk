@@ -1,16 +1,23 @@
 // tests/pass/generic_list.tk
+import core/traits::{@encap}
+import std/io::println
 shape Node<T> (
     val: T,
-    ^next: Node<T>
+    ^?next: Node<T>
 )
-
+impl Node@encap {
+    pub val
+    fn drop(self#) {
+        println("dropping Node")
+    }
+}
 fn main() -> i32 {
     // Recursive instantiation check
     // Node<i32> contains ^Node<i32>
-    auto ^head = new Node<i32>(val=1, ^next=nullptr)
+    auto ^head = new Node<i32>(val=1, ^?next=nullptr)
     
     // Explicit recursion test
-    auto ^second = new Node<i32>(val=2, ^next=^head)
+    auto ^second = new Node<i32>(val=2, ^?next=^head)
     
     return 0
 }

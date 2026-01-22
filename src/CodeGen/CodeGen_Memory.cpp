@@ -33,7 +33,17 @@ PhysEntity CodeGen::genAllocExpr(const AllocExpr *ae) {
                                        "malloc", m_Module.get());
   }
 
-  llvm::Type *elemTy = resolveType(ae->TypeName, false);
+  llvm::Type *elemTy = nullptr;
+  if (ae->ResolvedType) {
+    auto resTy = ae->ResolvedType;
+    if (resTy->isPointer() || resTy->isSmartPointer()) {
+      elemTy = getLLVMType(resTy->getPointeeType());
+    } else {
+      elemTy = getLLVMType(resTy);
+    }
+  } else {
+    elemTy = resolveType(ae->TypeName, false);
+  }
   llvm::DataLayout dl(m_Module.get());
   uint64_t size = dl.getTypeAllocSize(elemTy);
   llvm::Value *sizeVal =
@@ -160,12 +170,17 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
 
     std::string dropFunc = "";
     if (!typeName.empty()) {
-      std::string try1 = "encap_" + typeName + "_drop";
-      std::string try2 = typeName + "_drop"; // Legacy
-      if (m_Functions.count(try1))
-        dropFunc = try1;
-      else if (m_Functions.count(try2))
-        dropFunc = try2;
+      if (m_Shapes.count(typeName)) {
+        dropFunc = m_Shapes[typeName]->MangledDestructorName;
+      }
+      if (dropFunc.empty()) {
+        std::string try1 = "encap_" + typeName + "_drop";
+        std::string try2 = typeName + "_drop"; // Legacy
+        if (m_Functions.count(try1))
+          dropFunc = try1;
+        else if (m_Functions.count(try2))
+          dropFunc = try2;
+      }
     }
 
     // Use explicit count if provided, otherwise parsed array size

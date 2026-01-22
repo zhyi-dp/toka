@@ -1,0 +1,10 @@
+import std/io::println
+import core/types::{OAddr}
+
+fn main() -> i32 {
+    auto *p: i32 = unsafe alloc i32(10)
+    auto oa = *p as OAddr
+    // EXPECT: Invalid cast: cannot convert 'OAddr' to '*i32' via 'as'; only 'Addr' and '*' conversions are supported
+    auto *p2: i32 = oa as *i32 // Error: OAddr cannot be cast to *i32
+    return 0
+}

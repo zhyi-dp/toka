@@ -71,6 +71,13 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
       // Determine LLVM Type
       llvm::Type *t = getLLVMType(typeObj);
+      if (!t) {
+        std::cerr << "CodeGen Error: Failed to resolve LLVM type for argument '"
+                  << arg.Name << "' in function '" << funcName
+                  << "'. typeObj: " << (typeObj ? typeObj->toString() : "null")
+                  << "\n";
+        return nullptr;
+      }
 
       // [Restored Logic] Implicit Capture (ABI)
       // Structs, Arrays, and Mutable bindings are passed by pointer (Implicit
@@ -122,6 +129,14 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     // Return Type
     std::shared_ptr<Type> retTypeObj = Type::fromString(func->ReturnType);
     llvm::Type *retType = getLLVMType(retTypeObj);
+    if (!retType) {
+      std::cerr
+          << "CodeGen Error: Failed to resolve LLVM return type for function '"
+          << funcName
+          << "'. typeObj: " << (retTypeObj ? retTypeObj->toString() : "null")
+          << "\n";
+      return nullptr;
+    }
 
     llvm::FunctionType *ft = llvm::FunctionType::get(retType, argTypes, false);
     f = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, funcName,
@@ -178,6 +193,13 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
     // 3. Get LLVM Type from Object
     llvm::Type *allocaType = getLLVMType(typeObj);
+    if (!allocaType) {
+      std::cerr
+          << "CodeGen Error: Failed to resolve LLVM type for argument body '"
+          << argDecl.Name << "' in function '" << funcName
+          << "'. typeObj: " << (typeObj ? typeObj->toString() : "null") << "\n";
+      return nullptr;
+    }
     llvm::Type *pTy = allocaType; // Soul type approx (refines later)
 
     // [Restored Logic] Implicit Capture (ABI) - Body
@@ -410,6 +432,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
 llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   std::string varName = Type::stripMorphology(var->Name);
+  std::cerr << "DEBUG: genVariableDecl: " << varName
+            << " (original: " << var->Name << ")\n";
 
   llvm::Value *initVal = nullptr;
   llvm::Type *decayArrayType = nullptr;
@@ -885,17 +909,13 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   if (!m_ScopeStack.empty()) {
     std::string typeName = var->TypeName;
     if (var->ResolvedType) {
-      // Use resolved type name if available (handles 'auto')
-      // We need the raw name for lookup
-      if (auto st = std::dynamic_pointer_cast<ShapeType>(var->ResolvedType)) {
-        typeName = st->Name;
-      } else if (auto pt = std::dynamic_pointer_cast<SharedPointerType>(
-                     var->ResolvedType)) {
-        // For Shared, we want the inner type? No, drops are usually handled
-        // by ABI or manual calls? Standard drop logic below peels layers.
-        typeName = var->ResolvedType->toString(); // e.g. "~Data"
-      } else {
-        typeName = var->ResolvedType->toString();
+      auto soul = var->ResolvedType;
+      while (soul && (soul->isPointer() || soul->isReference() ||
+                      soul->isSmartPointer())) {
+        soul = soul->getPointeeType();
+      }
+      if (soul) {
+        typeName = soul->getSoulName();
       }
     }
 
@@ -909,32 +929,40 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     bool hasDrop = false;
 
     if (!typeName.empty()) {
-      // Simple mangling check: Type_encap_drop
-      // Need to strip morphology
-      std::string base = typeName;
-      while (!base.empty() &&
-             (base[0] == '^' || base[0] == '*' || base[0] == '&' ||
-              base[0] == '~' || base[0] == '!' || base[0] == '#' ||
-              base[0] == '?'))
-        base = base.substr(1);
-      while (!base.empty() &&
-             (base.back() == '#' || base.back() == '?' || base.back() == '!'))
-        base.pop_back();
+      if (m_Shapes.count(typeName)) {
+        dropFunc = m_Shapes[typeName]->MangledDestructorName;
+      }
 
-      std::string tryName = base + "_encap_drop";
-      if (m_Module->getFunction(tryName)) {
+      if (!dropFunc.empty()) {
         hasDrop = true;
-        dropFunc = tryName;
       } else {
-        std::string altName = "encap_" + base + "_drop";
-        if (m_Module->getFunction(altName)) {
+        // Simple mangling check: Type_encap_drop
+        // Need to strip morphology
+        std::string base = typeName;
+        while (!base.empty() &&
+               (base[0] == '^' || base[0] == '*' || base[0] == '&' ||
+                base[0] == '~' || base[0] == '!' || base[0] == '#' ||
+                base[0] == '?'))
+          base = base.substr(1);
+        while (!base.empty() &&
+               (base.back() == '#' || base.back() == '?' || base.back() == '!'))
+          base.pop_back();
+
+        std::string tryName = base + "_encap_drop";
+        if (m_Module->getFunction(tryName)) {
           hasDrop = true;
-          dropFunc = altName;
+          dropFunc = tryName;
         } else {
-          std::string try3 = base + "_drop";
-          if (m_Module->getFunction(try3)) {
+          std::string altName = "encap_" + base + "_drop";
+          if (m_Module->getFunction(altName)) {
             hasDrop = true;
-            dropFunc = try3;
+            dropFunc = altName;
+          } else {
+            std::string try3 = base + "_drop";
+            if (m_Module->getFunction(try3)) {
+              hasDrop = true;
+              dropFunc = try3;
+            }
           }
         }
       }
@@ -968,9 +996,8 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
       m_Symbols[varName].hasDrop = hasDrop;
       m_Symbols[varName].dropFunc = dropFunc;
     }
-
   } else {
-
+    // Top-level or outside a scope (e.g. globals)
     return nullptr;
   }
   return nullptr;
@@ -1285,6 +1312,12 @@ void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
   if (!decl->GenericParams.empty()) {
     return;
   }
+
+  // [NEW] Skip Impls for template shapes (they won't have LLVM types)
+  if (!resolveType(decl->TypeName, false)) {
+    return;
+  }
+
   m_CurrentSelfType = decl->TypeName;
   std::set<std::string> implementedMethods;
 
@@ -1936,9 +1969,10 @@ llvm::Type *CodeGen::getLLVMType(std::shared_ptr<Type> type) {
     // However, if we need typed pointers for GEPs or older LLVM logic (which
     // Toka seems to rely on with resolveType returning typed ptrs):
     llvm::Type *pointeeTy = getLLVMType(ptrType->PointeeType);
+    if (!pointeeTy) {
+      pointeeTy = llvm::Type::getInt8Ty(m_Context);
+    }
     if (pointeeTy->isVoidTy()) {
-      // *void -> i8* (standard convention) or just opaque ptr if supported.
-      // Let's stick to i8* for void* equivalent if typed.
       pointeeTy = llvm::Type::getInt8Ty(m_Context);
     }
     return llvm::PointerType::getUnqual(pointeeTy);
@@ -1948,6 +1982,8 @@ llvm::Type *CodeGen::getLLVMType(std::shared_ptr<Type> type) {
   if (type->typeKind == Type::SharedPtr) {
     auto sharedType = std::static_pointer_cast<SharedPointerType>(type);
     llvm::Type *elemTy = getLLVMType(sharedType->PointeeType);
+    if (!elemTy)
+      elemTy = llvm::Type::getInt8Ty(m_Context);
 
     llvm::Type *ptrTy = llvm::PointerType::getUnqual(elemTy);
     llvm::Type *refCountTy =
@@ -1960,6 +1996,8 @@ llvm::Type *CodeGen::getLLVMType(std::shared_ptr<Type> type) {
   if (type->typeKind == Type::Array) {
     auto arrType = std::static_pointer_cast<ArrayType>(type);
     llvm::Type *elemTy = getLLVMType(arrType->ElementType);
+    if (!elemTy)
+      elemTy = llvm::Type::getInt8Ty(m_Context);
     return llvm::ArrayType::get(elemTy, arrType->Size);
   }
 
@@ -1968,7 +2006,10 @@ llvm::Type *CodeGen::getLLVMType(std::shared_ptr<Type> type) {
     auto tupleType = std::static_pointer_cast<TupleType>(type);
     std::vector<llvm::Type *> elemTypes;
     for (const auto &elem : tupleType->Elements) {
-      elemTypes.push_back(getLLVMType(elem));
+      llvm::Type *et = getLLVMType(elem);
+      if (!et)
+        et = llvm::Type::getInt8Ty(m_Context);
+      elemTypes.push_back(et);
     }
     return llvm::StructType::get(m_Context, elemTypes);
   }

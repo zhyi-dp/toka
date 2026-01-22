@@ -1,5 +1,5 @@
 
-//import std/io::println
+import std/io::println
 //import std/memory::assert
 
 shape Node(
@@ -67,6 +67,6 @@ pub fn main() -> i32 {
             break
         }
     }
-    //println("Sum: {}", sum)
+    println("Sum: {}", sum)
     return 0
 }

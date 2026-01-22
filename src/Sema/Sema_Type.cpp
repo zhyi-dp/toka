@@ -220,8 +220,11 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
   NewDecl->Loc = Template->Loc;
 
   ShapeDecl *storedDecl = NewDecl.get();
-  SyntheticShapes.push_back(std::move(NewDecl));
-  ShapeMap[mangledName] = storedDecl; // Register IMMEDIATELY
+  // Register IMMEDIATELY in Sema's primary map for resolution
+  ShapeMap[mangledName] = storedDecl;
+
+  // Add to CurrentModule to ensure CodeGen visibility
+  CurrentModule->Shapes.push_back(std::move(NewDecl));
 
   auto NewShapeTy = std::make_shared<toka::ShapeType>(mangledName);
   NewShapeTy->Decl = storedDecl;
@@ -230,6 +233,14 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
   auto ResultTy =
       std::dynamic_pointer_cast<ShapeType>(NewShapeTy->withAttributes(
           GenericShape->IsWritable, GenericShape->IsNullable));
+
+  // [NEW] Synchronous Impl Instantiation
+  // If this shape has generic impls, instantiate them now so that
+  // m_ShapeProps (HasDrop) and MethodMap are populated before sovereignty
+  // checks.
+  if (GenericImplMap.count(templateName)) {
+    instantiateGenericImpl(GenericImplMap[templateName], mangledName);
+  }
 
   // Now resolve members with recursion enabled using substMap...
   // Wait, we need to return ResultTy but the members are in storedDecl.
@@ -244,10 +255,22 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
   for (auto &oldMember : Template->Members) {
     ShapeMember newM = oldMember;
 
-    // Simple Substitution Logic (Phase 1)
+    // [Constitution] Hat Rule Normalization (The Double-Hat Fix)
+    // Rule: Slot wins. If slot has a hat, take argument's soul and apply slot's
+    // hat.
     if (substMap.count(newM.Type)) {
-      newM.ResolvedType = substMap[newM.Type];
-      newM.Type = newM.ResolvedType->toString(); // Update string
+      auto actualTy = substMap[newM.Type];
+      if (newM.IsUnique || newM.IsShared || newM.IsReference ||
+          newM.HasPointer) {
+        // Slot has hat. Strip argument's hat (get soul) and apply slot's hat.
+        auto soulTy = actualTy->getSoulType();
+        newM.ResolvedType = soulTy; // We'll re-apply hats in resolveMember
+        newM.Type = soulTy->toString();
+      } else {
+        // Slot has NO hat. Pass-through argument's morphology.
+        newM.ResolvedType = actualTy;
+        newM.Type = actualTy->toString();
+      }
     } else {
       // [FIX] Nested Generic Substitution Workaround (Phase 1.5)
       // If type string contains generic param, replace it.
@@ -299,7 +322,12 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
       else if (m.HasPointer)
         prefix += "*";
 
-      std::string fullTypeStr = prefix + m.Type;
+      std::string fullTypeStr = m.Type;
+      if (!fullTypeStr.empty() && fullTypeStr[0] != '^' &&
+          fullTypeStr[0] != '*' && fullTypeStr[0] != '&' &&
+          fullTypeStr[0] != '~') {
+        fullTypeStr = prefix + m.Type;
+      }
       // [NEW] If it's an array with a symbolic size that's one of our generic
       // params, replace it before resolution.
       auto memberTypeObj = toka::Type::fromString(fullTypeStr);

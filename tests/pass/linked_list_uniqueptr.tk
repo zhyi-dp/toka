@@ -3,6 +3,7 @@ import std/io::println
 import std/memory::assert
 import std/memory
 import core/traits::{@encap}
+import core/types::{OAddr}
 
 shape Node(
     val: i32,
@@ -54,24 +55,27 @@ pub fn main() -> i32 {
         for auto i in [1,2,3,4,5] {
             auto ^next = ^head
             ^#head = new Node(val=i, ^?next=^next)
-            println("[{}]pushed: {}", i, head.val)
+            println("[{}]pushed: {}, address: {}", i, head.val, ^head as OAddr)
             assert(head.val == i, "check head.val")
         }
     }
     
     auto ^#cursor = ^head 
+    println("^#cursor address {}", ^cursor as OAddr)
     auto i# = 5
     loop {
         assert(i >= 0, "check i >= 0")
         println("[{}]val: {}", i, cursor.val)
         assert(cursor.val == i, "check cursor.val")
         i# -= 1
-        if i < 0 {
-            //break
+        if i == 4 {
+            break
         }
         
         if cursor.^?next is cursor.^next {
+            println("will reseat to {}", cursor.^next as OAddr)
             ^#cursor = cursor.^next 
+            println("^#cursor address {}", ^cursor as OAddr)
         } else {
             break
         }

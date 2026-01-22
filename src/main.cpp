@@ -155,22 +155,32 @@ int main(int argc, char **argv) {
     }
   }
 
-  llvm::errs() << "Sema Successful. Merging and Generating IR...\n";
+  fprintf(stderr, "Sema Successful. Merging and Generating IR...\n");
+  fflush(stderr);
 
+  fprintf(stderr, "Initializing LLVM Context...\n");
+  fflush(stderr);
   llvm::LLVMContext context;
+  fprintf(stderr, "Instantiating CodeGen for module: %s\n", argv[1]);
+  fflush(stderr);
   toka::CodeGen codegen(context, argv[1]);
+  fprintf(stderr, "CodeGen instantiated.\n");
+  fflush(stderr);
 
-  // Pass 1: Discovery (Registration)
+  fprintf(stderr, "Pass 1: Discovery (Registration)...\n");
+  fflush(stderr);
   for (const auto &ast : astModules) {
     codegen.discover(*ast);
   }
 
-  // Pass 2: Resolution (Signatures)
+  fprintf(stderr, "Pass 2: Resolution (Signatures)...\n");
+  fflush(stderr);
   for (const auto &ast : astModules) {
     codegen.resolveSignatures(*ast);
   }
 
-  // Pass 3: Generation (Emission)
+  fprintf(stderr, "Pass 3: Generation (Emission)...\n");
+  fflush(stderr);
   for (const auto &ast : astModules) {
     codegen.generate(*ast);
   }
