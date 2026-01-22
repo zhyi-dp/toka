@@ -3,19 +3,19 @@ import std/io::println
 // --- 基础类型 ---
 impl u64 {
     fn fetch_add(self#) {
-        println("type u64 enter .fetch_add, now is {}", self)
+        //println("type u64 enter .fetch_add, now is {}", self)
         self# += 1 
     }
     fn fetch_sub(self#) { 
-        println("type u64 enter .fetch_sub, now is {}", self)
+        //println("type u64 enter .fetch_sub, now is {}", self)
         self# -= 1 
     }
     fn load(self) -> u64 { 
-        println("type u64 enter .load, now is {}", self)
+        //println("type u64 enter .load, now is {}", self)
         return self 
     }
     fn store(self#, val: u64) {
-        println("type u64 enter .store, now is {}, will set to {}", self, val)
+        //println("type u64 enter .store, now is {}, will set to {}", self, val)
         self# = val 
     }
 }
@@ -31,21 +31,27 @@ shape SharedPtr<T>(
     *#wrapper: RcWrapper<T>
 )
 
+impl<T> SharedPtr<T>@encap {
+    fn drop(self#) {
+        println("comple call .drop, shared_ptr:{} wrapper:{}", *self as OAddr, self.*wrapper as OAddr)
+    }
+}
+
 impl<T> SharedPtr<T> {
     
     // 1. 静态构造
     pub fn make(val: T) -> SharedPtr<T> {
         unsafe {
             // [Alloc Syntax]: 按照你的要求，*data 接收 *ptr
-            println("allocating for {}", val)
+            //println("allocating for {}", val)
             auto *data_ptr = unsafe alloc T(val)
             
             auto *cb_ptr = unsafe alloc RcWrapper<T>(
                 ref_count = 1, 
                 *data = *data_ptr 
             )
-            cb_ptr.ref_count#.store(1)
-            
+            // cb_ptr.ref_count#.store(1)
+            println("make++++ wrapper:{} data:{} val = {}", *cb_ptr as OAddr, *data_ptr as OAddr, data_ptr[0])
             return SharedPtr<T>(*wrapper = *cb_ptr)
         }
     }
@@ -54,11 +60,13 @@ impl<T> SharedPtr<T> {
     pub fn assign(self#, rhs: SharedPtr<T>) {
         // [帽子规则]: 比较指针地址不需要解引用
         if self.*#wrapper == rhs.*wrapper {
+            unsafe println("lhs wrapper:{} == rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.*data[0])
             return
         }
+        unsafe println("lhs wrapper:{} <- rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.*data[0])
 
         // [逻辑修复]: 必须先释放旧值 (DecRef/Free)
-        self.drop() 
+        self.xdrop() 
 
         // 接纳新值
         self.*#wrapper = rhs.*wrapper
@@ -70,8 +78,8 @@ impl<T> SharedPtr<T> {
     }
 
     // 3. 析构函数：帽子规则严谨版
-    pub fn drop(self#) {
-        println("enter .drop")   
+    pub fn xdrop(self#) {
+        println("enter .xdrop, shared_ptr:{} wrapper:{}", *self as OAddr, self.*wrapper as OAddr)
         if self.*wrapper == nullptr {   
             return
         }
@@ -79,11 +87,11 @@ impl<T> SharedPtr<T> {
         // [帽子规则]: (*ptr).member
         self.wrapper.ref_count#.fetch_sub()
 
-        unsafe println("enter .drop for addr {} with ref_count {}", self.wrapper.*data as OAddr, self.wrapper.ref_count)   
+        println("try xdrop for addr {} with ref_count={}", self.wrapper.*data as OAddr, self.wrapper.ref_count)   
 
         if self.wrapper.ref_count.load() == 0 {   
             unsafe {
-                println("dropping for addr {}, val is {}", self.wrapper.*data as OAddr, self.wrapper.*data[0])
+                println("drop---- wrapper:{} data:{} val={}", self.*wrapper as OAddr, self.wrapper.*data as OAddr, self.wrapper.*data[0])
                 // 1. 先释放数据
                 // (*self.wrapper) -> 拿到 RcWrapper
                 // .data -> 拿到 *T
@@ -92,6 +100,10 @@ impl<T> SharedPtr<T> {
                 // 2. 再释放控制块
                 unsafe free self.*wrapper
             }
+        }
+        else
+        {
+            println("xdrop for addr {} with ref_count={} NOT dropped", self.wrapper.*data as OAddr, self.wrapper.ref_count)
         }
         
         // 置空
@@ -103,24 +115,24 @@ impl<T> SharedPtr<T> {
 // --- 测试逻辑 ---
 fn main() -> i32 {
     unsafe {
-        auto sp1 = SharedPtr<i32>::make(10)
-        
-        auto sp2 = SharedPtr<i32>::make(20) 
-        println("will assign sp2 to sp1")
-        sp2.assign(sp1) // sp2 Drop old(20), Acquire sp1(10)
-        println("assign sp2 to sp1 done")
-        
+        auto sp1# = SharedPtr<i32>::make(10)
+        auto sp2# = SharedPtr<i32>::make(20) 
 
-        auto sp3 = SharedPtr<i32>::make(30)
-        println("will assign sp3 to sp1")
-        sp3.assign(sp1)
-        println("assign sp3 to sp1 done")
+        //auto sp11 = sp1;
+        //auto sp22 = sp2;
+        //auto sp33 = sp3;
         
-        // 此时 ref_count 应该是 3
+        sp2#.assign(sp1)
+        sp1#.assign(sp1)
+
+        auto sp3# = SharedPtr<i32>::make(30)
+        sp1#.assign(sp3)
+        sp1#.assign(sp2)
+        sp1#.assign(sp1)
         
-        sp2.drop()
-        sp1.drop()
-        sp3.drop() // Count -> 0, Free
+        sp1#.xdrop()
+        sp2#.xdrop()
+        sp3#.xdrop() // Count -> 0, Free
     }
     return 0
 }

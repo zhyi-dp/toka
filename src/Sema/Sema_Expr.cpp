@@ -1188,8 +1188,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       }
     }
     if (AllocE->Initializer) {
-      checkExpr(AllocE->Initializer.get());
+      checkExpr(AllocE->Initializer.get(), toka::Type::fromString(baseType));
     }
+    AllocE->TypeName = baseType; // [FIX] Update with mangled name for CodeGen
     return toka::Type::fromString("*" + baseType);
   } else if (auto *Met = dynamic_cast<MethodCallExpr *>(E)) {
     auto ObjTypeObj = checkExpr(Met->Object.get());
@@ -1426,6 +1427,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         }
       }
     }
+    Init->ShapeName = resolvedName; // Update with final mangled name
 
     if (ShapeMap.count(resolvedName)) {
       ShapeDecl *SD = ShapeMap[resolvedName];
@@ -1469,7 +1471,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       // Check fields exist and types match
       m_LastLifeDependencies.clear();
       std::set<std::string> providedFields;
-      for (const auto &pair : Init->Members) {
+      for (auto &pair : Init->Members) {
         if (providedFields.count(pair.first)) {
           DiagnosticEngine::report(getLoc(Init), DiagID::ERR_DUPLICATE_FIELD,
                                    pair.first);
@@ -1515,6 +1517,17 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
         std::shared_ptr<toka::Type> exprTypeObj =
             checkExpr(pair.second.get(), memberTypeObj);
+
+        // [FIX] Add implicit cast for field initialization (e.g. i32 literal to
+        // u64 field)
+        if (isTypeCompatible(memberTypeObj, exprTypeObj) &&
+            !memberTypeObj->equals(*exprTypeObj)) {
+          pair.second = std::make_unique<CastExpr>(std::move(pair.second),
+                                                   memberTypeObj->toString());
+          pair.second->ResolvedType = memberTypeObj;
+          exprTypeObj = memberTypeObj;
+        }
+
         std::string exprType = exprTypeObj->toString();
 
         if (!isTypeCompatible(memberTypeObj, exprTypeObj)) {

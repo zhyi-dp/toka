@@ -1263,30 +1263,37 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
       // Fallback: check target type string if ResolvedType is missing
       isSigned = (cast->TargetType.size() > 0 && cast->TargetType[0] == 'i');
     }
-    return m_Builder.CreateIntCast(val, targetType, isSigned);
+    return PhysEntity(m_Builder.CreateIntCast(val, targetType, isSigned),
+                      cast->TargetType, targetType, false);
   }
 
   // Floating Point Conversions
   if (srcType->isFloatingPointTy() && targetType->isFloatingPointTy()) {
-    return m_Builder.CreateFPCast(val, targetType, "fp_cast");
+    return PhysEntity(m_Builder.CreateFPCast(val, targetType, "fp_cast"),
+                      cast->TargetType, targetType, false);
   }
   if (srcType->isFloatingPointTy() && targetType->isIntegerTy()) {
-    return m_Builder.CreateFPToSI(val, targetType, "fp_to_int");
+    return PhysEntity(m_Builder.CreateFPToSI(val, targetType, "fp_to_int"),
+                      cast->TargetType, targetType, false);
   }
   if (srcType->isIntegerTy() && targetType->isFloatingPointTy()) {
-    return m_Builder.CreateSIToFP(val, targetType, "int_to_fp");
+    return PhysEntity(m_Builder.CreateSIToFP(val, targetType, "int_to_fp"),
+                      cast->TargetType, targetType, false);
   }
 
   // Physical Interpretation: bitcast or int-ptr cast if types are different
   if (srcType != targetType) {
     if (srcType->isPointerTy() && targetType->isPointerTy()) {
-      return m_Builder.CreateBitCast(val, targetType);
+      return PhysEntity(m_Builder.CreateBitCast(val, targetType),
+                        cast->TargetType, targetType, false);
     }
     if (srcType->isPointerTy() && targetType->isIntegerTy()) {
-      return m_Builder.CreatePtrToInt(val, targetType);
+      return PhysEntity(m_Builder.CreatePtrToInt(val, targetType),
+                        cast->TargetType, targetType, false);
     }
     if (srcType->isIntegerTy() && targetType->isPointerTy()) {
-      return m_Builder.CreateIntToPtr(val, targetType);
+      return PhysEntity(m_Builder.CreateIntToPtr(val, targetType),
+                        cast->TargetType, targetType, false);
     }
     // If one is not a pointer, we need alloca/bitcast (Zero-cost
     // GEP/Address logic)
@@ -2224,8 +2231,13 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
                   val, llvm::Type::getInt32Ty(m_Context));
             }
           } else if (ty->isIntegerTy(64)) {
-            spec = (semanticType.size() > 0 && semanticType[0] == 'u') ? "%llu"
-                                                                       : "%lld";
+            if (semanticType == "OAddr") {
+              spec = "0x%012lx";
+            } else {
+              spec = (semanticType.size() > 0 && semanticType[0] == 'u')
+                         ? "%llu"
+                         : "%lld";
+            }
           } else if (ty->isIntegerTy()) {
             spec = (semanticType.size() > 0 && semanticType[0] == 'u') ? "%u"
                                                                        : "%d";

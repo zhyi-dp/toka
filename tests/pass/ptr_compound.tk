@@ -1,0 +1,34 @@
+import std/io::println
+
+fn sizeof<T>() -> i32 {
+    return 4
+}
+fn main() -> i32 {
+    unsafe {
+        auto arr = [1, 2, 3, 4, 5]
+        // &arr[0] is &i32. Cast to *#i32 (mutable raw pointer)
+        auto *#p = *arr
+        println("p addr {}", *p as OAddr)   
+        
+        // Pointer arithmetic: increment the pointer by bytes
+        *#p = *p + 1 * sizeof<i32>()
+        println("p addr {}", *p as OAddr)   
+        
+        // Compare dereferenced value (p without hat is *p in C)
+        if p[0] != 2 {
+            println("ptr += 1 failed, expected 2, got {}", p[0])
+            return 1
+        }
+        
+        // Pointer arithmetic: decrement the pointer by bytes
+        *#p = *p + 1 * sizeof<i32>()
+        println("p addr {}", *p as OAddr)   
+        if p[0] != 3 {
+            println("ptr += 1 failed, expected 3, got {}", p[0])
+            return 1
+        }
+    }
+    
+    println("Pointer arithmetic test passed!")
+    return 0
+}
