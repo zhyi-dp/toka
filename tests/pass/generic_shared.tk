@@ -51,7 +51,7 @@ impl<T> SharedPtr<T> {
                 *data = *data_ptr 
             )
             // cb_ptr.ref_count#.store(1)
-            println("make++++ wrapper:{} data:{} val = {}", *cb_ptr as OAddr, *data_ptr as OAddr, data_ptr[0])
+            println("make++++ wrapper:{} data:{} val = {}", *cb_ptr as OAddr, *data_ptr as OAddr, data_ptr)
             return SharedPtr<T>(*wrapper = *cb_ptr)
         }
     }
@@ -60,10 +60,10 @@ impl<T> SharedPtr<T> {
     pub fn assign(self#, rhs: SharedPtr<T>) {
         // [帽子规则]: 比较指针地址不需要解引用
         if self.*#wrapper == rhs.*wrapper {
-            unsafe println("lhs wrapper:{} == rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.*data[0])
+            unsafe println("lhs wrapper:{} == rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.data)
             return
         }
-        unsafe println("lhs wrapper:{} <- rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.*data[0])
+        unsafe println("lhs wrapper:{} <- rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.data)
 
         // [逻辑修复]: 必须先释放旧值 (DecRef/Free)
         self.xdrop() 
@@ -91,7 +91,7 @@ impl<T> SharedPtr<T> {
 
         if self.wrapper.ref_count.load() == 0 {   
             unsafe {
-                println("drop---- wrapper:{} data:{} val={}", self.*wrapper as OAddr, self.wrapper.*data as OAddr, self.wrapper.*data[0])
+                println("drop---- wrapper:{} data:{} val={}", self.*wrapper as OAddr, self.wrapper.*data as OAddr, self.wrapper.data)
                 // 1. 先释放数据
                 // (*self.wrapper) -> 拿到 RcWrapper
                 // .data -> 拿到 *T
@@ -112,11 +112,12 @@ impl<T> SharedPtr<T> {
     }
 }
 
+alias SharedPtrX = SharedPtr<u64>
 // --- 测试逻辑 ---
 fn main() -> i32 {
     unsafe {
-        auto sp1# = SharedPtr<i32>::make(10)
-        auto sp2# = SharedPtr<i32>::make(20) 
+        auto sp1# = SharedPtrX::make(10)
+        auto sp2# = SharedPtrX::make(20) 
 
         //auto sp11 = sp1;
         //auto sp22 = sp2;
@@ -125,7 +126,7 @@ fn main() -> i32 {
         sp2#.assign(sp1)
         sp1#.assign(sp1)
 
-        auto sp3# = SharedPtr<i32>::make(30)
+        auto sp3# = SharedPtrX::make(30)
         sp1#.assign(sp3)
         sp1#.assign(sp2)
         sp1#.assign(sp1)
