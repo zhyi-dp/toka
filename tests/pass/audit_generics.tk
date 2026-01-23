@@ -1,5 +1,5 @@
 import std/io::println
-
+import std/debug::assert
 // 1. Nested Generics for Mangling Check
 shape Inner<T>(
     val: T
@@ -23,12 +23,13 @@ fn test_const_shape() {
     auto arr = FixedArray<5>(data=[1, 2, 3, 4, 5])
     println("Const Shape Size: {}", 5)
     println("Arr[0]: {}", arr.data[0])
+    assert(arr.data[0] == 1, "arr.data[0] should be 1")
 }
 
 // 3. Constant Resolution in Function Body
 fn make_buffer_print<S_: usize>() -> [i32; S_] {
     // println("Generic Constant S: {}", S_)
-    auto buf = [0; S_] 
+    auto buf = [321; S_] 
     return buf
 }
 
@@ -37,6 +38,7 @@ fn main() -> i32 {
     test_const_shape()
     auto buf = make_buffer_print<4>()
     println("Buf[0]: {}", buf[0])
+    assert(buf[0] == 321, "buf[0] should be 321")
     return 0
 }
 

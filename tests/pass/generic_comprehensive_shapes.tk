@@ -1,4 +1,4 @@
-import std/memory::assert
+import std/debug::assert
 import std/io::println
 
 // 1. Generic Struct (Named Fields)

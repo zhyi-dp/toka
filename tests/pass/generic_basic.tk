@@ -1,4 +1,4 @@
-import std/memory::assert
+import std/debug::assert
 
 shape Box<T> (
     val: T

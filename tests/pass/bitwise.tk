@@ -1,4 +1,4 @@
-import std/memory::assert
+import std/debug::assert
 
 fn main() -> i32 {
     auto a = 12

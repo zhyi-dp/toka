@@ -6,6 +6,7 @@ Toka*.md
 *.log
 *.err
 *.txt
+*.tk-
 !CMakeLists.txt
 build/
 build-linux/

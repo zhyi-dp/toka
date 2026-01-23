@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import std/io::println
-import std/memory::assert
+import std/debug::assert
 
 fn main() -> i32 {
     auto i# = 0

@@ -7,7 +7,7 @@ shape GenericNode<T>(
 )
 
 alias AliasNode = GenericNode<i32>
-type StrongNode = GenericNode<i32> //a new type StrongNode same as GenericNode<i32> but NOT GenericNode<i32>
+type StrongNode = GenericNode<i32>
 
 fn main() -> i32 {
     auto n1# = AliasNode(val = 10)
@@ -19,10 +19,11 @@ fn main() -> i32 {
     assert(n1.val == n2.val, "Alias work")
 
     auto s1# = StrongNode(val = 30)
-    println("Strong work, s1.val: {}", s1.val)
-    assert(s1.val == 30, "Strong work")
-
-    //s1# = s2 //error: assignment type mismatch: cannot assign 'GenericNode<i32>#' to 'StrongNode#'
+    auto s2 = GenericNode<i32>(val = 40)
+    // EXCEPT: assignment type mismatch: cannot assign 'GenericNode_M_i32' to 'StrongNode#'
+    s1# = s2 
+    println("Strong work, s1.val: {}, s2.val: {}", s1.val, s2.val)
+    assert(s1.val == s2.val, "Strong work")
 
     return 0
 }

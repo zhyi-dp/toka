@@ -13,7 +13,7 @@
 // limitations under the License.
 // tests/pass/test_string_v13.tk
 import std/io::println
-import std/memory::assert
+import std/debug::assert
 import std/string::String
 
 fn main() -> i32 {

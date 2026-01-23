@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import std/io::println
-import std/memory::assert
+import std/debug::assert
 
 fn test_relay(x: i32) -> i32 {
     return for auto i in [1] {

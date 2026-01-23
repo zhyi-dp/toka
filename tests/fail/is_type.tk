@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import std/memory::assert
+import std/debug::assert
 shape Data (v: i32)
 fn main() -> i32 {
     auto ^?p = new Data(v = 42)

@@ -1,20 +1,25 @@
 
 import std/io::println
+import std/debug::assert
 
 fn check(arr: [i32; 4]) {
     println("Array: {}, {}, {}, {}", arr[0], arr[1], arr[2], arr[3]);
 }
 
 fn main() -> i32 {
-    auto zero_arr = [0; 16];
+    auto zero_arr = [111; 16];
     println("Zero Array[0]: {}", zero_arr[0]);
     println("Zero Array[15]: {}", zero_arr[15]);
+    assert(zero_arr[14] == 111, "Zero Array[14] should be 111");
+    
 
     auto x = 42;
     auto var_arr = [x; 4];
     check(var_arr);
+    assert(var_arr[1] == 42, "var_arr[1] should be 42");
 
     auto float_arr = [1.5; 2];
-    println("Float: {}", float_arr[0]);
+    println("Float: {} {}", float_arr[0], float_arr[1]);
+    assert(float_arr[0] == 1.5, "float_arr[0] should be 1.5");
     return 0
 }

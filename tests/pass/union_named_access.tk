@@ -1,5 +1,5 @@
 import std/io::println
-import std/memory::assert
+import std/debug::assert
 shape U (
     as Int: i32
     | as Float: f32

@@ -14,12 +14,19 @@
 
 import std/io::println
 import std/memory
-import core/traits
+import core/traits::{@encap}
+import std/debug::assert
 
-shape Point(x:i32, y:i32)
+shape Point(
+    x:i32, 
+    y:i32,
+    &drop_flag#: bool
+    )
 impl Point@encap {
+    pub *
     fn drop(self#) {
-        println("Dropping Point x:{} y:{}", self.x, self.y)
+        println("    Dropping Point x:{} y:{}", self.x, self.y)
+        self.drop_flag# = true
     }
 }
 
@@ -29,6 +36,7 @@ shape Resource (
     )
 
 impl Resource@encap {
+    pub *
     fn drop(self#) {
         println("Dropping Resource {}", self.id)
     }
@@ -36,23 +44,45 @@ impl Resource@encap {
 
 fn main() -> i32 {
     println("Start")
+    auto tmp_drop_flag# = false
     {
-        auto r1 = Resource(id=1,point=Point(x=1,y=2))
+        auto r1 = Resource(id=1,point=Point(x=1,y=1,&drop_flag = &tmp_drop_flag#))
         println("Inside block")
+        assert(tmp_drop_flag == false, "tmp_drop_flag should be false")
+        println("reached end of block")
     }
     println("After block")
+    assert(tmp_drop_flag == true, "tmp_drop_flag should be true")
 
-    auto ^#p1 = new Resource(id=11, point=Point(x=1,y=2))
-    auto ~s1 = new Resource(id=21, point=Point(x=1,y=2))
+    auto p1_drop_flag# = false
+    auto s1_drop_flag# = false
+    auto r2_drop_flag# = false
+    {
+        auto ^#p1 = new Resource(id=11, point=Point(x=10,y=1,&drop_flag = &p1_drop_flag#))
+        println("p1_drop_flag: {}", p1_drop_flag#)
+        assert(p1_drop_flag == false, "p1_drop_flag should be false")
 
-    //auto ^p2 = ^p1
-    println("will rebind ^#p1")
-    ^#p1 = new Resource(id=111, point=Point(x=1,y=2))
-    println("after rebind ^#p1")
+        auto ~s1 = new Resource(id=21, point=Point(x=20,y=1,&drop_flag = &s1_drop_flag#))
+        println("s1_drop_flag: {}", s1_drop_flag#)
+        assert(s1_drop_flag == false, "s1_drop_flag should be false")
 
-    auto ~s2 = ~s1
-    
-    auto r2 = Resource(id=22, point=Point(x=1,y=2))
+        //auto ^p2 = ^p1
+        println("will rebind ^#p1")
+        tmp_drop_flag# = false
+        ^#p1 = new Resource(id=31, point=Point(x=30,y=1,&drop_flag = &tmp_drop_flag#))
+        println("after rebind ^#p1")
+        assert(p1_drop_flag == true, "p1_drop_flag should be true")
+
+        auto ~s2 = ~s1
+        println("s2_drop_flag: {}", s2_drop_flag)
+        
+        auto r2 = Resource(id=41, point=Point(x=40,y=1,&drop_flag = &r2_drop_flag#))
+        println("reached end of block")
+    }
+    assert(p1_drop_flag == true, "p1_drop_flag should be true")
+    assert(s1_drop_flag == true, "s1_drop_flag should be true")
+    assert(r2_drop_flag == true, "r2_drop_flag should be true")
+    assert(tmp_drop_flag == true, "tmp_drop_flag should be true")
     println("End of main")
     return 0
 }

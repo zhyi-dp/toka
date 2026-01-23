@@ -1,7 +1,7 @@
 // lib/core/internal/abi.tk
 // Toka Runtime ABI - Generic Version
 
-import core/intrinsics/atomic
+import core/intrinsics/atomic::{fetch_add, fetch_sub, fence_acquire}
 
 // ==========================================
 // 1. 泛型结构
@@ -46,9 +46,9 @@ pub fn rc_inc<T>(*ptr: RcBox<T>) {
     unsafe {
         if *ptr == nullptr { return }
         
-        // ✅ 正确写法: atomic::fetch_add(&ptr.strong, 1) -> 这是传址
+        // ✅ 正确写法: fetch_add(&ptr.strong, 1) -> 这是传址
         // 我们需要 strong 字段的内存地址
-        atomic::fetch_add(&ptr.strong, 1, atomic::Ordering::Relaxed)
+        fetch_add(ptr.*strong#, 1, Ordering::Relaxed)
     }
 }
 
@@ -58,17 +58,17 @@ pub fn rc_dec<T>(*ptr: RcBox<T>) {
         if *ptr == nullptr { return }
 
         // ✅ 传址：获取 strong 字段 price 的地址传给 atomic
-        auto old_count = atomic::fetch_sub(&ptr.strong, 1, atomic::Ordering::Relaxed)
+        auto old_count = fetch_sub(ptr.*strong#, 1, Ordering::Relaxed)
 
         if old_count == 1 {
-            atomic::fence_acquire() // fence_acquire has no args
+            fence_acquire() // fence_acquire has no args
 
             // 1. 清理数据
             // ptr.data.drop() // 目前暂不假设 T 有 drop
 
             // 2. 处理 Weak
             // ✅ 传址：获取 weak 字段的地址
-            auto old_weak = atomic::fetch_sub(&ptr.weak, 1, atomic::Ordering::Relaxed)
+            auto old_weak = fetch_sub(ptr.*weak#, 1, Ordering::Relaxed)
             
             if old_weak == 1 {
                 // 3. 释放内存
