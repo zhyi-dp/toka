@@ -278,6 +278,17 @@ private:
   void checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
                     bool SourceIsMutable);
 
+  // Decoupled Initialization Helpers
+  std::shared_ptr<toka::Type> checkShapeInit(InitStructExpr *Init);
+  std::shared_ptr<toka::Type>
+  checkStructInit(InitStructExpr *Init, ShapeDecl *SD,
+                  const std::string &resolvedName,
+                  std::map<std::string, uint64_t> &memberMasks);
+  std::shared_ptr<toka::Type>
+  checkUnionInit(InitStructExpr *Init, ShapeDecl *SD,
+                 const std::string &resolvedName,
+                 std::map<std::string, uint64_t> &memberMasks);
+
   // Control flow helpers
   bool allPathsReturn(Stmt *S);
   bool allPathsJump(Stmt *S);

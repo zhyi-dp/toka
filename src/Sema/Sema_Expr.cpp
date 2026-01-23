@@ -1344,306 +1344,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           "method '" + Met->Method + "' not found on type '" + ObjType + "'");
     return toka::Type::fromString("unknown");
   } else if (auto *Init = dynamic_cast<InitStructExpr *>(E)) {
-    std::map<std::string, uint64_t> memberMasks;
-    // Validate fields against ShapeMap
-    std::string resolvedName = resolveType(Init->ShapeName, true);
-    if (ShapeMap.count(resolvedName)) {
-      ShapeDecl *SD = ShapeMap[resolvedName];
-
-      // Try inference from m_ExpectedType first
-      if (!SD->GenericParams.empty() && m_ExpectedType) {
-        auto expShape =
-            std::dynamic_pointer_cast<toka::ShapeType>(m_ExpectedType);
-        if (expShape && (expShape->Name == SD->Name ||
-                         expShape->Name.find(SD->Name + "_M") == 0)) {
-          resolvedName = resolveType(m_ExpectedType->toString());
-          SD = ShapeMap[resolvedName];
-        }
-      }
-
-      // [NEW] Inference from fields if still a template
-      if (!SD->GenericParams.empty() &&
-          (resolvedName == SD->Name || resolvedName == SD->Name + "<>")) {
-        auto trim = [](std::string s) {
-          size_t first = s.find_first_not_of(" \t\n\r");
-          if (first == std::string::npos)
-            return std::string("");
-          size_t last = s.find_last_not_of(" \t\n\r");
-          return s.substr(first, (last - first + 1));
-        };
-        std::map<std::string, std::string> inferred;
-        for (auto const &pair : Init->Members) {
-          std::string fieldName = Type::stripMorphology(pair.first);
-          const ShapeMember *pM = nullptr;
-          for (const auto &m : SD->Members) {
-            if (m.Name == fieldName) {
-              pM = &m;
-              break;
-            }
-          }
-          if (!pM)
-            continue;
-
-          auto valType = checkExpr(pair.second.get(), nullptr);
-          if (!valType)
-            continue;
-
-          // Simple pattern matching for inference
-          // If template field is [T; N_]
-          if (pM->Type.find("[") == 0) {
-            auto arrTy = std::dynamic_pointer_cast<toka::ArrayType>(valType);
-            if (arrTy) {
-              size_t semi = pM->Type.find(';');
-              size_t close = pM->Type.find(']');
-              if (semi != std::string::npos && close != std::string::npos) {
-                auto trim_inline = [](std::string s) {
-                  size_t first = s.find_first_not_of(" \t\n\r");
-                  if (first == std::string::npos)
-                    return std::string("");
-                  size_t last = s.find_last_not_of(" \t\n\r");
-                  return s.substr(first, (last - first + 1));
-                };
-                std::string tName = trim_inline(pM->Type.substr(1, semi - 1));
-                std::string nName =
-                    trim_inline(pM->Type.substr(semi + 1, close - semi - 1));
-
-                // Match T
-                for (const auto &gp : SD->GenericParams) {
-                  if (gp.Name == tName && !gp.IsConst)
-                    inferred[tName] = arrTy->ElementType->toString();
-                  if (gp.Name == nName && gp.IsConst)
-                    inferred[nName] = std::to_string(arrTy->Size);
-                }
-              }
-            }
-          } else {
-            // Field is just T
-            for (const auto &gp : SD->GenericParams) {
-              if (gp.Name == pM->Type && !gp.IsConst)
-                inferred[gp.Name] = valType->toString();
-            }
-          }
-        }
-
-        if (inferred.size() > 0) {
-          // Construct Name<Arg1, Arg2...>
-          std::string fullName = SD->Name + "<";
-          for (size_t i = 0; i < SD->GenericParams.size(); ++i) {
-            std::string pName = SD->GenericParams[i].Name;
-            if (inferred.count(pName))
-              fullName += inferred[pName];
-            else
-              fullName += "unknown";
-            if (i < SD->GenericParams.size() - 1)
-              fullName += ", ";
-          }
-          fullName += ">";
-          resolvedName = resolveType(fullName, true);
-          SD = ShapeMap[resolvedName];
-        }
-      }
-    }
-    Init->ShapeName = resolvedName; // Update with final mangled name
-
-    if (ShapeMap.count(resolvedName)) {
-      ShapeDecl *SD = ShapeMap[resolvedName];
-
-      // Visibility Check:
-      std::string sdFile =
-          DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc).FileName;
-      std::string initFile =
-          DiagnosticEngine::SrcMgr->getFullSourceLoc(Init->Loc).FileName;
-
-      if (!SD->IsPub && sdFile != initFile) {
-        // Relaxed privacy check: allow calls within the same module,
-        // regardless of file.
-        bool sameModule = false;
-        if (CurrentModule && !CurrentModule->Shapes.empty()) {
-          for (const auto &shapeInModule : CurrentModule->Shapes) {
-            if (DiagnosticEngine::SrcMgr->getFullSourceLoc(shapeInModule->Loc)
-                    .FileName == sdFile) {
-              if (CurrentModule) {
-                std::string modFile = DiagnosticEngine::SrcMgr
-                                          ->getFullSourceLoc(CurrentModule->Loc)
-                                          .FileName;
-                std::string fdFile =
-                    DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc)
-                        .FileName; // Should be SD->Loc, not FD->Loc
-                if (modFile == fdFile) {
-                  sameModule = true;
-                }
-              }
-              break;
-            }
-          }
-        }
-        if (!sameModule) {
-          DiagnosticEngine::report(getLoc(Init), DiagID::ERR_PRIVATE_TYPE,
-                                   Init->ShapeName, sdFile);
-          HasError = true;
-        }
-      }
-
-      // Check fields exist and types match
-      m_LastLifeDependencies.clear();
-      std::set<std::string> providedFields;
-      for (auto &pair : Init->Members) {
-        if (providedFields.count(pair.first)) {
-          DiagnosticEngine::report(getLoc(Init), DiagID::ERR_DUPLICATE_FIELD,
-                                   pair.first);
-          HasError = true;
-        }
-        providedFields.insert(pair.first);
-
-        bool fieldFound = false;
-        const ShapeMember *pDefMember = nullptr;
-        for (const auto &defField : SD->Members) {
-          auto cleanDef = defField.Name;
-          while (!cleanDef.empty() &&
-                 (cleanDef.back() == '#' || cleanDef.back() == '!' ||
-                  cleanDef.back() == '?'))
-            cleanDef.pop_back();
-
-          auto cleanProv = pair.first;
-          while (!cleanProv.empty() &&
-                 (cleanProv.back() == '#' || cleanProv.back() == '!' ||
-                  cleanProv.back() == '?'))
-            cleanProv.pop_back();
-
-          if (cleanDef == cleanProv ||
-              toka::Type::stripMorphology(cleanDef) ==
-                  toka::Type::stripMorphology(cleanProv)) {
-            fieldFound = true;
-            pDefMember = &defField;
-            break;
-          }
-        }
-
-        if (!fieldFound) {
-          DiagnosticEngine::report(getLoc(Init), DiagID::ERR_NO_SUCH_MEMBER,
-                                   resolvedName, pair.first);
-          HasError = true;
-          continue; // Continue to find more errors
-        }
-
-        // [MOD] Pass expected type for inference
-        auto memberTypeObj = pDefMember->ResolvedType;
-        if (!memberTypeObj)
-          memberTypeObj = toka::Type::fromString(pDefMember->Type);
-
-        std::shared_ptr<toka::Type> exprTypeObj =
-            checkExpr(pair.second.get(), memberTypeObj);
-        memberMasks[pair.first] = m_LastInitMask;
-
-        // [FIX] Add implicit cast for field initialization (e.g. i32 literal to
-        // u64 field)
-        if (isTypeCompatible(memberTypeObj, exprTypeObj) &&
-            !memberTypeObj->equals(*exprTypeObj)) {
-          auto origLoc = pair.second->Loc;
-          pair.second = std::make_unique<CastExpr>(std::move(pair.second),
-                                                   memberTypeObj->toString());
-          pair.second->Loc = origLoc; // [FIX] 显式传递位置信息
-          pair.second->ResolvedType = memberTypeObj;
-          exprTypeObj = memberTypeObj;
-        }
-
-        std::string exprType = exprTypeObj->toString();
-
-        if (!isTypeCompatible(memberTypeObj, exprTypeObj)) {
-          DiagnosticEngine::report(getLoc(Init),
-                                   DiagID::ERR_MEMBER_TYPE_MISMATCH, pair.first,
-                                   memberTypeObj->toString(), exprType);
-          HasError = true;
-        }
-
-        // [NEW] Lifetime dependency tracking
-        std::string cleanName = toka::Type::stripMorphology(pDefMember->Name);
-        for (const auto &dep : SD->LifeDependencies) {
-          if (dep == cleanName) {
-            if (!m_LastBorrowSource.empty()) {
-              m_LastLifeDependencies.insert(m_LastBorrowSource);
-            }
-          }
-        }
-      }
-
-      // Check for missing fields
-      if (SD->Kind == ShapeKind::Struct || SD->Kind == ShapeKind::Tuple) {
-        for (const auto &defField : SD->Members) {
-          // If field is NOT in providedFields
-          if (!providedFields.count(defField.Name) &&
-              !providedFields.count("^" + defField.Name) &&
-              !providedFields.count("*" + defField.Name) &&
-              !providedFields.count("~" + defField.Name) &&
-              !providedFields.count("&" + defField.Name) &&
-              !providedFields.count("^?" + defField.Name)) {
-            DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
-                                     defField.Name, Init->ShapeName);
-            HasError = true;
-          }
-        }
-      } else if (SD->Kind == ShapeKind::Union || SD->Kind == ShapeKind::Enum) {
-        if (providedFields.empty()) {
-          DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
-                                   "at least one variant", Init->ShapeName);
-          HasError = true;
-        }
-      }
-    } else {
-      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_UNKNOWN_STRUCT,
-                               Init->ShapeName);
-      HasError = true;
-    }
-
-    // Mask Calculation for Struct
-    std::string resolvedInitName =
-        resolvedName; // Use the already resolved (and
-                      // potentially inferred) name
-    if (ShapeMap.count(resolvedInitName)) {
-      ShapeDecl *SD = ShapeMap[resolvedInitName];
-      uint64_t mask = 0;
-      for (int i = 0; i < (int)SD->Members.size(); ++i) {
-        std::string memName = SD->Members[i].Name;
-        bool found = false;
-        for (const auto &pair : Init->Members) {
-          // [FIX] Use stripMorphology for comparison to handle '&' prefix
-          if (toka::Type::stripMorphology(pair.first) ==
-              toka::Type::stripMorphology(memName)) {
-            // Use the mask calculated in the first pass
-            m_LastInitMask = memberMasks[pair.first];
-
-            std::shared_ptr<Type> memTypeObj =
-                toka::Type::fromString(SD->Members[i].Type);
-            uint64_t expected = 1;
-            if (memTypeObj->isShape()) {
-              std::string sName = memTypeObj->getSoulName();
-              if (ShapeMap.count(sName)) {
-                size_t sz = ShapeMap[sName]->Members.size();
-                if (sz >= 64)
-                  expected = ~0ULL;
-                else
-                  expected = (1ULL << sz) - 1;
-              }
-            }
-
-            if ((m_LastInitMask & expected) == expected) {
-              if (i < 64)
-                mask |= (1ULL << i);
-            }
-            found = true;
-            break;
-          }
-        }
-      }
-      if (SD->Kind == ShapeKind::Union || SD->Kind == ShapeKind::Enum) {
-        if (mask != 0)
-          mask = ~0ULL;
-      }
-      m_LastInitMask = mask;
-    } else {
-      m_LastInitMask = 1;
-    }
-    return toka::Type::fromString(resolvedInitName);
+    return checkShapeInit(Init);
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
     std::string path = getStringifyPath(Memb);
     bool isNarrowed = m_NarrowedPaths.count(path);
@@ -3953,6 +3654,334 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
     break;
   }
   }
+}
+std::shared_ptr<toka::Type> Sema::checkShapeInit(InitStructExpr *Init) {
+  std::map<std::string, uint64_t> memberMasks;
+  std::string resolvedName = resolveType(Init->ShapeName, true);
+
+  if (!ShapeMap.count(resolvedName)) {
+    // Initial lookup failed, or it's a template that needs inference
+    // [Actually, the original logic does lookup first, then inference if it's a
+    // template]
+  }
+
+  // Helper lambda for inference (copied from original)
+  auto performInference = [&](std::string &currentName, ShapeDecl *&SD) {
+    if (!SD)
+      return;
+    // Try inference from m_ExpectedType first
+    if (!SD->GenericParams.empty() && m_ExpectedType) {
+      auto expShape =
+          std::dynamic_pointer_cast<toka::ShapeType>(m_ExpectedType);
+      if (expShape && (expShape->Name == SD->Name ||
+                       expShape->Name.find(SD->Name + "_M") == 0)) {
+        currentName = resolveType(m_ExpectedType->toString());
+        SD = ShapeMap[currentName];
+      }
+    }
+
+    // Inference from fields if still a template
+    if (SD && !SD->GenericParams.empty() &&
+        (currentName == SD->Name || currentName == SD->Name + "<>")) {
+      std::map<std::string, std::string> inferred;
+      for (auto const &pair : Init->Members) {
+        std::string fieldName = Type::stripMorphology(pair.first);
+        const ShapeMember *pM = nullptr;
+        for (const auto &m : SD->Members) {
+          if (m.Name == fieldName) {
+            pM = &m;
+            break;
+          }
+        }
+        if (!pM)
+          continue;
+
+        auto valType = checkExpr(pair.second.get(), nullptr);
+        if (!valType)
+          continue;
+
+        if (pM->Type.find("[") == 0) {
+          auto arrTy = std::dynamic_pointer_cast<toka::ArrayType>(valType);
+          if (arrTy) {
+            size_t semi = pM->Type.find(';');
+            size_t close = pM->Type.find(']');
+            if (semi != std::string::npos && close != std::string::npos) {
+              auto trim_inline = [](std::string s) {
+                size_t first = s.find_first_not_of(" \t\n\r");
+                if (first == std::string::npos)
+                  return std::string("");
+                size_t last = s.find_last_not_of(" \t\n\r");
+                return s.substr(first, (last - first + 1));
+              };
+              std::string tName = trim_inline(pM->Type.substr(1, semi - 1));
+              std::string nName =
+                  trim_inline(pM->Type.substr(semi + 1, close - semi - 1));
+
+              for (const auto &gp : SD->GenericParams) {
+                if (gp.Name == tName && !gp.IsConst)
+                  inferred[tName] = arrTy->ElementType->toString();
+                if (gp.Name == nName && gp.IsConst)
+                  inferred[nName] = std::to_string(arrTy->Size);
+              }
+            }
+          }
+        } else {
+          for (const auto &gp : SD->GenericParams) {
+            if (gp.Name == pM->Type && !gp.IsConst)
+              inferred[gp.Name] = valType->toString();
+          }
+        }
+      }
+
+      if (inferred.size() > 0) {
+        std::string fullName = SD->Name + "<";
+        for (size_t i = 0; i < SD->GenericParams.size(); ++i) {
+          std::string pName = SD->GenericParams[i].Name;
+          if (inferred.count(pName))
+            fullName += inferred[pName];
+          else
+            fullName += "unknown";
+          if (i < SD->GenericParams.size() - 1)
+            fullName += ", ";
+        }
+        fullName += ">";
+        currentName = resolveType(fullName, true);
+        SD = ShapeMap[currentName];
+      }
+    }
+  };
+
+  if (ShapeMap.count(resolvedName)) {
+    ShapeDecl *SD = ShapeMap[resolvedName];
+    performInference(resolvedName, SD);
+    Init->ShapeName = resolvedName;
+
+    // Visibility Check
+    std::string sdFile =
+        DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc).FileName;
+    std::string initFile =
+        DiagnosticEngine::SrcMgr->getFullSourceLoc(Init->Loc).FileName;
+
+    if (!SD->IsPub && sdFile != initFile) {
+      bool sameModule = false;
+      if (CurrentModule && !CurrentModule->Shapes.empty()) {
+        for (const auto &shapeInModule : CurrentModule->Shapes) {
+          if (DiagnosticEngine::SrcMgr->getFullSourceLoc(shapeInModule->Loc)
+                  .FileName == sdFile) {
+            if (CurrentModule) {
+              std::string modFile =
+                  DiagnosticEngine::SrcMgr->getFullSourceLoc(CurrentModule->Loc)
+                      .FileName;
+              if (modFile == sdFile) { // Simplified same-file/module check
+                sameModule = true;
+              }
+            }
+            break;
+          }
+        }
+      }
+      if (!sameModule) {
+        DiagnosticEngine::report(getLoc(Init), DiagID::ERR_PRIVATE_TYPE,
+                                 Init->ShapeName, sdFile);
+        HasError = true;
+      }
+    }
+
+    if (SD->Kind == ShapeKind::Union || SD->Kind == ShapeKind::Enum) {
+      return checkUnionInit(Init, SD, resolvedName, memberMasks);
+    } else {
+      return checkStructInit(Init, SD, resolvedName, memberMasks);
+    }
+  }
+
+  DiagnosticEngine::report(getLoc(Init), DiagID::ERR_UNKNOWN_STRUCT,
+                           Init->ShapeName);
+  HasError = true;
+  return toka::Type::fromString("unknown");
+}
+
+std::shared_ptr<toka::Type>
+Sema::checkStructInit(InitStructExpr *Init, ShapeDecl *SD,
+                      const std::string &resolvedName,
+                      std::map<std::string, uint64_t> &memberMasks) {
+  m_LastLifeDependencies.clear();
+  std::set<std::string> providedFields;
+
+  for (auto &pair : Init->Members) {
+    if (providedFields.count(pair.first)) {
+      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_DUPLICATE_FIELD,
+                               pair.first);
+      HasError = true;
+    }
+    providedFields.insert(pair.first);
+
+    bool fieldFound = false;
+    const ShapeMember *pDefMember = nullptr;
+    for (const auto &defField : SD->Members) {
+      auto cleanDef = defField.Name;
+      while (!cleanDef.empty() &&
+             (cleanDef.back() == '#' || cleanDef.back() == '!' ||
+              cleanDef.back() == '?'))
+        cleanDef.pop_back();
+
+      auto cleanProv = pair.first;
+      while (!cleanProv.empty() &&
+             (cleanProv.back() == '#' || cleanProv.back() == '!' ||
+              cleanProv.back() == '?'))
+        cleanProv.pop_back();
+
+      if (cleanDef == cleanProv || toka::Type::stripMorphology(cleanDef) ==
+                                       toka::Type::stripMorphology(cleanProv)) {
+        fieldFound = true;
+        pDefMember = &defField;
+        break;
+      }
+    }
+
+    if (!fieldFound) {
+      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_NO_SUCH_MEMBER,
+                               resolvedName, pair.first);
+      HasError = true;
+      continue;
+    }
+
+    auto memberTypeObj = pDefMember->ResolvedType;
+    if (!memberTypeObj)
+      memberTypeObj = toka::Type::fromString(pDefMember->Type);
+
+    std::shared_ptr<toka::Type> exprTypeObj =
+        checkExpr(pair.second.get(), memberTypeObj);
+    memberMasks[pair.first] = m_LastInitMask;
+
+    if (isTypeCompatible(memberTypeObj, exprTypeObj) &&
+        !memberTypeObj->equals(*exprTypeObj)) {
+      auto origLoc = pair.second->Loc;
+      pair.second = std::make_unique<CastExpr>(std::move(pair.second),
+                                               memberTypeObj->toString());
+      pair.second->Loc = origLoc;
+      pair.second->ResolvedType = memberTypeObj;
+      exprTypeObj = memberTypeObj;
+    }
+
+    if (!isTypeCompatible(memberTypeObj, exprTypeObj)) {
+      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MEMBER_TYPE_MISMATCH,
+                               pair.first, memberTypeObj->toString(),
+                               exprTypeObj->toString());
+      HasError = true;
+    }
+
+    // Lifetime dependency tracking
+    std::string cleanName = toka::Type::stripMorphology(pDefMember->Name);
+    for (const auto &dep : SD->LifeDependencies) {
+      if (dep == cleanName) {
+        if (!m_LastBorrowSource.empty()) {
+          m_LastLifeDependencies.insert(m_LastBorrowSource);
+        }
+      }
+    }
+  }
+
+  // Missing fields check for Struct/Tuple
+  for (const auto &defField : SD->Members) {
+    if (!providedFields.count(defField.Name) &&
+        !providedFields.count("^" + defField.Name) &&
+        !providedFields.count("*" + defField.Name) &&
+        !providedFields.count("~" + defField.Name) &&
+        !providedFields.count("&" + defField.Name) &&
+        !providedFields.count("^?" + defField.Name)) {
+      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
+                               defField.Name, Init->ShapeName);
+      HasError = true;
+    }
+  }
+
+  // Mask Calculation
+  uint64_t mask = 0;
+  for (int i = 0; i < (int)SD->Members.size(); ++i) {
+    std::string memName = SD->Members[i].Name;
+    for (const auto &pair : Init->Members) {
+      if (toka::Type::stripMorphology(pair.first) ==
+          toka::Type::stripMorphology(memName)) {
+        m_LastInitMask = memberMasks[pair.first];
+        std::shared_ptr<Type> memTypeObj =
+            toka::Type::fromString(SD->Members[i].Type);
+        uint64_t expected = 1;
+        if (memTypeObj->isShape()) {
+          std::string sName = memTypeObj->getSoulName();
+          if (ShapeMap.count(sName)) {
+            size_t sz = ShapeMap[sName]->Members.size();
+            expected = (sz >= 64) ? ~0ULL : (1ULL << sz) - 1;
+          }
+        }
+        if ((m_LastInitMask & expected) == expected) {
+          if (i < 64)
+            mask |= (1ULL << i);
+        }
+        break;
+      }
+    }
+  }
+  m_LastInitMask = mask;
+
+  return toka::Type::fromString(resolvedName);
+}
+
+std::shared_ptr<toka::Type>
+Sema::checkUnionInit(InitStructExpr *Init, ShapeDecl *SD,
+                     const std::string &resolvedName,
+                     std::map<std::string, uint64_t> &memberMasks) {
+  if (Init->Members.empty()) {
+    DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
+                             "at least one variant", Init->ShapeName);
+    HasError = true;
+    m_LastInitMask = 0;
+    return toka::Type::fromString(resolvedName);
+  }
+
+  if (Init->Members.size() > 1) {
+    // [NEW] Union specific check: only one member allowed
+    DiagnosticEngine::report(getLoc(Init), DiagID::ERR_GENERIC_PARSE,
+                             "Union '{}' initialization must specify exactly "
+                             "one variant, but {} were provided.",
+                             Init->ShapeName, Init->Members.size());
+    HasError = true;
+  }
+
+  auto &pair = Init->Members[0];
+  bool fieldFound = false;
+  const ShapeMember *pDefMember = nullptr;
+  for (const auto &defField : SD->Members) {
+    if (toka::Type::stripMorphology(defField.Name) ==
+        toka::Type::stripMorphology(pair.first)) {
+      fieldFound = true;
+      pDefMember = &defField;
+      break;
+    }
+  }
+
+  if (!fieldFound) {
+    DiagnosticEngine::report(getLoc(Init), DiagID::ERR_NO_SUCH_MEMBER,
+                             resolvedName, pair.first);
+    HasError = true;
+  } else {
+    auto memberTypeObj = pDefMember->ResolvedType;
+    if (!memberTypeObj)
+      memberTypeObj = toka::Type::fromString(pDefMember->Type);
+
+    std::shared_ptr<toka::Type> exprTypeObj =
+        checkExpr(pair.second.get(), memberTypeObj);
+    m_LastInitMask = ~0ULL; // Union is fully initialized if one field is set
+
+    if (!isTypeCompatible(memberTypeObj, exprTypeObj)) {
+      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MEMBER_TYPE_MISMATCH,
+                               pair.first, memberTypeObj->toString(),
+                               exprTypeObj->toString());
+      HasError = true;
+    }
+  }
+
+  m_LastInitMask = ~0ULL;
+  return toka::Type::fromString(resolvedName);
 }
 
 } // namespace toka

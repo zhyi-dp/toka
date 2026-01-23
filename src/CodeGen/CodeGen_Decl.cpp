@@ -1311,6 +1311,12 @@ void CodeGen::genShape(const ShapeDecl *sh) {
                                           maxPayloadSize));
     }
     st->setBody(body, sh->IsPacked);
+
+    std::vector<std::string> fieldNames;
+    for (const auto &member : sh->Members) {
+      fieldNames.push_back(member.Name);
+    }
+    m_StructFieldNames[sh->Name] = fieldNames;
   }
 }
 

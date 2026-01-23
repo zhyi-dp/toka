@@ -2868,11 +2868,29 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
       return nullptr;
 
     llvm::Value *fieldAddr = nullptr;
-    if (m_Shapes.count(shapeName) &&
-        m_Shapes[shapeName]->Kind == ShapeKind::Union) {
-      // Union: bitcast base to member pointer type
-      fieldAddr = m_Builder.CreateBitCast(
-          alloca, llvm::PointerType::getUnqual(fieldVal->getType()));
+    if (m_Shapes.count(shapeName)) {
+      auto kind = m_Shapes[shapeName]->Kind;
+      if (kind == ShapeKind::Union) {
+        // Bare Union: bitcast base to member pointer type
+        fieldAddr = m_Builder.CreateBitCast(
+            alloca, llvm::PointerType::getUnqual(fieldVal->getType()));
+      } else if (kind == ShapeKind::Enum) {
+        // Tagged Union: Store tag and payload
+        // 1. Tag
+        llvm::Value *tagAddr =
+            m_Builder.CreateStructGEP(st, alloca, 0, "tag_addr");
+        m_Builder.CreateStore(m_Builder.getInt8(idx), tagAddr);
+        // 2. Payload
+        if (st->getNumElements() > 1) {
+          llvm::Value *payloadAddr =
+              m_Builder.CreateStructGEP(st, alloca, 1, "payload_addr");
+          fieldAddr = m_Builder.CreateBitCast(
+              payloadAddr, llvm::PointerType::getUnqual(fieldVal->getType()));
+        }
+      } else {
+        fieldAddr =
+            m_Builder.CreateStructGEP(st, alloca, idx, "field_" + f.first);
+      }
     } else {
       fieldAddr =
           m_Builder.CreateStructGEP(st, alloca, idx, "field_" + f.first);
