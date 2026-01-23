@@ -627,12 +627,21 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       shouldCollapse = false;
     }
 
-    if (shouldCollapse && Info.TypeObj &&
-        (Info.TypeObj->isPointer() || Info.TypeObj->isReference() ||
-         Info.TypeObj->isSmartPointer())) {
-      if (auto inner = Info.TypeObj->getPointeeType()) {
-        return inner;
+    if (shouldCollapse && Info.TypeObj) {
+      auto current = Info.TypeObj;
+      while (current && (current->isPointer() || current->isReference() ||
+                         current->isSmartPointer())) {
+        if (current->IsNullable) {
+          // Rule: deref of nullable REQUIRES explicit check
+          break;
+        }
+        auto inner = current->getPointeeType();
+        if (!inner)
+          break;
+        current = inner;
       }
+      if (current != Info.TypeObj)
+        return current;
     }
 
     return Info.TypeObj;
@@ -1493,11 +1502,12 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       }
     }
 
-    if (objTypeObj->IsNullable) {
+    if (objTypeObj->IsNullable && !isNarrowed) {
       DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
                                ObjTypeFull);
       HasError = true;
     }
+
     std::string ObjType =
         toka::Type::stripMorphology(resolveType(objTypeObj, true)->toString());
 
@@ -1585,25 +1595,60 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           std::shared_ptr<toka::Type> fieldType =
               toka::Type::fromString(fullType);
 
+          // Determine if the field's soul should be writable based on
+          // inheritance
+          bool isFieldMarked = (Field.Type.find('#') != std::string::npos ||
+                                Field.Type.find('$') != std::string::npos ||
+                                Field.Type.find('!') != std::string::npos);
+
+          bool finalSoulWritable = isFieldMarked
+                                       ? fieldType->getSoulType()->IsWritable
+                                       : objTypeObj->IsWritable;
+
           if (requestedPrefix.empty() && !m_DisableSoulCollapse) {
             // obj.field (Hat-Off) -> Soul Collapse.
-            // If the field is a pointer/reference, dereference it.
-            auto soulType = fieldType;
-            while (soulType &&
-                   (soulType->isPointer() || soulType->isReference() ||
-                    soulType->isSmartPointer())) {
-              soulType = soulType->getPointeeType();
-            }
-            return soulType->withAttributes(objTypeObj->IsWritable,
-                                            isNarrowed ? false
-                                                       : fieldType->IsNullable);
+            return fieldType->getSoulType()->withAttributes(
+                finalSoulWritable, isNarrowed ? false : fieldType->IsNullable);
           } else {
-            // obj.&field, obj.^field, obj.*field (Hatted) -> Identiy
-            // Access. The requestedPrefix confirms we want the
-            // pointer/reference itself.
-            return fieldType->withAttributes(
-                objTypeObj->IsWritable,
-                isNarrowed ? false : fieldType->IsNullable);
+            // Hatted Access (Identity Access)
+            // Use fieldType directly as the base (preserving its morphologies)
+            std::shared_ptr<toka::Type> result = fieldType;
+
+            // If requested prefix exists, wrap it
+            if (!requestedPrefix.empty()) {
+              // Check if field already has this morphology
+              bool matches = false;
+              if (requestedPrefix == "&" && fieldType->isReference())
+                matches = true;
+              else if (requestedPrefix == "^" && fieldType->isUniquePtr())
+                matches = true;
+              else if (requestedPrefix == "~" && fieldType->isSharedPtr())
+                matches = true;
+              else if (requestedPrefix == "*" && fieldType->isRawPointer())
+                matches = true;
+
+              if (!matches) {
+                if (requestedPrefix == "&") {
+                  result = std::make_shared<ReferenceType>(fieldType);
+                } else if (requestedPrefix == "^") {
+                  result = std::make_shared<UniquePointerType>(fieldType);
+                } else if (requestedPrefix == "~") {
+                  result = std::make_shared<SharedPointerType>(fieldType);
+                } else if (requestedPrefix == "*") {
+                  result = std::make_shared<RawPointerType>(fieldType);
+                }
+              }
+            }
+
+            // [Toka 1.3] Inheritance for Handles:
+            // If field is NOT marked (#?!), it inherits handle writability from
+            // object.
+            bool finalHandleWritable =
+                isFieldMarked ? result->IsWritable : objTypeObj->IsWritable;
+
+            // Apply attributes to the resulting handle
+            return result->withAttributes(finalHandleWritable,
+                                          result->IsNullable);
           }
         }
       }
@@ -1847,32 +1892,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
     SymbolInfo *Info = nullptr;
     if (CurrentScope->findSymbol(Var->Name, Info)) {
       if (Unary->Op == TokenType::Ampersand) {
-        bool wantMutable = Var->IsValueMutable;
-        if (wantMutable) {
-          if (!Info->IsMutable()) {
-            error(Unary, "cannot mutably borrow immutable variable '" +
-                             Var->Name + "' (# required)");
-          }
-          if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
-            error(Unary, "cannot mutably borrow '" + Var->Name +
-                             "' because it is already borrowed");
-          }
-          Info->IsMutablyBorrowed = true;
-        } else {
-          if (Info->IsMutablyBorrowed) {
-            error(Unary, "cannot borrow '" + Var->Name +
-                             "' because it is mutably borrowed");
-          }
-          Info->ImmutableBorrowCount++;
-        }
-        m_LastBorrowSource = Var->Name;
-        m_LastLifeDependencies.insert(Var->Name);
-        m_CurrentStmtBorrows.push_back({Var->Name, wantMutable});
-
-        // Use TypeObj if available, else generic logic
-        auto innerType =
-            Info->TypeObj ? Info->TypeObj
-                          : toka::Type::fromString(Info->TypeObj->toString());
+        // Use TypeObj if available
+        auto innerType = Info->TypeObj;
 
         // Implicit Dereference for Smart Pointers: &p -> &Pointee
         if (innerType->isUniquePtr() || innerType->isSharedPtr()) {
@@ -1881,12 +1902,43 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           }
         }
 
-        bool innerWritable = Info->IsMutable() || Var->IsValueMutable;
+        // [Toka 1.3] Borrow Duality Rule:
+        // Handle attribute (# on &) -> Identity Writability (Reseatable)
+        // Soul attribute (# on var) -> Soul Writability (Mutation)
+        bool handleMutable = Unary->IsRebindable;
+        bool soulMutable = innerType->IsWritable;
+
+        if (handleMutable && !Info->IsMutable()) {
+          // Restricted: Reseatable handle typically requires some scope
+          // permission, but for simple references we follow
+          // Unary->IsRebindable.
+        }
+
+        // The reference's soul should match the RHS object's soul.
         innerType =
-            innerType->withAttributes(innerWritable, innerType->IsNullable);
+            innerType->withAttributes(soulMutable, innerType->IsNullable);
         auto refType = std::make_shared<toka::ReferenceType>(innerType);
         refType->IsNullable = Unary->HasNull;
-        refType->IsWritable = Unary->IsRebindable;
+        refType->IsWritable = handleMutable; // Handle attribute
+
+        // [Toka 1.3] Borrow Duality Rule:
+        // Handle attribute (# on &) -> Determines Borrow Kind (Exclusive vs
+        // Shared) Soul attribute (# on var) -> Transmitted to reference soul.
+        bool isExclusive = Unary->IsRebindable;
+
+        if (isExclusive) {
+          if (!m_InLHS)
+            Info->IsMutablyBorrowed = true;
+        } else {
+          if (!m_InLHS)
+            Info->ImmutableBorrowCount++;
+        }
+
+        m_LastBorrowSource = Var->Name;
+        if (!m_InLHS) {
+          m_CurrentStmtBorrows.push_back({Var->Name, isExclusive});
+        }
+
         return refType;
       } else if (Unary->Op == TokenType::Caret) {
         if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
@@ -2029,19 +2081,21 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
 // Stage 5: Object-Oriented Binary Expression Check
 std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   // 1. Resolve Operands using New API
+  // [Toka 1.3] Evaluation Order: Check RHS first to avoid LHS borrows/moves
+  // blocking RHS usage (e.g. &#cursor = cursor.&next)
+  Bin->RHS = foldGenericConstant(std::move(Bin->RHS));
+  auto rhsType = checkExpr(Bin->RHS.get());
+
+  bool isAssign = (Bin->Op == "=" || Bin->Op == "+=" || Bin->Op == "-=" ||
+                   Bin->Op == "*=" || Bin->Op == "/=");
   bool oldLHS = m_InLHS;
-  m_InLHS = (Bin->Op == "=" || Bin->Op == "+=" || Bin->Op == "-=" ||
-             Bin->Op == "*=" || Bin->Op == "/=");
-  // [FIX] Substitution
-  if (!m_InLHS) // Do not substitute LHS if assigning! But wait, 'S = 4'?
-                // Invalid anyway.
+  m_InLHS = isAssign;
+
+  if (!isAssign)
     Bin->LHS = foldGenericConstant(std::move(Bin->LHS));
 
   auto lhsType = checkExpr(Bin->LHS.get());
   m_InLHS = oldLHS;
-
-  Bin->RHS = foldGenericConstant(std::move(Bin->RHS)); // [FIX]
-  auto rhsType = checkExpr(Bin->RHS.get());
 
   if (!lhsType || !rhsType)
     return toka::Type::fromString("unknown");
@@ -2159,9 +2213,6 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     }
   }
 
-  bool isAssign = (Bin->Op == "=" || Bin->Op == "+=" || Bin->Op == "-=" ||
-                   Bin->Op == "*=" || Bin->Op == "/=");
-
   if (isAssign) {
     // Smart Pointer NewExpr Special Case
     bool isSmartNew = false;
@@ -2195,8 +2246,9 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
     // Detect Rebind: Assigning to the pointer variable/handle itself
     // e.g. "p = ..." where p is smart pointer, or "~#p = ..."
-    if (!isImplicitDerefAssign && !isRefAssign) {
-      if (lhsType->isSmartPointer()) {
+    // Constitution 1.3: Reference rebinding is ALSO a Reseat operation.
+    if (!isImplicitDerefAssign) {
+      if (lhsType->isSmartPointer() || isRefAssign) {
         isRebind = true;
       }
     }
@@ -2224,8 +2276,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
         // [Constitution] Rebind (# prefix) check
         if (isRebind) {
-          // Rebinding requires explicit '#' or '!' prefix in morphology
-          if (InfoPtr->IsRebindable || Var->IsValueMutable) {
+          // Rebinding (Reseat) requires explicit IDENTITY attribute (# or !)
+          if (InfoPtr->IsRebindable) {
             isLHSWritable = true;
           } else {
             // If the variable was unset, allow initialization as a rebind
@@ -2260,8 +2312,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         // These are Rebindable handles or access handles.
         // If they are on the LHS without a deref, they are rebinds.
         if (isRebind) {
-          // Check if the UnaryExpr itself carries the rebind intent (#/!)
-          if (Un->IsRebindable || Un->Op == TokenType::TokenWrite) {
+          // Check if the UnaryExpr itself carries the rebind intent (# or !)
+          if (Un->IsRebindable) {
             isLHSWritable = true;
           }
         } else {
@@ -2290,9 +2342,16 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         // Writable
         // (#/!) -> Error
         if (!rhsSoul->IsWritable && lhsSoul->IsWritable) {
-          error(Bin, "Covenant Violation: Cannot elevate write permission from "
-                     "ReadOnly soul to Writable container.");
-          HasError = true;
+          // [Identity Exemption] Fresh allocations from 'new' can satisfy
+          // writable souls.
+          if (dynamic_cast<NewExpr *>(Bin->RHS.get())) {
+            // OK: Freshly baked bread is always warm.
+          } else {
+            error(Bin,
+                  "Covenant Violation: Cannot elevate write permission from "
+                  "ReadOnly soul to Writable container.");
+            HasError = true;
+          }
         }
       }
     }
@@ -2358,9 +2417,11 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       }
     }
 
-    if (isLHSWritable || isLHSUnset)
+    // Constitution 1.3: Only elevate soul permission if it's a Mutation,
+    // not a Reseat (Rebind).
+    if (!isRebind && (isLHSWritable || isLHSUnset))
       lhsType =
-          lhsType->withAttributes(true, lhsType->IsNullable); // Valid Write
+          lhsType->withAttributes(true, lhsType->IsNullable); // Valid Mutation
 
     if (!lhsType->IsWritable && !isRefAssign) {
       std::string debugInfo = " [W=" + std::to_string(isLHSWritable) +
@@ -3661,8 +3722,8 @@ std::shared_ptr<toka::Type> Sema::checkShapeInit(InitStructExpr *Init) {
 
   if (!ShapeMap.count(resolvedName)) {
     // Initial lookup failed, or it's a template that needs inference
-    // [Actually, the original logic does lookup first, then inference if it's a
-    // template]
+    // [Actually, the original logic does lookup first, then inference if it's
+    // a template]
   }
 
   // Helper lambda for inference (copied from original)

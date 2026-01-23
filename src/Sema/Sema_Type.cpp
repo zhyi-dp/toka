@@ -578,6 +578,32 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
     }
   }
 
+  // 0. [Toka 1.3] Morphology-Based Permission Decay & Nullability Covariance
+  // "ReadOnly Target is compatible with Writable Source of same morphology."
+  // "Nullable Target is compatible with Non-Nullable Source of same
+  // morphology."
+  bool bothPointers = Target->isPointer() && Source->isPointer();
+  if (bothPointers) {
+    auto targetPtr = std::dynamic_pointer_cast<toka::PointerType>(Target);
+    auto sourcePtr = std::dynamic_pointer_cast<toka::PointerType>(Source);
+
+    // Rule 1: Morphologies MUST match exactly in Toka 1.3
+    if (targetPtr->toString()[0] == sourcePtr->toString()[0]) {
+      // Rule 2: Pointee Types must be compatible
+      if (isTypeCompatible(targetPtr->getPointeeType(),
+                           sourcePtr->getPointeeType())) {
+        // Rule 3: Permission Decay (Source Writable -> Target ReadOnly)
+        bool permissionMatch =
+            (sourcePtr->IsWritable || !targetPtr->IsWritable);
+        bool nullabilityMatch =
+            (targetPtr->IsNullable || !sourcePtr->IsNullable);
+
+        if (permissionMatch && nullabilityMatch)
+          return true;
+      }
+    }
+  }
+
   // 1. Array to Pointer Decay (e.g. [10]i32 -> *i32)
   if (auto ptrT = std::dynamic_pointer_cast<toka::PointerType>(T)) {
     if (auto arrS = std::dynamic_pointer_cast<toka::ArrayType>(S)) {

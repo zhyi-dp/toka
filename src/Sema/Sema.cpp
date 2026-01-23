@@ -81,10 +81,11 @@ void Sema::exitScope() {
     SymbolInfo *sourcePtr = nullptr;
     if (CurrentScope->Parent &&
         CurrentScope->Parent->findSymbol(sourceName, sourcePtr)) {
-      if (isMutable)
+      if (isMutable) {
         sourcePtr->IsMutablyBorrowed = false;
-      else
+      } else {
         sourcePtr->ImmutableBorrowCount--;
+      }
     }
   }
   CurrentScope = CurrentScope->Parent;
@@ -494,34 +495,31 @@ void Sema::checkFunction(FunctionDecl *Fn) {
   // Register arguments
   for (auto &Arg : Fn->Args) {
     SymbolInfo Info;
-    // Construct Full Type String for Type Object
     std::string fullType = "";
-    if (Arg.IsReference)
-      fullType += "&";
-    else if (Arg.IsUnique)
+    // 1. Morphology Sigil (Constitutional 1.3 - Leading)
+    if (Arg.IsUnique)
       fullType += "^";
     else if (Arg.IsShared)
       fullType += "~";
+    else if (Arg.IsReference)
+      fullType += "&";
     else if (Arg.HasPointer)
       fullType += "*";
 
-    std::string baseType = Arg.Type;
-    // Strip redundant sigil if present in baseType and implied by flags
-    if (baseType.size() > 1) {
-      char c = baseType[0];
-      if ((Arg.IsReference && c == '&') || (Arg.IsUnique && c == '^') ||
-          (Arg.IsShared && c == '~') || (Arg.HasPointer && c == '*')) {
-        baseType = baseType.substr(1);
-      }
-    }
-
-    fullType += baseType;
+    // 2. Identity Attributes (Prefix Zone)
+    if (Arg.IsPointerNullable)
+      fullType += "?";
     if (Arg.IsRebindable)
-      fullType += "!";
+      fullType += "#";
+
+    std::string baseType = toka::Type::stripMorphology(Arg.Type);
+    fullType += baseType;
+
+    // 3. Soul Attributes (Suffix Zone)
+    if (Arg.IsValueNullable)
+      fullType += "?";
     if (Arg.IsValueMutable)
       fullType += "#";
-    if (Arg.IsPointerNullable || Arg.IsValueNullable)
-      fullType += "?";
 
     // [New] Annotated AST: Use resolveType (string version) to handle
     // aliases/Self, then parse

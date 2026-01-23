@@ -63,6 +63,16 @@ struct SymbolInfo {
     return TypeObj && TypeObj->typeKind == toka::Type::SharedPtr;
   }
 
+  bool IsSoulMutable() const {
+    if (!TypeObj)
+      return false;
+    if (TypeObj->isPointer()) {
+      auto ptr = std::dynamic_pointer_cast<toka::PointerType>(TypeObj);
+      return ptr->getPointeeType()->IsWritable;
+    }
+    return TypeObj->IsWritable;
+  }
+
   bool HasConstValue = false;
   uint64_t ConstValue = 0;
   bool IsRebindable = false; // [NEW] prefix '#' or '!' rebind permission
@@ -88,9 +98,6 @@ public:
     if (!Info.BorrowedFrom.empty()) {
       ActiveBorrows[Name] = {Info.BorrowedFrom,
                              Info.IsReference() && Info.IsMutable()};
-      // llvm::errs() requires include. std::cerr works? No, Sema.h included
-      // everywhere. Skipping Sema.h debug print to avoid include mess. Rely on
-      // Sema.cpp.
     }
   }
 
@@ -337,16 +344,21 @@ private:
       Signature += "*";
     }
 
-    // 3. Soul Type
+    // 4. Value Attributes (Constitution 1.3: Duality)
+    // Handle/Identity Attributes (Prefix Zone)
+    if (Arg.IsPointerNullable)
+      Signature += "?";
+    if (Arg.IsRebindable)
+      Signature += "#";
+
+    // 3. Soul Type (Base Name)
     Signature += toka::Type::stripPrefixes(getTypeName(Arg));
 
-    // 4. Value Attributes
-    if (Arg.IsPointerNullable || Arg.IsValueNullable) {
+    // Soul/Object Attributes (Suffix Zone)
+    if (Arg.IsValueNullable)
       Signature += "?";
-    }
-    if (Arg.IsRebindable || Arg.IsValueMutable) {
+    if (Arg.IsValueMutable)
       Signature += "#";
-    }
 
     return Signature;
   }

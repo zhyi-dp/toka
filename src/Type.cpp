@@ -135,11 +135,8 @@ bool RawPointerType::isCompatibleWith(const Type &target) const {
   const auto *otherPtr = dynamic_cast<const RawPointerType *>(&target);
   if (!otherPtr)
     return false;
-  if (target.IsWritable && !IsWritable)
-    return false;
-  if (otherPtr->PointeeType->IsWritable && !PointeeType->IsWritable)
-    return false;
-  // Loose: *?T flows to *T for Raw Pointers (Unsafe)
+  // Raw pointers are unsafe; we relax soul mutability checks to allow
+  // easier interfacing with memory management (e.g. malloc/realloc).
   return PointeeType->isCompatibleWith(*otherPtr->PointeeType);
 }
 
@@ -531,6 +528,11 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
         break;
     }
     auto pointee = Type::fromString(s.substr(offset));
+    // Duality: the outer suffixes stripped earlier belong to the soul
+    if (isWritable || isNullable) {
+      pointee = pointee->withAttributes(isWritable, isNullable);
+    }
+
     std::shared_ptr<PointerType> ptr;
     if (first == '*')
       ptr = std::make_shared<RawPointerType>(pointee);
@@ -541,8 +543,9 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     else
       ptr = std::make_shared<ReferenceType>(pointee);
 
-    ptr->IsNullable = ptrNullable || isNullable;
-    ptr->IsWritable = ptrWritable || isWritable;
+    // Identity: the attributes following the sigil belong to the handle
+    ptr->IsNullable = ptrNullable;
+    ptr->IsWritable = ptrWritable;
     return ptr;
   }
 

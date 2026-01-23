@@ -31,14 +31,19 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
     }
   }
 
-  bool isRef = match(TokenType::Ampersand);
+  bool isRef = false;
   bool hasPointer = false;
   bool isUnique = false;
-
   bool isShared = false;
   bool isRebindable = false;
   bool isPtrNullable = false;
-  if (match(TokenType::Caret)) {
+
+  if (match(TokenType::Ampersand)) {
+    isRef = true;
+    Token tok = previous();
+    isRebindable = tok.IsSwappablePtr;
+    isPtrNullable = tok.HasNull;
+  } else if (match(TokenType::Caret)) {
     isUnique = true;
     Token tok = previous();
     isRebindable = tok.IsSwappablePtr;

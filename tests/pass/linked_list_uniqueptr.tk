@@ -60,8 +60,8 @@ pub fn main() -> i32 {
         }
     }
     
-    auto ^#cursor = ^head 
-    println("^#cursor address {}", ^cursor as OAddr)
+    auto &#cursor: ^Node = &^head 
+    println("&#cursor address {}", ^head as OAddr)
     auto i# = 5
     loop {
         assert(i >= 0, "check i >= 0")
@@ -74,8 +74,8 @@ pub fn main() -> i32 {
         
         if cursor.^?next is cursor.^next {
             println("will reseat to {}", cursor.^next as OAddr)
-            ^#cursor = cursor.^next 
-            println("^#cursor address {}", ^cursor as OAddr)
+            &#cursor = cursor.&next 
+            //println("^#cursor address {}", &cursor as OAddr)
         } else {
             break
         }

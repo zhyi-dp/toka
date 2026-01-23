@@ -440,6 +440,16 @@ void Sema::checkStmt(Stmt *S) {
         }
       }
 
+      // [NEW] Register in ActiveBorrows for scope-based cleanup
+      bool isMut = false;
+      for (auto const &b : m_CurrentStmtBorrows) {
+        if (b.first == m_LastBorrowSource) {
+          isMut = b.second;
+          break;
+        }
+      }
+      CurrentScope->ActiveBorrows[Var->Name] = {m_LastBorrowSource, isMut};
+
       // Remove from temporary borrows since it's now persistent
       for (auto it = m_CurrentStmtBorrows.begin();
            it != m_CurrentStmtBorrows.end(); ++it) {
@@ -471,29 +481,27 @@ void Sema::checkStmt(Stmt *S) {
 
     m_LastBorrowSource = ""; // Clear for next var
 
-    // Construct Type Object manually to avoid string ambiguity
-    // especially for references to mutable types (e.g. &i32#) being misparsed
-    // as mutable references (&i32)#
-    auto innerObj = toka::Type::fromString(baseType);
+    // [Constitution 1.3] Dual-Attribute Synthesis
+    std::string fullType = "";
+    // 1. Morphology sigil (Constitutional 1.3 - Leading)
+    fullType += morph;
 
-    if (morph == "*") {
-      Info.TypeObj = std::make_shared<toka::RawPointerType>(innerObj);
-    } else if (morph == "^") {
-      Info.TypeObj = std::make_shared<toka::UniquePointerType>(innerObj);
-    } else if (morph == "~") {
-      Info.TypeObj = std::make_shared<toka::SharedPointerType>(innerObj);
-    } else if (morph == "&") {
-      Info.TypeObj = std::make_shared<toka::ReferenceType>(innerObj);
-    } else {
-      Info.TypeObj = innerObj;
-    }
+    // 2. Identity/Handle prefix attributes
+    if (Var->IsPointerNullable)
+      fullType += "?";
+    if (Var->IsRebindable)
+      fullType += "#";
 
-    if (Var->IsRebindable || Var->IsValueMutable || Var->IsValueMutable) {
-      Info.TypeObj->IsWritable = true;
-    }
-    if (Var->IsPointerNullable || Var->IsValueNullable) {
-      Info.TypeObj->IsNullable = true;
-    }
+    // 3. Base soul name
+    fullType += baseType;
+
+    // 4. Soul/Object suffix attributes
+    if (Var->IsValueNullable)
+      fullType += "?";
+    if (Var->IsValueMutable)
+      fullType += "#";
+
+    Info.TypeObj = toka::Type::fromString(fullType);
 
     Var->ResolvedType = Info.TypeObj;
 
