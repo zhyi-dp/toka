@@ -26,7 +26,7 @@ namespace toka {
 // Helper to get location
 static SourceLocation getLoc(ASTNode *Node) { return Node->Loc; }
 
-std::string Sema::resolveType(const std::string &Type) {
+std::string Sema::resolveType(const std::string &Type, bool force) {
   // [NEW] Local Type Alias (Generic Parameter) Lookup
   if (CurrentScope) {
     SymbolInfo Sym;
@@ -47,21 +47,22 @@ std::string Sema::resolveType(const std::string &Type) {
         modSpec.ReferencedModule) {
       ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
       if (target->TypeAliases.count(TargetType)) {
-        return resolveType(target->TypeAliases[TargetType].Target);
+        if (force || !target->TypeAliases[TargetType].IsStrong) {
+          return resolveType(target->TypeAliases[TargetType].Target, force);
+        }
       }
-      return TargetType; // It's a base type or shape in that module
+      return TargetType; // It's a base type or shape in that module or a strong
+                         // alias
     }
   }
 
   // Fallback: use the object-based resolver which handles generics
   auto typeObj = toka::Type::fromString(Type);
-  auto resolved = resolveType(typeObj);
-  std::string result = resolved->toString();
-  return result;
+  return resolveType(typeObj, force)->toString();
 }
 
-std::shared_ptr<toka::Type>
-Sema::resolveType(std::shared_ptr<toka::Type> type) {
+std::shared_ptr<toka::Type> Sema::resolveType(std::shared_ptr<toka::Type> type,
+                                              bool force) {
   if (!type)
     return nullptr;
 
@@ -100,7 +101,7 @@ Sema::resolveType(std::shared_ptr<toka::Type> type) {
     if (!shape->GenericArgs.empty()) {
       // 1. Resolve arguments first
       for (auto &Arg : shape->GenericArgs) {
-        Arg = resolveType(Arg);
+        Arg = resolveType(Arg, force);
       }
       // 2. Instantiate
       return instantiateGenericShape(shape);
@@ -114,7 +115,7 @@ Sema::resolveType(std::shared_ptr<toka::Type> type) {
           // We found T -> i32 (TypeObj).
           // We need to return TypeObj, but retain attributes (IsWritable, etc)
           // of 'shape'.
-          auto resolved = resolveType(Sym.TypeObj);
+          auto resolved = resolveType(Sym.TypeObj, force);
           return resolved->withAttributes(type->IsWritable, type->IsNullable);
         }
       }
@@ -132,15 +133,20 @@ Sema::resolveType(std::shared_ptr<toka::Type> type) {
           auto resolved =
               toka::Type::fromString(target->TypeAliases[TargetType].Target);
           return resolveType(
-              resolved->withAttributes(type->IsWritable, type->IsNullable));
+              resolved->withAttributes(type->IsWritable, type->IsNullable),
+              force);
         }
       }
     }
 
     if (TypeAliasMap.count(shape->Name)) {
-      auto resolved = toka::Type::fromString(TypeAliasMap[shape->Name].Target);
-      return resolveType(
-          resolved->withAttributes(type->IsWritable, type->IsNullable));
+      if (force || !TypeAliasMap[shape->Name].IsStrong) {
+        auto resolved =
+            toka::Type::fromString(TypeAliasMap[shape->Name].Target);
+        return resolveType(
+            resolved->withAttributes(type->IsWritable, type->IsNullable),
+            force);
+      }
     }
 
     if (ShapeMap.count(shape->Name)) {
@@ -152,7 +158,7 @@ Sema::resolveType(std::shared_ptr<toka::Type> type) {
     if (TypeAliasMap.count(prim->Name)) {
       auto resolved = toka::Type::fromString(TypeAliasMap[prim->Name].Target);
       return resolveType(
-          resolved->withAttributes(type->IsWritable, type->IsNullable));
+          resolved->withAttributes(type->IsWritable, type->IsNullable), force);
     }
   }
 

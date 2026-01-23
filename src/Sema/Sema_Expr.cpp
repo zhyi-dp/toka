@@ -118,6 +118,8 @@ std::shared_ptr<toka::Type> Sema::checkExpr(Expr *E) {
     return toka::Type::fromString("void");
   m_LastInitMask = ~0ULL; // Default to fully set
   auto T = checkExprImpl(E);
+  // [Fix] Monomorphize type before assigning it to the node
+  T = resolveType(T);
   E->ResolvedType = T;
 
   if (!dynamic_cast<UnsetExpr *>(E) && !dynamic_cast<InitStructExpr *>(E) &&
@@ -636,7 +638,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return Info.TypeObj;
   } else if (auto *Cast = dynamic_cast<CastExpr *>(E)) {
     auto srcType = checkExpr(Cast->Expression.get());
-    auto targetType = toka::Type::fromString(Cast->TargetType);
+    auto targetType = resolveType(toka::Type::fromString(Cast->TargetType));
 
     // Rule: Numeric Casts (Always allowed for standard numeric types)
     bool srcIsNumeric = srcType->isInteger() || srcType->isFloatingPoint();
@@ -1131,6 +1133,17 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         }
       }
     }
+
+    if (target) {
+      if (valType != "void") {
+        if (target->ExpectedType == "void") {
+          target->ExpectedType = valType;
+        } else if (!isTypeCompatible(target->ExpectedType, valType)) {
+          error(be, "Break type mismatch ('" + target->ExpectedType + "' vs '" +
+                        valType + "')");
+        }
+      }
+    }
     return toka::Type::fromString("void");
   } else if (auto *ce = dynamic_cast<ContinueExpr *>(E)) {
     // Continue target must be a loop
@@ -1240,7 +1253,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (!(MethodMap.count(soulType) &&
           MethodMap[soulType].count(Met->Method))) {
       // [NEW] Lazy Impl Instantiation
-      std::string ConcreteTypeName = ObjTypeObj->getSoulName();
+      // [Fix] Use fully resolved/mangled name for lazy instantiation lookup
+      std::string resolveName = resolveType(ObjTypeObj->toString());
+      std::string ConcreteTypeName = Type::stripMorphology(resolveName);
       std::string BaseName = ConcreteTypeName;
       size_t lt = BaseName.find('<');
       if (lt != std::string::npos) {
@@ -1791,7 +1806,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       HasError = true;
     }
     std::string ObjType =
-        toka::Type::stripMorphology(resolveType(objTypeObj)->toString());
+        toka::Type::stripMorphology(resolveType(objTypeObj, true)->toString());
 
     if (ShapeMap.count(ObjType)) {
       ShapeDecl *SD = ShapeMap[ObjType];
@@ -1909,7 +1924,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         soulType = soulType->getPointeeType();
       }
 
-      auto resSoul = resolveType(soulType);
+      auto resSoul = resolveType(soulType, true);
       if (auto TT = std::dynamic_pointer_cast<toka::TupleType>(resSoul)) {
         // Tuple access: .0, .1
         try {
@@ -2353,17 +2368,17 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   auto *lhsNum = dynamic_cast<NumberExpr *>(lhsExpr);
   auto *rhsNum = dynamic_cast<NumberExpr *>(rhsExpr);
 
-  if (lhsType->isInteger() && rhsNum && !lhsNum) {
+  if (resolveType(lhsType, true)->isInteger() && rhsNum && !lhsNum) {
     // Left is Strong Integer, Right is Literal -> Adapt Right
     Bin->RHS->ResolvedType = lhsType;
     rhsType = lhsType;
     RHS = rhsType->toString();
-  } else if (rhsType->isInteger() && lhsNum && !rhsNum) {
+  } else if (resolveType(rhsType, true)->isInteger() && lhsNum && !rhsNum) {
     // Right is Strong Integer, Left is Literal -> Adapt Left
     Bin->LHS->ResolvedType = rhsType;
     lhsType = rhsType;
     LHS = lhsType->toString();
-  } else if (rhsType->isInteger() && lhsNum && !rhsNum) {
+  } else if (resolveType(rhsType, true)->isInteger() && lhsNum && !rhsNum) {
     // Right is Strong Integer, Left is Literal -> Adapt Left
     Bin->LHS->ResolvedType = rhsType;
     lhsType = rhsType;
@@ -2920,7 +2935,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
   if (Bin->Op == "+" || Bin->Op == "-" || Bin->Op == "*" || Bin->Op == "/") {
     bool isValid = false;
-    auto lRes = resolveType(lhsType);
+    auto lRes = resolveType(lhsType, true);
     if (lRes->isInteger() || lRes->isFloatingPoint())
       isValid = true;
 
@@ -2933,7 +2948,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
   if (Bin->Op == "band" || Bin->Op == "bor" || Bin->Op == "bxor" ||
       Bin->Op == "bshl" || Bin->Op == "bshr") {
-    if (!lhsType->isInteger() || !rhsType->isInteger()) {
+    if (!resolveType(lhsType, true)->isInteger() ||
+        !resolveType(rhsType, true)->isInteger()) {
       error(Bin, "operands of '" + Bin->Op + "' must be integers");
     }
     return lhsType->withAttributes(false, lhsType->IsNullable);
@@ -2994,6 +3010,7 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
     return toka::Type::fromString("unknown");
 
   std::shared_ptr<toka::Type> resultType = nullptr;
+  baseType = resolveType(baseType, true);
 
   if (baseType->isArray()) {
     resultType = baseType->getArrayElementType();

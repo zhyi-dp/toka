@@ -287,8 +287,9 @@ private:
   std::string getCommonType(const std::string &T1, const std::string &T2);
 
   // Helpers
-  std::string resolveType(const std::string &Type);
-  std::shared_ptr<toka::Type> resolveType(std::shared_ptr<toka::Type> Type);
+  std::string resolveType(const std::string &Type, bool force = false);
+  std::shared_ptr<toka::Type> resolveType(std::shared_ptr<toka::Type> Type,
+                                          bool force = false);
   uint64_t getTypeSize(std::shared_ptr<toka::Type> Type);
   bool isTypeCompatible(const std::string &Target, const std::string &Source);
   bool isTypeCompatible(std::shared_ptr<toka::Type> Target,

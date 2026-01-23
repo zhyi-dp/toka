@@ -2232,7 +2232,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
             }
           } else if (ty->isIntegerTy(64)) {
             if (semanticType == "OAddr") {
-              spec = "0x%012lx";
+              spec = "0x%016lX";
             } else {
               spec = (semanticType.size() > 0 && semanticType[0] == 'u')
                          ? "%llu"

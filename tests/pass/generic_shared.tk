@@ -1,28 +1,31 @@
 import std/io::println
 
+shape Atomic<T> (
+    t:T
+)
 // --- 基础类型 ---
-impl u64 {
+impl<T> Atomic<T> {
     fn fetch_add(self#) {
         //println("type u64 enter .fetch_add, now is {}", self)
-        self# += 1 
+        self#.t += 1 
     }
     fn fetch_sub(self#) { 
         //println("type u64 enter .fetch_sub, now is {}", self)
-        self# -= 1 
+        self#.t -= 1 
     }
-    fn load(self) -> u64 { 
+    fn load(self) -> T { 
         //println("type u64 enter .load, now is {}", self)
-        return self 
+        return self#.t 
     }
-    fn store(self#, val: u64) {
+    fn store(self#, val: T) {
         //println("type u64 enter .store, now is {}, will set to {}", self, val)
-        self# = val 
+        self#.t = val 
     }
 }
 
 // --- 引用计数控制块 ---
 shape RcWrapper<T>(
-    ref_count#: u64,
+    ref_count#: Atomic<u64>,
     *data: T
 )
 
@@ -45,9 +48,9 @@ impl<T> SharedPtr<T> {
             // [Alloc Syntax]: 按照你的要求，*data 接收 *ptr
             //println("allocating for {}", val)
             auto *data_ptr = unsafe alloc T(val)
-            
+            auto rc1 = Atomic<u64>(1)
             auto *cb_ptr = unsafe alloc RcWrapper<T>(
-                ref_count = 1, 
+                ref_count = rc1, 
                 *data = *data_ptr 
             )
             // cb_ptr.ref_count#.store(1)
