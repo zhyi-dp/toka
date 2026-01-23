@@ -85,7 +85,8 @@ static std::unordered_map<std::string, TokenType> Keywords = {
     {"free", TokenType::KwFree},
     {"unset", TokenType::KwUnset},
     {"variant", TokenType::KwVariant},
-    {"union", TokenType::KwUnion}};
+    {"union", TokenType::KwUnion},
+    {"unreachable", TokenType::KwUnreachable}};
 
 Lexer::Lexer(const char *source, SourceLocation startLoc)
     : m_Source(source), m_Current(source), m_StartLoc(startLoc) {}

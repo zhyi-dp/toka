@@ -74,6 +74,7 @@ private:
   std::unique_ptr<Stmt> parseFreeStmt();
   std::unique_ptr<Expr> parseAllocExpr();
   std::unique_ptr<ReturnStmt> parseReturn();
+  std::unique_ptr<Stmt> parseUnreachableStmt();
 
   std::unique_ptr<Expr> parseExpr(int minPrec = 0);
   std::unique_ptr<Expr> parsePrimary();

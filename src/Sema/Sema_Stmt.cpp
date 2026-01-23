@@ -25,7 +25,7 @@ static SourceLocation getLoc(ASTNode *Node) { return Node->Loc; }
 bool Sema::allPathsReturn(Stmt *S) {
   if (!S)
     return false;
-  if (dynamic_cast<ReturnStmt *>(S))
+  if (dynamic_cast<ReturnStmt *>(S) || dynamic_cast<UnreachableStmt *>(S))
     return true;
   if (auto *B = dynamic_cast<BlockStmt *>(S)) {
     for (const auto &Sub : B->Statements) {
@@ -65,7 +65,7 @@ bool Sema::allPathsReturn(Stmt *S) {
 bool Sema::allPathsJump(Stmt *S) {
   if (!S)
     return false;
-  if (dynamic_cast<ReturnStmt *>(S))
+  if (dynamic_cast<ReturnStmt *>(S) || dynamic_cast<UnreachableStmt *>(S))
     return true;
   if (auto *B = dynamic_cast<BlockStmt *>(S)) {
     for (const auto &Sub : B->Statements) {
@@ -625,6 +625,8 @@ void Sema::checkStmt(Stmt *S) {
         CurrentScope->define(Var.Name, Info);
       }
     }
+  } else if (auto *Unreachable = dynamic_cast<UnreachableStmt *>(S)) {
+    // No-op for now, it's just a marker
   }
 }
 

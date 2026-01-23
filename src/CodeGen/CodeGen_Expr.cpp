@@ -2867,8 +2867,16 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
     if (!fieldVal)
       return nullptr;
 
-    llvm::Value *fieldAddr =
-        m_Builder.CreateStructGEP(st, alloca, idx, "field_" + f.first);
+    llvm::Value *fieldAddr = nullptr;
+    if (m_Shapes.count(shapeName) &&
+        m_Shapes[shapeName]->Kind == ShapeKind::Union) {
+      // Union: bitcast base to member pointer type
+      fieldAddr = m_Builder.CreateBitCast(
+          alloca, llvm::PointerType::getUnqual(fieldVal->getType()));
+    } else {
+      fieldAddr =
+          m_Builder.CreateStructGEP(st, alloca, idx, "field_" + f.first);
+    }
 
     if (f.second && f.second->ResolvedType &&
         f.second->ResolvedType->isSharedPtr()) {

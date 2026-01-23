@@ -1,0 +1,80 @@
+// lib/core/internal/abi.tk
+// Toka Runtime ABI - Generic Version
+
+import core/intrinsics/atomic
+
+// ==========================================
+// 1. 泛型结构
+// ==========================================
+
+pub shape RcBox<T> (
+    strong#: u64, // # 表示字段本身是可变的 (内存上)
+    weak#: u64,
+    data: T
+)
+
+// ==========================================
+// 2. 泛型钩子
+// ==========================================
+
+// [生] rc_new<T>
+pub fn rc_new<T>(val: T) -> *RcBox<T> {
+    unsafe {
+        // memory::alloc 分配并构造
+        // 关键点：alloc 返回的是指针，我们捕获为 *ptr
+        auto *ptr = unsafe alloc RcBox<T>(
+            strong=1, 
+            weak=1, 
+            data=val 
+        )
+
+        if *ptr == nullptr {
+            // OOM 处理
+            return nullptr
+        }    
+        
+        // 返回指针地址
+        return *ptr
+    }
+}
+
+// [增] rc_inc<T>
+// 参数 *ptr: RcBox<T> 意味着：
+// 1. *ptr 是地址 (判空用)
+// 2. ptr 是解引用后的结构体 (访问字段用)
+pub fn rc_inc<T>(*ptr: RcBox<T>) {
+    unsafe {
+        if *ptr == nullptr { return }
+        
+        // ✅ 正确写法: atomic::fetch_add(&ptr.strong, 1) -> 这是传址
+        // 我们需要 strong 字段的内存地址
+        atomic::fetch_add(&ptr.strong, 1, atomic::Ordering::Relaxed)
+    }
+}
+
+// [减] rc_dec<T>
+pub fn rc_dec<T>(*ptr: RcBox<T>) {
+    unsafe {
+        if *ptr == nullptr { return }
+
+        // ✅ 传址：获取 strong 字段 price 的地址传给 atomic
+        auto old_count = atomic::fetch_sub(&ptr.strong, 1, atomic::Ordering::Relaxed)
+
+        if old_count == 1 {
+            atomic::fence_acquire() // fence_acquire has no args
+
+            // 1. 清理数据
+            // ptr.data.drop() // 目前暂不假设 T 有 drop
+
+            // 2. 处理 Weak
+            // ✅ 传址：获取 weak 字段的地址
+            auto old_weak = atomic::fetch_sub(&ptr.weak, 1, atomic::Ordering::Relaxed)
+            
+            if old_weak == 1 {
+                // 3. 释放内存
+                // dealloc 需要传入指针地址，即 *ptr
+                free *ptr
+            }
+        }
+    }
+}

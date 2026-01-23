@@ -1344,8 +1344,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           "method '" + Met->Method + "' not found on type '" + ObjType + "'");
     return toka::Type::fromString("unknown");
   } else if (auto *Init = dynamic_cast<InitStructExpr *>(E)) {
+    std::map<std::string, uint64_t> memberMasks;
     // Validate fields against ShapeMap
-    std::string resolvedName = resolveType(Init->ShapeName);
+    std::string resolvedName = resolveType(Init->ShapeName, true);
     if (ShapeMap.count(resolvedName)) {
       ShapeDecl *SD = ShapeMap[resolvedName];
 
@@ -1437,7 +1438,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               fullName += ", ";
           }
           fullName += ">";
-          resolvedName = resolveType(fullName);
+          resolvedName = resolveType(fullName, true);
           SD = ShapeMap[resolvedName];
         }
       }
@@ -1532,13 +1533,16 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
         std::shared_ptr<toka::Type> exprTypeObj =
             checkExpr(pair.second.get(), memberTypeObj);
+        memberMasks[pair.first] = m_LastInitMask;
 
         // [FIX] Add implicit cast for field initialization (e.g. i32 literal to
         // u64 field)
         if (isTypeCompatible(memberTypeObj, exprTypeObj) &&
             !memberTypeObj->equals(*exprTypeObj)) {
+          auto origLoc = pair.second->Loc;
           pair.second = std::make_unique<CastExpr>(std::move(pair.second),
                                                    memberTypeObj->toString());
+          pair.second->Loc = origLoc; // [FIX] 显式传递位置信息
           pair.second->ResolvedType = memberTypeObj;
           exprTypeObj = memberTypeObj;
         }
@@ -1564,16 +1568,24 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       }
 
       // Check for missing fields
-      for (const auto &defField : SD->Members) {
-        // If field is NOT in providedFields
-        if (!providedFields.count(defField.Name) &&
-            !providedFields.count("^" + defField.Name) &&
-            !providedFields.count("*" + defField.Name) &&
-            !providedFields.count("~" + defField.Name) &&
-            !providedFields.count("&" + defField.Name) &&
-            !providedFields.count("^?" + defField.Name)) {
+      if (SD->Kind == ShapeKind::Struct || SD->Kind == ShapeKind::Tuple) {
+        for (const auto &defField : SD->Members) {
+          // If field is NOT in providedFields
+          if (!providedFields.count(defField.Name) &&
+              !providedFields.count("^" + defField.Name) &&
+              !providedFields.count("*" + defField.Name) &&
+              !providedFields.count("~" + defField.Name) &&
+              !providedFields.count("&" + defField.Name) &&
+              !providedFields.count("^?" + defField.Name)) {
+            DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
+                                     defField.Name, Init->ShapeName);
+            HasError = true;
+          }
+        }
+      } else if (SD->Kind == ShapeKind::Union || SD->Kind == ShapeKind::Enum) {
+        if (providedFields.empty()) {
           DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
-                                   defField.Name, Init->ShapeName);
+                                   "at least one variant", Init->ShapeName);
           HasError = true;
         }
       }
@@ -1594,30 +1606,11 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         std::string memName = SD->Members[i].Name;
         bool found = false;
         for (const auto &pair : Init->Members) {
-          if (pair.first == memName) {
-            // Check the expression again to get its mask
-            // (Optimization: cache this? calling checkExpr twice might be
-            // expensive or verify idempotence. checkExpr sets
-            // m_LastInitMask)
-            checkExpr(pair.second.get());
-
-            uint64_t subMask = 1;
-            // Determine expected mask for member type
-            // If member is primitive, expected is 1.
-            // If member is shape?
-            // Current limitation: Flattened masks not fully supported for
-            // nested shapes in one integer. But we treat fully initialized
-            // nested shape as "1". So if m_LastInitMask indicates full
-            // init, we set bit i.
-
-            // How to check full init?
-            // If Member is Shape:
-            //   Look up Member Shape.
-            //   Expected = (1 << Size) - 1.
-            //   If (m_LastInitMask & Expected) == Expected -> Set bit i.
-            // If Member is Primitive:
-            //   Expected = 1.
-            //   If (m_LastInitMask & 1) -> Set bit i.
+          // [FIX] Use stripMorphology for comparison to handle '&' prefix
+          if (toka::Type::stripMorphology(pair.first) ==
+              toka::Type::stripMorphology(memName)) {
+            // Use the mask calculated in the first pass
+            m_LastInitMask = memberMasks[pair.first];
 
             std::shared_ptr<Type> memTypeObj =
                 toka::Type::fromString(SD->Members[i].Type);
@@ -1641,16 +1634,15 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
             break;
           }
         }
-        // If not found (missing member), bit remains 0. Error reported
-        // above.
+      }
+      if (SD->Kind == ShapeKind::Union || SD->Kind == ShapeKind::Enum) {
+        if (mask != 0)
+          mask = ~0ULL;
       }
       m_LastInitMask = mask;
     } else {
-      // Unknown struct, assume full init to avoid cascading errors?
-      // Or 0?
       m_LastInitMask = 1;
     }
-
     return toka::Type::fromString(resolvedInitName);
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
     std::string path = getStringifyPath(Memb);
@@ -2335,7 +2327,6 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
 
 // Stage 5: Object-Oriented Binary Expression Check
 std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
-  std::cerr << "DEBUG: checkBinaryExpr ENTER. Op=" << Bin->Op << "\n";
   // 1. Resolve Operands using New API
   bool oldLHS = m_InLHS;
   m_InLHS = (Bin->Op == "=" || Bin->Op == "+=" || Bin->Op == "-=" ||
@@ -3207,17 +3198,22 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
     std::string ModName = CallName.substr(0, scopePos);
     std::string FuncName = CallName.substr(scopePos + 2);
     SymbolInfo modSpec;
-    if (CurrentScope->lookup(ModName, modSpec) && modSpec.ReferencedModule) {
-      ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
-      if (target->Functions.count(FuncName))
-        Fn = target->Functions[FuncName];
-      else if (target->Externs.count(FuncName))
-        Ext = target->Externs[FuncName];
-      else if (target->Shapes.count(FuncName))
-        Sh = target->Shapes[FuncName];
+    if (CurrentScope->lookup(ModName, modSpec)) {
+      if (modSpec.ReferencedModule) {
+        ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
+        if (target->Functions.count(FuncName))
+          Fn = target->Functions[FuncName];
+        else if (target->Externs.count(FuncName))
+          Ext = target->Externs[FuncName];
+        else if (target->Shapes.count(FuncName))
+          Sh = target->Shapes[FuncName];
 
-      if (!Fn && !Ext && !Sh) {
-        // No debug prints
+        if (!Fn && !Ext && !Sh) {
+          // No debug prints
+        }
+      } else {
+        error(Call, "Module '" + ModName + "' not found or not imported");
+        return toka::Type::fromString("unknown");
       }
     } else {
       error(Call, "Module '" + ModName + "' not found or not imported");

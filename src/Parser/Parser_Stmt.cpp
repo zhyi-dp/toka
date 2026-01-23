@@ -140,6 +140,8 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     return parseUnsafeStmt();
   if (check(TokenType::KwFree))
     return parseFreeStmt();
+  if (check(TokenType::KwUnreachable))
+    return parseUnreachableStmt();
 
   // ExprStmt
   auto expr = parseExpr();
@@ -219,6 +221,13 @@ std::unique_ptr<Stmt> Parser::parseFreeStmt() {
   auto expr = parseExpr();
   expectEndOfStatement();
   auto node = std::make_unique<FreeStmt>(std::move(expr), std::move(count));
+  node->setLocation(tok, m_CurrentFile);
+  return node;
+}
+std::unique_ptr<Stmt> Parser::parseUnreachableStmt() {
+  Token tok = consume(TokenType::KwUnreachable, "Expected 'unreachable'");
+  expectEndOfStatement();
+  auto node = std::make_unique<UnreachableStmt>();
   node->setLocation(tok, m_CurrentFile);
   return node;
 }

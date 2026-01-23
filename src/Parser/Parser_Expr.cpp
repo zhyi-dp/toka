@@ -531,53 +531,58 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       genericSuffix += ">";
     }
 
-    bool isStructInit = false;
-    if (check(TokenType::LBrace)) {
-      // Disambiguate against match block or other blocks starting with brace
-      if (checkAt(1, TokenType::RBrace))
-        isStructInit = true;
-      else if (checkAt(1, TokenType::Identifier) &&
-               checkAt(2, TokenType::Equal))
-        isStructInit = true;
-    }
-
-    if (isStructInit) {
-      // Struct Init
-      advance();
-      std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
-      while (!check(TokenType::RBrace) && !check(TokenType::EndOfFile)) {
-        std::string prefix = "";
-        if (match(TokenType::Star))
-          prefix = "*";
-        else if (match(TokenType::Caret))
-          prefix = "^";
-        else if (match(TokenType::Tilde))
-          prefix = "~";
-        else if (match(TokenType::Ampersand))
-          prefix = "&";
-
-        Token fieldName = consume(TokenType::Identifier, "Expected field name");
-        consume(TokenType::Equal, "Expected '=' after field name");
-        fields.push_back({prefix + fieldName.Text, parseExpr()});
-        match(TokenType::Comma);
+    if (match(TokenType::LParen)) {
+      // Function Call or Named Struct Init: Type(...) or Type(x=1)
+      bool isNamed = false;
+      if (check(TokenType::Identifier) && checkAt(1, TokenType::Equal)) {
+        isNamed = true;
       }
-      consume(TokenType::RBrace, "Expected '}'");
-      expr = std::make_unique<InitStructExpr>(name.Text + genericSuffix,
-                                              std::move(fields));
-      expr->setLocation(name, m_CurrentFile);
-    } else if (match(TokenType::LParen)) {
-      // Function Call
-      std::vector<std::unique_ptr<Expr>> args;
-      if (!check(TokenType::RParen)) {
-        do {
-          args.push_back(parseExpr());
-        } while (match(TokenType::Comma));
+      // Also check for prefixes if any (Toka attributes on fields)
+      if (!isNamed &&
+          (check(TokenType::Star) || check(TokenType::Caret) ||
+           check(TokenType::Tilde) || check(TokenType::Ampersand))) {
+        if (checkAt(1, TokenType::Identifier) && checkAt(2, TokenType::Equal)) {
+          isNamed = true;
+        }
       }
-      consume(TokenType::RParen, "Expected ')' after arguments");
-      auto node =
-          std::make_unique<CallExpr>(name.Text, std::move(args), genericArgs);
-      node->setLocation(name, m_CurrentFile);
-      expr = std::move(node);
+
+      if (isNamed) {
+        std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
+        while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+          std::string prefix = "";
+          if (match(TokenType::Star))
+            prefix = "*";
+          else if (match(TokenType::Caret))
+            prefix = "^";
+          else if (match(TokenType::Tilde))
+            prefix = "~";
+          else if (match(TokenType::Ampersand))
+            prefix = "&";
+
+          Token fieldName =
+              consume(TokenType::Identifier, "Expected field name");
+          consume(TokenType::Equal, "Expected '=' after field name");
+          fields.push_back({prefix + fieldName.Text, parseExpr()});
+          if (!check(TokenType::RParen))
+            match(TokenType::Comma);
+        }
+        consume(TokenType::RParen, "Expected ')' after arguments");
+        expr = std::make_unique<InitStructExpr>(name.Text + genericSuffix,
+                                                std::move(fields));
+        expr->setLocation(name, m_CurrentFile);
+      } else {
+        std::vector<std::unique_ptr<Expr>> args;
+        if (!check(TokenType::RParen)) {
+          do {
+            args.push_back(parseExpr());
+          } while (match(TokenType::Comma));
+        }
+        consume(TokenType::RParen, "Expected ')' after arguments");
+        auto node =
+            std::make_unique<CallExpr>(name.Text, std::move(args), genericArgs);
+        node->setLocation(name, m_CurrentFile);
+        expr = std::move(node);
+      }
     } else {
       // Check for Scope Resolution (State::On)
       if (check(TokenType::Colon) && checkAt(1, TokenType::Colon)) {

@@ -69,7 +69,7 @@ pub fn main() -> i32 {
         assert(cursor.val == i, "check cursor.val")
         i# -= 1
         if i == 4 {
-            break
+            //break
         }
         
         if cursor.^?next is cursor.^next {

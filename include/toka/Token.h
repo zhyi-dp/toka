@@ -100,6 +100,7 @@ enum class TokenType {
   KwUnset,
   KwVariant,
   KwUnion,
+  KwUnreachable,
 
   // Attribute Tokens (When separate, though usually parsed as part of Ident or
   // Type)

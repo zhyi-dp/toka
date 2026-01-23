@@ -790,6 +790,16 @@ public:
     return n;
   }
 };
+class UnreachableStmt : public Stmt {
+public:
+  UnreachableStmt() {}
+  std::string toString() const override { return "Unreachable"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<UnreachableStmt>();
+    n->Loc = Loc;
+    return n;
+  }
+};
 
 class IfExpr : public Expr {
 public:

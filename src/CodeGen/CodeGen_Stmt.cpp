@@ -308,4 +308,8 @@ llvm::Value *CodeGen::genExprStmt(const ExprStmt *es) {
   return genExpr(es->Expression.get()).load(m_Builder);
 }
 
+llvm::Value *CodeGen::genUnreachableStmt(const UnreachableStmt *stmt) {
+  return m_Builder.CreateUnreachable();
+}
+
 } // namespace toka

@@ -237,6 +237,7 @@ private:
   std::string stripMorphology(const std::string &name);
   llvm::Value *genUnsafeStmt(const UnsafeStmt *stmt);
   llvm::Value *genExprStmt(const ExprStmt *stmt);
+  llvm::Value *genUnreachableStmt(const UnreachableStmt *stmt);
 };
 
 } // namespace toka

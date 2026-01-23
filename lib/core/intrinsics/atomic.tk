@@ -1,0 +1,142 @@
+// lib/core/intrinsics/atomic.tk
+// 单线程原子操作模拟实现 (Single-threaded Atomic Emulation)
+// ⚠️ 注意：此文件属于 core，不应依赖 prelude
+
+// 内存序定义
+pub shape Ordering (
+    Relaxed |
+    Release |
+    Acquire |
+    AcqRel |
+    SeqCst
+)
+
+// ==========================================
+// 泛型原子操作 (Generic Atomic Operations)
+// ==========================================
+
+// [Load]: 读取值
+// 必须用指针，因为我们需要读取特定地址上的最新值
+pub fn load<T>(*ptr: T, _order: Ordering) -> T {
+    unsafe {
+        // Core 库底层通常不 panic，而是假设调用者保证安全
+        // 或者使用编译器内置的 trap
+        if *ptr == nullptr { unreachable }
+        
+        return ptr // 自动解引用读取 (*ptr)
+    }
+}
+
+// [Store]: 写入值
+// 必须用指针，我们要修改的是地址指向的内存，而不是参数本身
+pub fn store<T>(*ptr#: T, val: T, _order: Ordering) {
+    unsafe {
+        if *ptr == nullptr { unreachable }
+        ptr# = val // 显式解引用写入
+    }
+}
+
+// [Fetch Add]: 原子加
+pub fn fetch_add<T>(*ptr#: T, val: T, _order: Ordering) -> T {
+    unsafe {
+        if *ptr == nullptr { unreachable }
+        
+        // 这里的逻辑必须基于“地址”
+        auto old = ptr     // Read from addr
+        ptr# = old + val   // Write to addr
+        return old
+    }
+}
+
+// [Fetch Sub]: 原子减
+pub fn fetch_sub<T>(*ptr#: T, val: T, _order: Ordering) -> T {
+    unsafe {
+        if *ptr == nullptr { unreachable }
+        
+        auto old = ptr
+        ptr# = old - val
+        return old
+    }
+}
+
+// [Fetch And]: 原子与
+pub fn fetch_and<T>(*ptr#: T, val: T, _order: Ordering) -> T {
+    unsafe {
+        if *ptr == nullptr { unreachable }
+
+        auto old = ptr
+        // 假设 Toka 位运算关键字为 band (bitwise and)
+        ptr# = old band val 
+        return old
+    }
+}
+
+// [Fetch Or]: 原子或
+pub fn fetch_or<T>(*ptr#: T, val: T, _order: Ordering) -> T {
+    unsafe {
+        if *ptr == nullptr { unreachable }
+
+        auto old = ptr
+        ptr# = old bor val
+        return old
+    }
+}
+
+// [Fetch Xor]: 原子异或
+pub fn fetch_xor<T>(*ptr#: T, val: T, _order: Ordering) -> T {
+    unsafe {
+        if *ptr == nullptr { unreachable }
+
+        auto old = ptr
+        ptr# = old bxor val
+        return old
+    }
+}
+
+// [Swap]: 原子交换
+pub fn swap<T>(*ptr#: T, val: T, _order: Ordering) -> T {
+    unsafe {
+        if *ptr == nullptr { unreachable }
+
+        auto old = ptr
+        ptr# = val
+        return old
+    }
+}
+
+// [Compare and Exchange]: 比较并交换
+pub fn compare_exchange<T>(
+    *ptr#: T, 
+    current: T, 
+    new_val: T, 
+    _success: Ordering, 
+    _failure: Ordering
+) -> (T, bool) {
+    unsafe {
+        if *ptr == nullptr { unreachable }
+
+        auto old = ptr // Read
+        if old == current {
+            ptr# = new_val // Write
+            return (old, true)
+        } else {
+            return (old, false)
+        }
+    }
+}
+
+// ==========================================
+// 内存屏障 (Fences)
+// ==========================================
+
+pub fn fence(_order: Ordering) {
+    // 单线程下为空
+}
+
+pub fn fence_acquire() {
+    // 单线程下为空
+}
+
+pub fn fence_release() {
+    // 单线程下为空
+}
