@@ -12,9 +12,10 @@ pub fn main() -> i32 {
 
         println("p[0].x: {}, p[1].x: {}", p[0].x, p[1].x)
         assert(p[0].x == 1, "check p[0].x (broadcast init)")
+        assert(p.x == 1, "check p.x (same as p[0].x)")
         assert(p[1].x == 1, "check p[1].x (broadcast init)")
 
-        p[1] = Point(x=3, y=4) 
+        p[1] = Point(x=1*2 + 1, y=(1+1) * 2) 
         assert(p[1].x == 3, "check p[1].x (after p[1] assignment)")
         assert(p[0].x == 1, "check p[0].x (after p[1] assignment, p[0] not affected)")        
 
@@ -47,6 +48,9 @@ pub fn main() -> i32 {
         auto *p_next = *p + 8
         auto *p2 = *p_next as *Point
         assert(p2.x == 3, "check byte-based arithmetic (+8 points to p[1])")
+        for auto i in [0, 1] {
+            assert(p[i].x == i * 2 + 1, "check p[i].x")
+        }
 
         unsafe free *p
     }

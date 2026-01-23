@@ -19,6 +19,19 @@
 
 namespace toka {
 
+static int getTypeHatCount(std::shared_ptr<toka::Type> type) {
+  if (!type)
+    return 0;
+  int count = 0;
+  auto cur = type;
+  while (cur &&
+         (cur->isPointer() || cur->isReference() || cur->isSmartPointer())) {
+    count++;
+    cur = cur->getPointeeType();
+  }
+  return count;
+}
+
 PhysEntity CodeGen::genAllocExpr(const AllocExpr *ae) {
   llvm::Function *allocHook = m_Module->getFunction("__toka_alloc");
   if (!allocHook) {
@@ -549,7 +562,14 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   int accessHats = getHatCount(mem->Member);
 
   // If definition has more hats than access, we are "Hat-Off", so dereference.
-  int derefCount = defHats - accessHats;
+  int derefCount = 0;
+  if (mem->ResolvedType) {
+    derefCount = defHats - getTypeHatCount(mem->ResolvedType);
+  } else {
+    derefCount = defHats - accessHats;
+  }
+  if (derefCount < 0)
+    derefCount = 0;
   for (int i = 0; i < derefCount; ++i) {
     // Current finalAddr is the address of the pointer.
     // Load it to get the target address.
@@ -674,12 +694,13 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
           // We must LOAD to get the actual pointer (Identity).
           basePtr = m_Builder.CreateLoad(memTy, arrEnt.value, "arr_load_ptr");
 
-          // For opaque pointers, we need to know the stride.
-          // Logic: Pointers are usually byte-addressed buffers (char*, u8*) or
-          // specific types. HACK: Default to i8 for *T indexing if we can't
-          // deduce T. In Toka std, *char is the most common case for this
-          // fallback.
-          elemTy = llvm::Type::getInt8Ty(m_Context);
+          if (idxExpr->Array->ResolvedType) {
+            if (auto pt = idxExpr->Array->ResolvedType->getPointeeType()) {
+              elemTy = getLLVMType(pt);
+            }
+          }
+          if (!elemTy)
+            elemTy = llvm::Type::getInt8Ty(m_Context);
         } else if (memTy->isArrayTy()) {
           // It's an array variable/member (like char buf[10]).
           // The entity value is the address of the array start.
@@ -706,6 +727,13 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
       if (!basePtr)
         return nullptr;
 
+      if (!elemTy) {
+        if (idxExpr->Array->ResolvedType) {
+          if (auto pt = idxExpr->Array->ResolvedType->getPointeeType()) {
+            elemTy = getLLVMType(pt);
+          }
+        }
+      }
       if (!elemTy) {
         // Default stride for unknown pointer types in fallback
         elemTy = llvm::Type::getInt8Ty(m_Context);
