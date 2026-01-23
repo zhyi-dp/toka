@@ -362,11 +362,7 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     if (lhsTy->isPointerTy() && rhsTy->isIntegerTy()) {
       if (bin->Op == "+=" || bin->Op == "-=") {
         llvm::Type *elemTy = nullptr;
-        if (bin->LHS->ResolvedType && bin->LHS->ResolvedType->isPointer()) {
-          elemTy = getLLVMType(bin->LHS->ResolvedType->getPointeeType());
-        }
-        if (!elemTy)
-          elemTy = llvm::Type::getInt8Ty(m_Context);
+        elemTy = llvm::Type::getInt8Ty(m_Context);
 
         if (rhsTy->getIntegerBitWidth() < 64) {
           rhsVal = m_Builder.CreateSExt(
@@ -797,16 +793,7 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
   if (bin->Op == "+") {
     if (lhs->getType()->isPointerTy()) {
-      // Find elemTy
-      llvm::Type *elemTy = nullptr;
-      if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-        if (m_Symbols.count(ve->Name))
-          elemTy = m_Symbols[ve->Name].soulType;
-      } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(lhs)) {
-        elemTy = gep->getResultElementType();
-      }
-      if (!elemTy)
-        elemTy = llvm::Type::getInt8Ty(m_Context);
+      llvm::Type *elemTy = llvm::Type::getInt8Ty(m_Context);
 
       // Ensure RHS is 64-bit for GEP
       if (rhs->getType()->isIntegerTy() &&
@@ -820,13 +807,7 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   }
   if (bin->Op == "-") {
     if (lhs->getType()->isPointerTy()) {
-      llvm::Type *elemTy = nullptr;
-      if (auto *ve = dynamic_cast<const VariableExpr *>(bin->LHS.get())) {
-        if (m_Symbols.count(ve->Name))
-          elemTy = m_Symbols[ve->Name].soulType;
-      }
-      if (!elemTy)
-        elemTy = llvm::Type::getInt8Ty(m_Context);
+      llvm::Type *elemTy = llvm::Type::getInt8Ty(m_Context);
       llvm::Value *negR = m_Builder.CreateNeg(rhs);
       return m_Builder.CreateGEP(elemTy, lhs, {negR}, "ptrsub");
     }

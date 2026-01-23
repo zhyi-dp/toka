@@ -1,0 +1,54 @@
+
+import std/io::println
+import std/memory::assert
+
+shape Point(x: i32, y: i32)
+
+pub fn main() -> i32 {
+    unsafe {
+        // 1. Allocate 2 points (uninitialized, writable)
+        // [Alloc Syntax]: No initialization for arrays
+        auto *#p = unsafe alloc [2]Point(x=1, y=2)
+
+        println("p[0].x: {}, p[1].x: {}", p[0].x, p[1].x)
+        assert(p[0].x == 1, "check p[0].x (broadcast init)")
+        assert(p[1].x == 1, "check p[1].x (broadcast init)")
+
+        p[1] = Point(x=3, y=4) 
+        assert(p[1].x == 3, "check p[1].x (after p[1] assignment)")
+        assert(p[0].x == 1, "check p[0].x (after p[1] assignment, p[0] not affected)")        
+
+        // 2. Pointer Arithmetic: *p + Offset (Byte-based)
+        // Point is (i32, i32) -> 8 bytes.
+        // *p + 4 should point to the 'y' member of the first element.
+        auto *p_raw = *p as *i8
+        auto *p_y_raw = *p_raw + 4
+        auto *y_ptr = *p_y_raw as *i32
+        
+        println("y value through byte offset: {}", y_ptr)
+        assert(y_ptr == 2, "check byte-based arithmetic (+4 points to y)")
+
+        // 3. Indexing: p[i] returns T (Value)
+        // p[1] should be the second Point (x=3, y=4)
+        auto pt = p[1]
+        println("pt.x: {}, pt.y: {}", pt.x, pt.y)
+        assert(pt.x == 3, "check indexing p[1].x returns value")
+
+        // 4. Indexing: *p[i] returns *T (Pointer)
+        auto *pt_ptr = *p[1]
+        println("pt_ptr.x: {}, pt_ptr.y: {}", pt_ptr.x, pt_ptr.y)
+        assert(pt_ptr.x == 3, "check pointer indexing *p[1].x returns pointer")
+
+        // 5. p[0] is equivalent to p (both are values)
+        assert(p[0].x == p.x, "check p[0] equivalent to p")
+
+        // 6. Pointer Arithmetic with bigger offset
+        // *p + 8 should point to the second Point.
+        auto *p_next = *p + 8
+        auto *p2 = *p_next as *Point
+        assert(p2.x == 3, "check byte-based arithmetic (+8 points to p[1])")
+
+        unsafe free *p
+    }
+    return 0
+}

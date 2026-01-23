@@ -3003,7 +3003,10 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
       baseType = checkExpr(Idx->Array.get());
     }
   } else {
+    bool old = m_DisableSoulCollapse;
+    m_DisableSoulCollapse = true;
     baseType = checkExpr(Idx->Array.get());
+    m_DisableSoulCollapse = old;
   }
 
   if (!baseType || baseType->toString() == "unknown")
