@@ -16,7 +16,7 @@ import std/io::println
 fn main() -> i32 {
     match 1 {
         1 => { pass 42 } // Error: pass used without a receiver (no 'pass match')
-        // EXPECT: 'pass' used without a receiver. Prefix the expression with 'pass' or assign it to a variable.
+        // EXPECT: E0436
     }
     return 0
 }

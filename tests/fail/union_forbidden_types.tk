@@ -1,9 +1,9 @@
 
-// EXPECT: has restricted type 'bool'
+// EXPECT: E0426
 shape BadBool(as b: bool | as val: u64)
-// EXPECT: has type '^i32' which manages resources
+// EXPECT: E0427
 shape BadUnique(as p: ^i32 | as val: u64)
-// EXPECT: has type '~i32' which manages resources
+// EXPECT: E0427
 shape BadShared(as p: ~i32 | as val: u64)
 
 fn main() -> i32 { return 0; }

@@ -1,13 +1,13 @@
 import std/io::println
 fn get_ref(x:i32) -> &i32 {
-    return &x // EXPECT: Returning reference to parameter 'x' requires explicit dependency declaration (<- x)
+    return &x // EXPECT: E0454
 }
 
 fn bigger(x:i32, y:i32) -> &i32 <- x {
     if (x > y) {
         return &x
     }
-    return &y // EXPECT: Returning reference to parameter 'y' requires explicit dependency declaration (<- y)
+    return &y // EXPECT: E0454
 }
 
 shape RefInt <- val
@@ -29,7 +29,7 @@ fn main() -> i32 {
 
     {
         auto b = 12
-        ref_a.&#val = &b // EXPECT: Object 'ref_a' (lived longer) cannot depend on 'b' (lived shorter)
+        ref_a.&#val = &b // EXPECT: E0456
         println("RefB: {}", ref_a.val)
     }
 

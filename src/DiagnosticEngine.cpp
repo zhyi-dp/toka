@@ -22,7 +22,7 @@ int DiagnosticEngine::ErrorCount = 0;
 
 const char *DiagnosticEngine::getFormatString(DiagID id) {
   switch (id) {
-#define DIAG(ID, Level, Msg)                                                   \
+#define DIAG(ID, Level, Code, Msg)                                             \
   case DiagID::ID:                                                             \
     return Msg;
 #include "toka/DiagnosticDefs.def"
@@ -36,7 +36,7 @@ const char *DiagnosticEngine::getFormatString(DiagID id) {
 
 DiagLevel DiagnosticEngine::getLevel(DiagID id) {
   switch (id) {
-#define DIAG(ID, Level, Msg)                                                   \
+#define DIAG(ID, Level, Code, Msg)                                             \
   case DiagID::ID:                                                             \
     return DiagLevel::Level;
 #include "toka/DiagnosticDefs.def"
@@ -45,6 +45,20 @@ DiagLevel DiagnosticEngine::getLevel(DiagID id) {
     return DiagLevel::Error;
   default:
     return DiagLevel::Error;
+  }
+}
+
+const char *DiagnosticEngine::getCode(DiagID id) {
+  switch (id) {
+#define DIAG(ID, Level, Code, Msg)                                             \
+  case DiagID::ID:                                                             \
+    return Code;
+#include "toka/DiagnosticDefs.def"
+#undef DIAG
+  case DiagID::NUM_DIAGNOSTICS:
+    return "E0000";
+  default:
+    return "E0000";
   }
 }
 
@@ -60,21 +74,22 @@ void DiagnosticEngine::reportImpl(DiagLoc loc, DiagID id,
   // Color codes
   const char *color = "";
   const char *reset = "\033[0m";
-  const char *levelStr = "";
 
   if (level == DiagLevel::Error) {
     color = "\033[1;31m"; // Red Bold
-    levelStr = "error";
+    std::cerr << loc.File << ":" << loc.Line << ":" << loc.Col << ": " << color
+              << "error[" << getCode(id) << "]" << reset << ": " << message
+              << "\n";
   } else if (level == DiagLevel::Warning) {
     color = "\033[1;33m"; // Yellow Bold
-    levelStr = "warning";
+    std::cerr << loc.File << ":" << loc.Line << ":" << loc.Col << ": " << color
+              << "warning[" << getCode(id) << "]" << reset << ": " << message
+              << "\n";
   } else {
     color = "\033[1;36m"; // Cyan Bold
-    levelStr = "note";
+    std::cerr << loc.File << ":" << loc.Line << ":" << loc.Col << ": " << color
+              << "note" << reset << ": " << message << "\n";
   }
-
-  std::cerr << loc.File << ":" << loc.Line << ":" << loc.Col << ": " << color
-            << levelStr << ": " << reset << message << "\n";
 
   // Kill Switch
   if (ErrorCount > 20) {

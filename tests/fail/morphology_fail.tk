@@ -26,7 +26,7 @@ fn test_decl_mismatch() {
 
 fn test_addr_mismatch() {
     auto val = 10;
-    // EXPECT: Pointer morphology mismatch: expected explicit '*' (from LHS/Target), found '&' (from RHS/Source)
+    // EXPECT: E0448
     auto *p = &val;
 }
 

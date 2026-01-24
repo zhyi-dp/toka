@@ -1,6 +1,6 @@
 
 pub fn main() -> void {
     auto x#: i32 = unset;
-    // EXPECT: Use of unset variable or member 'x'
+    // EXPECT: E0410
     auto y = x; 
 }

@@ -75,7 +75,7 @@ def main():
         # This ignores 'note:', 'warning:', or debug prints.
         error_lines = [
             line for line in raw_output.splitlines() 
-            if "error:" in line
+            if "error" in line and ":" in line
         ]
         # Reconstruct the "clean" output for verification
         filtered_output = "\n".join(error_lines)
@@ -85,13 +85,13 @@ def main():
         
         # Case A: Unexpected Pass (Exit Code 0)
         if exit_code == 0:
-            print(f"Testing {test_name:<35} {RED}FAIL (Unexpectedly Passed){NC}")
+            print(f"Testing {FAIL_TEST_DIR}/{test_name:<35} {RED}FAIL (Unexpectedly Passed){NC}")
             total_failed += 1
             continue
             
         # Case B: No Expectations defined
         if not expected_errors:
-            print(f"Testing {test_name:<35} {GREEN}PASS (Rejected - No Checks){NC}")
+            print(f"Testing {FAIL_TEST_DIR}/{test_name:<35} {GREEN}PASS (Rejected - No Checks){NC}")
             total_passed += 1
             continue
 
@@ -103,7 +103,7 @@ def main():
                 missing_expectations.append(expect)
         
         if missing_expectations:
-            print(f"Testing {test_name:<35} {RED}FAIL (Missing Expected Errors){NC}")
+            print(f"Testing {FAIL_TEST_DIR}/{test_name:<35} {RED}FAIL (Missing Expected Errors){NC}")
             print(f"  {YELLOW}Expected but not found in error lines:{NC}")
             for m in missing_expectations:
                 print(f"    - '{m}'")
@@ -119,7 +119,7 @@ def main():
 
             total_failed += 1
         else:
-            print(f"Testing {test_name:<35} {GREEN}PASS (Verified){NC}")
+            print(f"Testing {FAIL_TEST_DIR}/{test_name:<35} {GREEN}PASS (Verified){NC}")
             total_passed += 1
 
     print("---------------------------------------")

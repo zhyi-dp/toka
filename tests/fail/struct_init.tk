@@ -16,11 +16,11 @@ shape Point (x: i32, y: i32)
 fn main() {
     // 1. Unknown field
     auto p1 = Point(z = 10, y = 20)
-    // EXPECT: Shape 'Point' has no field named 'z'
+    // EXPECT: E0417
 
     // 2. Type mismatch
     auto p2 = Point(x = "hello", y = 20)
-    // EXPECT: Type mismatch for field 'x': expected i32, got str
+    // EXPECT: E0422
 
     // 3. Missing field
     auto p3 = Point(x = 10)

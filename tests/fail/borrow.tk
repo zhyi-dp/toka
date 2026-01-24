@@ -17,6 +17,6 @@ fn main() -> i32 {
     auto x# = 10
     auto &y# = &x#
     println("x is {}", x) // Error: x is mutably borrowed by y
-    // EXPECT: Cannot access 'x' while it is mutably borrowed
+    // EXPECT: E0441
     return 0
 }

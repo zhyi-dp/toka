@@ -18,6 +18,6 @@ fn main() -> i32 {
     auto ^q = ^p // Explicit Move
     // p is now invalid
     auto x = p.v // Error: moved
-    // EXPECT: Use of moved value: 'p'
+    // EXPECT: E0438
     return 0
 }

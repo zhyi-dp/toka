@@ -4,18 +4,18 @@ fn main() {
     auto a = 32
     
     // 1. Illegal unique pointer from stack variable
-    // EXPECT: Smart pointer sigil '^' cannot be applied to stack variable; use 'new' or assign from existing smart pointer
+    // EXPECT: E0449
     auto ^p1 = ^a
     
     // 2. Illegal shared pointer from stack variable
-    // EXPECT: Smart pointer sigil '~' cannot be applied to stack variable; use 'new' or assign from existing smart pointer
+    // EXPECT: E0449
     auto ~p2 = ~a
     
     // 3. raw pointer from stack variable is legal
     auto *p3 = *a
     
     // 4. Illegal smart pointer cast
-    // EXPECT: Smart pointer sigil '^' cannot be applied to stack variable; use 'new' or assign from existing smart pointer
+    // EXPECT: E0449
     auto ^p4 = (a as Addr) as ^i32
 
     return

@@ -7,7 +7,7 @@ shape DangerousUnion<T> (
 
 fn main() -> i32 {
     // T becomes bool, which is forbidden in Unions via blacklisting
-    // EXPECT: has restricted type 'bool'
+    // EXPECT: E0426
     auto u = DangerousUnion<bool>(val = true);
     return 0;
 }

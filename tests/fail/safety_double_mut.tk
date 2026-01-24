@@ -15,7 +15,6 @@ fn main() -> i32 {
     auto x# = 10
     auto &r1 = &x#
     auto &r2 = &x# // Error: already borrowed
-    // EXPECT: Cannot access 'x' while it is mutably borrowed
-    // EXPECT: cannot mutably borrow 'x' because it is already borrowed
+    // EXPECT: E0431
     0
 }

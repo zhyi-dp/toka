@@ -31,7 +31,7 @@ struct DiagLoc {
 enum class DiagLevel { Warning, Error, Note };
 
 enum class DiagID {
-#define DIAG(ID, Level, Msg) ID,
+#define DIAG(ID, Level, Code, Msg) ID,
 #include "toka/DiagnosticDefs.def"
 #undef DIAG
   NUM_DIAGNOSTICS
@@ -63,6 +63,7 @@ private:
                          const std::string &message);
   static const char *getFormatString(DiagID id);
   static DiagLevel getLevel(DiagID id);
+  static const char *getCode(DiagID id);
 
   // Poor Man's Format:
 

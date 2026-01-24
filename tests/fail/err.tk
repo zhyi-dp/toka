@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import std/io::printf
-// EXPECT: Symbol 'printf' not found in module 'std/io'
+// EXPECT: E0404
 
 shape Point (
     x: i32,

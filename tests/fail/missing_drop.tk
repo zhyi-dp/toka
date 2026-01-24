@@ -27,7 +27,7 @@ impl Resource @encap {
 
 shape Holder (
     r: Resource // HasDrop=true because Resource has drop
-    // EXPECT: Shape 'Holder' contains managed resources but does not implement 'drop'
+    // EXPECT: E0446
 )
 
 // Holder does NOT implement drop. This should fail compilation.
