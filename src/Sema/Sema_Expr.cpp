@@ -598,12 +598,12 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // [Constitution] Soul Collapse (The Hat-Off Transduction)
     // "Variable name without hat collapses to value (Soul)."
     bool shouldCollapse = true;
-    if (m_DisableSoulCollapse || m_OuterPointerSigil != TokenType::TokenNone) {
+    if (m_DisableSoulCollapse) {
       shouldCollapse = false;
     }
 
-    if (shouldCollapse && Info.TypeObj) {
-      auto current = Info.TypeObj;
+    auto current = Info.TypeObj;
+    if (shouldCollapse && current) {
       while (current && (current->isPointer() || current->isReference() ||
                          current->isSmartPointer())) {
         if (current->IsNullable) {
@@ -615,11 +615,22 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           break;
         current = inner;
       }
-      if (current != Info.TypeObj)
-        return current;
     }
 
-    return Info.TypeObj;
+    // [Constitution 1.3] Soul Attributes Rule:
+    // Identifiers (x, p) refer to the SOUL. Sigils (*p, ^p) refer to the
+    // IDENTITY. Trailing attributes (#, ?) on an identifier always apply to the
+    // soul. If we are looking at the soul (either we collapsed or it's a
+    // value), apply the attributes. If we are looking at the identity (collapse
+    // disabled), keep handle attributes and ignore trailing soul attributes for
+    // now.
+    if (shouldCollapse || (current && !current->isPointer())) {
+      if (current) {
+        return current->withAttributes(ve->IsValueMutable, ve->IsValueNullable);
+      }
+    }
+
+    return current;
   } else if (auto *Cast = dynamic_cast<CastExpr *>(E)) {
     auto srcType = checkExpr(Cast->Expression.get());
     auto targetType = resolveType(toka::Type::fromString(Cast->TargetType));
@@ -690,9 +701,20 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         SymbolInfo *Info = nullptr;
         if (CurrentScope->findSymbol(Var->Name, Info)) {
           if (!m_InLHS) {
-            Info->ImmutableBorrowCount++;
+            bool isExclusive = targetInner->IsWritable;
+            if (isExclusive) {
+              if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+                error(Cast, DiagID::ERR_BORROW_MUT, Var->Name);
+              }
+              Info->IsMutablyBorrowed = true;
+            } else {
+              if (Info->IsMutablyBorrowed) {
+                error(Cast, DiagID::ERR_BORROW_MUT, Var->Name);
+              }
+              Info->ImmutableBorrowCount++;
+            }
             m_LastBorrowSource = Var->Name;
-            m_CurrentStmtBorrows.push_back({Var->Name, false});
+            m_CurrentStmtBorrows.push_back({Var->Name, isExclusive});
           }
         }
       }
@@ -1884,10 +1906,9 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
     }
   }
 
-  bool oldDisable = m_DisableSoulCollapse;
-  m_DisableSoulCollapse = true;
+  // [Fix] Allow soul collapse when checking RHS. Identifiers like 'p' should
+  // refer to the soul so that sigils can correctly elevate exactly one level.
   auto rhsType = checkExpr(Unary->RHS.get());
-  m_DisableSoulCollapse = oldDisable;
 
   // Assuming checkExpr returns object now.
   if (!rhsType || rhsType->toString() == "unknown")
@@ -1911,122 +1932,89 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
     SymbolInfo *Info = nullptr;
     if (CurrentScope->findSymbol(Var->Name, Info)) {
+      std::shared_ptr<toka::Type> physType = Info->TypeObj;
+
       if (Unary->Op == TokenType::Ampersand) {
-        // Use TypeObj if available
-        auto innerType = Info->TypeObj;
-
-        // Implicit Dereference for Smart Pointers: &p -> &Pointee
-        if (innerType->isUniquePtr() || innerType->isSharedPtr()) {
-          if (auto ptrInner = innerType->getPointeeType()) {
-            innerType = ptrInner;
-          }
-        }
-
-        // [Toka 1.3] Borrow Duality Rule:
-        // Handle attribute (# on &) -> Identity Writability (Reseatable)
-        // Soul attribute (# on var) -> Soul Writability (Mutation)
+        auto innerType = rhsType;
         bool handleMutable = Unary->IsRebindable;
-        bool soulMutable = innerType->IsWritable;
+        bool soulMutable = rhsType->IsWritable;
 
-        if (handleMutable && !Info->IsMutable()) {
-          // Restricted: Reseatable handle typically requires some scope
-          // permission, but for simple references we follow
-          // Unary->IsRebindable.
-        }
-
-        // The reference's soul should match the RHS object's soul.
-        innerType =
-            innerType->withAttributes(soulMutable, innerType->IsNullable);
         auto refType = std::make_shared<toka::ReferenceType>(innerType);
         refType->IsNullable = Unary->HasNull;
-        refType->IsWritable = handleMutable; // Handle attribute
+        refType->IsWritable = handleMutable;
 
-        // [Toka 1.3] Borrow Duality Rule:
-        // Handle attribute (# on &) -> Determines Borrow Kind (Exclusive vs
-        // Shared) Soul attribute (# on var) -> Transmitted to reference soul.
-        bool isExclusive = Unary->IsRebindable;
-
-        if (isExclusive) {
-          if (!m_InLHS)
-            Info->IsMutablyBorrowed = true;
-        } else {
-          if (!m_InLHS)
-            Info->ImmutableBorrowCount++;
-        }
-
-        m_LastBorrowSource = Var->Name;
+        bool isExclusive = soulMutable;
         if (!m_InLHS) {
+          if (isExclusive) {
+            if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+              error(Unary, DiagID::ERR_BORROW_MUT, Var->Name);
+            }
+            Info->IsMutablyBorrowed = true;
+          } else {
+            if (Info->IsMutablyBorrowed) {
+              error(Unary, DiagID::ERR_BORROW_MUT, Var->Name);
+            }
+            Info->ImmutableBorrowCount++;
+          }
+          m_LastBorrowSource = Var->Name;
           m_CurrentStmtBorrows.push_back({Var->Name, isExclusive});
         }
-
         return refType;
-      } else if (Unary->Op == TokenType::Caret) {
-        if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
+      }
+
+      if (Unary->Op == TokenType::Star) {
+        if (physType && physType->isRawPointer()) {
+          return physType->withAttributes(Unary->IsRebindable, Unary->HasNull);
+        }
+        // [New] Array-to-Pointer Decay for Variable Elevation
+        if (physType && physType->isArray()) {
+          auto arr = std::dynamic_pointer_cast<toka::ArrayType>(physType);
+          auto res = std::make_shared<toka::RawPointerType>(arr->ElementType);
+          res->IsWritable = Unary->IsRebindable;
+          res->IsNullable = Unary->HasNull;
+          return res;
+        }
+        auto res = std::make_shared<toka::RawPointerType>(rhsType);
+        res->IsWritable = Unary->IsRebindable;
+        res->IsNullable = Unary->HasNull;
+        return res;
+      }
+
+      if (Unary->Op == TokenType::Caret) {
+        if (!m_InLHS &&
+            (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0)) {
           error(Unary, "cannot move '" + Var->Name + "' while it is borrowed");
         }
-        // Move Semantics: Only allowed if already same smart pointer
-        // morphology (Identity Check using Info).
-        if (Info->TypeObj && Info->TypeObj->isUniquePtr()) {
-          // Identity Restoration: Move from Soul back to Identity
-          // Preserve writable (#) and nullable (?) attributes from rhsType
-          return Info->TypeObj->withAttributes(rhsType->IsWritable,
-                                               rhsType->IsNullable);
+        if (physType && physType->isUniquePtr()) {
+          return physType->withAttributes(Unary->IsRebindable, Unary->HasNull);
         }
-        error(Unary, DiagID::ERR_SMART_PTR_FROM_STACK, "^");
+        auto res = std::make_shared<toka::UniquePointerType>(rhsType);
+        res->IsWritable = Unary->IsRebindable;
+        res->IsNullable = Unary->HasNull;
+        return res;
+      }
 
-        auto unq = std::make_shared<toka::UniquePointerType>(rhsType);
-        unq->IsWritable = Unary->IsRebindable;
-        unq->IsNullable = Unary->HasNull;
-        return unq;
-      } else if (Unary->Op == TokenType::Tilde) {
-        if (Info->TypeObj && Info->TypeObj->isSharedPtr()) {
-          return Info->TypeObj->withAttributes(rhsType->IsWritable,
-                                               rhsType->IsNullable);
+      if (Unary->Op == TokenType::Tilde) {
+        if (physType && physType->isSharedPtr()) {
+          return physType->withAttributes(Unary->IsRebindable, Unary->HasNull);
         }
-        error(Unary, DiagID::ERR_SMART_PTR_FROM_STACK, "~");
-
-        auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
-        sh->IsNullable = Unary->HasNull;
-        sh->IsWritable = Unary->IsRebindable;
-        return sh;
-      } else if (Unary->Op == TokenType::Star) {
-        // Identity (*) - Manual Elevation from Soul to Identity
-        // If Var is *p, Info is *p. We return *p.
-        if (Info->TypeObj && Info->TypeObj->isRawPointer())
-          return Info->TypeObj->withAttributes(rhsType->IsWritable,
-                                               rhsType->IsNullable);
-
-        // Fallback: If Var is Array, decays to pointer?
-        if (Info->TypeObj && Info->TypeObj->isArray()) {
-          auto arr = std::dynamic_pointer_cast<toka::ArrayType>(Info->TypeObj);
-          return std::make_shared<toka::RawPointerType>(arr->ElementType);
-        }
-
-        // Identity (*)
-        std::shared_ptr<toka::Type> inner;
-        if (rhsType->isArray()) {
-          // Decay Array to Pointer-to-Element
-          auto arr = std::dynamic_pointer_cast<toka::ArrayType>(rhsType);
-          inner = arr->ElementType;
-        } else if (rhsType->isPointer()) {
-          inner = rhsType->getPointeeType();
-          if (!inner)
-            inner = rhsType;
-        } else {
-          inner = rhsType;
-        }
-        auto rawPtr = std::make_shared<toka::RawPointerType>(inner);
-        rawPtr->IsNullable = Unary->HasNull;
-        rawPtr->IsWritable = Unary->IsRebindable;
-        return rawPtr;
+        auto res = std::make_shared<toka::SharedPointerType>(rhsType);
+        res->IsWritable = Unary->IsRebindable;
+        res->IsNullable = Unary->HasNull;
+        return res;
       }
     }
   }
 
+  // Fallback for non-variable expressions
   if (Unary->Op == TokenType::Star) {
-    // Identity (*) on non-variable
+    // Identity (*)
     std::shared_ptr<toka::Type> inner;
-    if (rhsType->isPointer()) {
+    if (rhsType->isArray()) {
+      // Decay Array to Pointer-to-Element
+      auto arr = std::dynamic_pointer_cast<toka::ArrayType>(rhsType);
+      inner = arr->ElementType;
+    } else if (rhsType->isPointer()) {
       inner = rhsType->getPointeeType();
       if (!inner)
         inner = rhsType;
@@ -2037,35 +2025,6 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
     rawPtr->IsNullable = Unary->HasNull;
     rawPtr->IsWritable = Unary->IsRebindable;
     return rawPtr;
-  }
-
-  if (Unary->Op == TokenType::Ampersand) {
-    if (rhsType->isReference())
-      return rhsType;
-    auto ref = std::make_shared<toka::ReferenceType>(rhsType);
-    ref->IsNullable = Unary->HasNull;
-    ref->IsWritable = Unary->IsRebindable;
-    return ref;
-  }
-  if (Unary->Op == TokenType::Caret) {
-    if (rhsType->isUniquePtr())
-      return rhsType;
-    error(Unary, DiagID::ERR_SMART_PTR_FROM_STACK, "^");
-
-    auto unq = std::make_shared<toka::UniquePointerType>(rhsType);
-    unq->IsNullable = Unary->HasNull;
-    unq->IsWritable = Unary->IsRebindable;
-    return unq;
-  }
-  if (Unary->Op == TokenType::Tilde) {
-    if (rhsType->isSharedPtr())
-      return rhsType;
-    error(Unary, DiagID::ERR_SMART_PTR_FROM_STACK, "~");
-
-    auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
-    sh->IsNullable = Unary->HasNull;
-    sh->IsWritable = Unary->IsRebindable;
-    return sh;
   }
   if (Unary->Op == TokenType::PlusPlus || Unary->Op == TokenType::MinusMinus) {
     if (!rhsType->isInteger()) {

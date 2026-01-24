@@ -10,6 +10,8 @@ alias AliasNode = GenericNode<i32>
 type StrongNode = GenericNode<i32>
 
 fn main() -> i32 {
+    //auto a# = 10
+    //a# = StrongNode(val = 10)
     auto n1# = AliasNode(val = 10)
     auto n2 = GenericNode<i32>(val = 20)
     
@@ -20,7 +22,7 @@ fn main() -> i32 {
 
     auto s1# = StrongNode(val = 30)
     auto s2 = GenericNode<i32>(val = 40)
-    // EXCEPT: assignment type mismatch: cannot assign 'GenericNode_M_i32' to 'StrongNode#'
+    // EXCEPT: E0408 Cannot convert type
     s1# = s2 
     println("Strong work, s1.val: {}, s2.val: {}", s1.val, s2.val)
     assert(s1.val == s2.val, "Strong work")

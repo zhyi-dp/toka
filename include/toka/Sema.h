@@ -71,10 +71,13 @@ struct SymbolInfo {
   bool IsSoulMutable() const {
     if (!TypeObj)
       return false;
+    // For pointers/references, we care about whether the POINTED-TO value is
+    // mutable.
     if (TypeObj->isPointer()) {
-      auto ptr = std::dynamic_pointer_cast<toka::PointerType>(TypeObj);
-      return ptr->getPointeeType()->IsWritable;
+      auto pointee = TypeObj->getPointeeType();
+      return pointee && pointee->IsWritable;
     }
+    // For non-pointers, identity and soul are at the same level of mutability.
     return TypeObj->IsWritable;
   }
 
@@ -101,8 +104,10 @@ public:
   void define(const std::string &Name, const SymbolInfo &Info) {
     Symbols[Name] = Info;
     if (!Info.BorrowedFrom.empty()) {
-      ActiveBorrows[Name] = {Info.BorrowedFrom,
-                             Info.IsReference() && Info.IsMutable()};
+      // Use IsSoulMutable() to determine if this is an exclusive (mutable)
+      // borrow. Identity mutability (IsRebindable) doesn't matter for the
+      // borrow status of the source.
+      ActiveBorrows[Name] = {Info.BorrowedFrom, Info.IsSoulMutable()};
     }
   }
 

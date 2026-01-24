@@ -119,6 +119,7 @@ private:
   std::map<std::string, TokaSymbol> m_Symbols;
   std::string m_CurrentSelfType;
   std::map<std::string, llvm::Value *> m_NamedValues;
+  bool m_InLHS = false;
 
   // NOTE: These are NOT legacy. They are essential context tracking maps.
   // Although m_ValueElementTypes is redundant with m_Symbols for Variables, it

@@ -52,7 +52,7 @@ def main():
                 if '// EXPECT:' in line:
                     parts = line.split('// EXPECT:', 1)
                     if len(parts) > 1:
-                        msg = parts[1].strip()
+                        msg = parts[1].strip().split()[0]
                         if msg:
                             expected_errors.append(msg)
         
@@ -119,7 +119,7 @@ def main():
 
             total_failed += 1
         else:
-            print(f"Testing {FAIL_TEST_DIR}/{test_name:<35} {GREEN}PASS (Verified){NC}")
+            #print(f"Testing {FAIL_TEST_DIR}/{test_name:<35} {GREEN}PASS (Verified){NC}")
             total_passed += 1
 
     print("---------------------------------------")

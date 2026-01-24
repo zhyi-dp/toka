@@ -210,6 +210,10 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
     targetLHS = ue->RHS.get();
   }
 
+  m_InLHS = true;
+  // Physically we don't need to 'gen' the LHS here yet if using emitAssignment
+  // structure. But we need to know the address.
+
   // 2. Resolve LHS Metadata
   TokaSymbol *symLHS = nullptr;
   llvm::Value *lhsAlloca = nullptr;
@@ -283,6 +287,7 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
     }
   } else {
     // Normal Expr
+    m_InLHS = false;
     PhysEntity rhs_ent = genExpr(rhsExpr).load(m_Builder);
     rhsVal = rhs_ent.load(m_Builder);
   }
@@ -308,6 +313,7 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
     emitSoulAssignment(soulAddr, rhsVal, destTy);
   }
 
+  m_InLHS = false;
   return PhysEntity(rhsVal, "void", rhsVal->getType(), false);
 }
 
@@ -635,8 +641,8 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   llvm::Type *rhsType = rhs->getType();
 
   // [Fix] Implicit Smart Pointer Dereference (Bridge Sema -> CodeGen)
-  // If Sema authorized a Value usage (resolvedType is generic) but we generated
-  // a Pointer/Handle, we must unwrap/load the Soul.
+  // If Sema authorized a Value usage (resolvedType is generic) but we
+  // generated a Pointer/Handle, we must unwrap/load the Soul.
 
   auto unwrapSmartPtr = [&](llvm::Value *val,
                             const Expr *expr) -> llvm::Value * {
@@ -649,11 +655,11 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 
     // If we differ from ResolvedType (e.g. Sema says i32, we have {i32*,
     // count*} or i32*) Simple heuristic: If we have a mismatch with the OTHER
-    // operand that is solved by dereferencing OR if the ResolvedType itself is
-    // not a SmartPointer/Pointer.
+    // operand that is solved by dereferencing OR if the ResolvedType itself
+    // is not a SmartPointer/Pointer.
 
-    // Check if expr->ResolvedType is NOT a pointer/smart-ptr, but we represent
-    // one.
+    // Check if expr->ResolvedType is NOT a pointer/smart-ptr, but we
+    // represent one.
     bool semaIsValue = !expr->ResolvedType->isPointer() &&
                        !expr->ResolvedType->isReference() &&
                        !expr->ResolvedType->isSmartPointer();
@@ -968,7 +974,8 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
                                sym.morphology == Morphology::Shared);
 
         if (isIdentityPeek) {
-          // [Constitution 1.3] Identity Peek: &ptr peeks at the stored identity
+          // [Constitution 1.3] Identity Peek: &ptr peeks at the stored
+          // identity
           llvm::Value *handleSlot = getIdentityAddr(cleanName);
           llvm::Value *ptrVal = m_Builder.CreateLoad(
               m_Builder.getPtrTy(), handleSlot, cleanName + ".peek");
@@ -1367,6 +1374,19 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
     typeName = m_Symbols[baseName].typeName;
   else if (m_TypeToName.count(soulType))
     typeName = m_TypeToName[soulType];
+
+  // [Fix] Move Semantics for Unique Pointers
+  // If we are using a Unique Pointer as an RValue (not in LHS), we must
+  // perform a Move: load the value and then nullify the source alloca to
+  // prevent double-free.
+  if (var->ResolvedType && var->ResolvedType->isUniquePtr() && !m_InLHS &&
+      soulAddr && !llvm::isa<llvm::Function>(soulAddr) &&
+      !llvm::isa<llvm::GlobalVariable>(soulAddr)) {
+    llvm::Value *val = m_Builder.CreateLoad(soulType, soulAddr, "move.val");
+    m_Builder.CreateStore(llvm::ConstantPointerNull::get(m_Builder.getPtrTy()),
+                          soulAddr);
+    return PhysEntity(val, typeName, soulType, false); // Return Value
+  }
 
   return PhysEntity(soulAddr, typeName, soulType, true);
 }
@@ -2514,8 +2534,8 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
 
         if (auto *ve = dynamic_cast<const VariableExpr *>(rawArg)) {
           if (ve->HasConstantValue) {
-            // [Fix] Constants are RValues. Fall through to Temp Materialization
-            // (genExpr)
+            // [Fix] Constants are RValues. Fall through to Temp
+            // Materialization (genExpr)
             val = nullptr;
           } else {
             val = getIdentityAddr(ve->Name);

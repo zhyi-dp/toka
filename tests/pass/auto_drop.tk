@@ -102,7 +102,7 @@ fn main() -> i32 {
         tmp_drop_flag# = false
         ~#p1 = new Resource(id=31, point=Point(x=30,y=1,&drop_flag = &tmp_drop_flag#))
         println("2 after rebind ~#p1")
-        assert(p1_drop_flag == false, "p1_drop_flag should be false because old ~#p1 is not only ßßowned")
+        assert(p1_drop_flag == false, "p1_drop_flag should be false because old ~#p1 is not only owned")
 
         auto ~s2 = ~s1
         println("2 s2_drop_flag: {}", s1_drop_flag)

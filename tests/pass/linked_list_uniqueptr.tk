@@ -47,37 +47,40 @@ pub fn main() -> i32 {
         auto ^node2 = ^node222
     }
     // User's logic + Print checks
-    auto ^#head = new Node(val=0, ^?next=nullptr)  
-    println("head: {}", head.val)
-    assert(head.val == 0, "check head.val")
-    // Push 1
     {
-        for auto i in [1,2,3,4,5] {
-            auto ^next = ^head
-            ^#head = new Node(val=i, ^?next=^next)
-            println("[{}]pushed: {}, address: {}", i, head.val, ^head as OAddr)
-            assert(head.val == i, "check head.val")
-        }
-    }
-    
-    auto &#cursor = ^head as &Node
-    println("&#cursor address {}", &cursor as OAddr)
-    auto i# = 5
-    loop {
-        assert(i >= 0, "check i >= 0")
-        println("[{}]val: {}", i, cursor.val)
-        assert(cursor.val == i, "check cursor.val")
-        i# -= 1
-        if i == 4 {
-            //break
+        auto ^#head = new Node(val=0, ^?next=nullptr)  
+        println("head: {}", head.val)
+        assert(head.val == 0, "check head.val")
+        // Push 1
+        {
+            for auto i in [1,2,3,4,5] {
+                auto ^next = ^head
+                ^#head = new Node(val=i, ^?next=^next)
+                println("[{}]pushed: {}, address: {}", i, head.val, ^head as OAddr)
+                assert(head.val == i, "check head.val")
+            }
         }
         
-        if cursor.^?next is cursor.^next {
-            println("will reseat to {}", cursor.^next as OAddr)
-            &#cursor = cursor.^next as &Node 
-        } else {
-            break
+        auto &#cursor = ^head as &Node
+        println("&#cursor address {}", &cursor as OAddr)
+        auto i# = 5
+        loop {
+            assert(i >= 0, "check i >= 0")
+            println("[{}]val: {}", i, cursor.val)
+            assert(cursor.val == i, "check cursor.val")
+            i# -= 1
+            if i == 4 {
+                //break
+            }
+            
+            if cursor.^?next is cursor.^next {
+                println("will reseat to {}", cursor.^next as OAddr)
+                &#cursor = cursor.^next as &Node 
+            } else {
+                break
+            }
         }
-    }
+        }
+    println("End of main")
     return 0
 }
