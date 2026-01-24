@@ -14,6 +14,7 @@
 #pragma once
 
 #include "toka/AST.h"
+#include "toka/DiagnosticEngine.h"
 #include "toka/Type.h"
 #include <map>
 #include <set>
@@ -54,6 +55,10 @@ struct SymbolInfo {
   }
 
   bool IsReference() const { return TypeObj && TypeObj->isReference(); }
+
+  bool IsBorrowed() const {
+    return IsMutablyBorrowed || ImmutableBorrowCount > 0;
+  }
 
   bool IsUnique() const {
     return TypeObj && TypeObj->typeKind == toka::Type::UniquePtr;
@@ -253,6 +258,12 @@ private:
   std::set<std::string> m_NarrowedPaths;
 
   void error(ASTNode *Node, const std::string &Msg);
+
+  template <typename... Args>
+  void error(ASTNode *Node, DiagID ID, Args &&...args) {
+    HasError = true;
+    DiagnosticEngine::report(Node->Loc, ID, std::forward<Args>(args)...);
+  }
 
   // Scope management
   void enterScope();

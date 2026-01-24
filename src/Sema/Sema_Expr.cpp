@@ -159,18 +159,6 @@ Sema::MorphKind Sema::getSyntacticMorphology(Expr *E) {
     }
   }
 
-  if (E->ResolvedType) {
-    auto m = E->ResolvedType->getMorphology();
-    if (m == toka::Type::Morphology::Raw)
-      return MorphKind::Raw;
-    if (m == toka::Type::Morphology::Unique)
-      return MorphKind::Unique;
-    if (m == toka::Type::Morphology::Shared)
-      return MorphKind::Shared;
-    if (m == toka::Type::Morphology::Reference)
-      return MorphKind::Ref;
-  }
-
   // Binary Expressions: Pointer Arithmetic or Computed Values
   // These produce RValues, which do not need sigils (the strictly-typed
   // checking handles validation).
@@ -322,18 +310,15 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         // Borrow Check Logic
         if (wantMutable) {
           if (!Info->IsMutable()) {
-            error(Addr, "cannot mutably borrow immutable variable '" +
-                            Var->Name + "' (# required)");
+            error(Addr, DiagID::ERR_BORROW_IMMUT, Var->Name);
           }
           if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
-            error(Addr, "cannot mutably borrow '" + Var->Name +
-                            "' because it is already borrowed");
+            error(Addr, DiagID::ERR_BORROW_MUT, Var->Name);
           }
           Info->IsMutablyBorrowed = true;
         } else {
           if (Info->IsMutablyBorrowed) {
-            error(Addr, "cannot borrow '" + Var->Name +
-                            "' because it is mutably borrowed");
+            error(Addr, DiagID::ERR_BORROW_MUT, Var->Name);
           }
           Info->ImmutableBorrowCount++;
         }
@@ -355,10 +340,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     for (auto &f : Rec->Fields) {
       if (seenFields.count(f.first)) {
-        DiagnosticEngine::report(getLoc(Rec), DiagID::ERR_GENERIC_PARSE,
-                                 "duplicate field '{}' in anonymous record",
-                                 f.first);
-        HasError = true;
+        error(Rec, DiagID::ERR_DUPLICATE_FIELD, f.first);
       }
       seenFields.insert(f.first);
 
@@ -400,9 +382,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (auto ptr = std::dynamic_pointer_cast<toka::PointerType>(innerObj)) {
       return ptr->getPointeeType();
     }
-    DiagnosticEngine::report(getLoc(Deref), DiagID::ERR_INVALID_OP,
-                             "dereference", innerObj->toString(), "void");
-    HasError = true;
+    error(Deref, DiagID::ERR_INVALID_OP, "dereference", innerObj->toString(),
+          "void");
     return toka::Type::fromString("unknown");
   } else if (auto *Unary = dynamic_cast<UnaryExpr *>(E)) {
     return checkUnaryExpr(Unary);
@@ -422,17 +403,14 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         }
       }
 
-      DiagnosticEngine::report(getLoc(ve), DiagID::ERR_UNDECLARED, ve->Name);
-      HasError = true;
+      error(ve, DiagID::ERR_UNDECLARED, ve->Name);
       return toka::Type::fromString("unknown");
     }
     if (Info.Moved && !m_InLHS) {
-      DiagnosticEngine::report(getLoc(ve), DiagID::ERR_USE_MOVED, ve->Name);
-      HasError = true;
+      error(ve, DiagID::ERR_USE_MOVED, ve->Name);
     }
     if (Info.IsMutablyBorrowed) {
-      DiagnosticEngine::report(getLoc(ve), DiagID::ERR_BORROW_MUT, ve->Name);
-      HasError = true;
+      error(ve, DiagID::ERR_BORROW_MUT, ve->Name);
     }
 
     // [Annotated AST] Constant Substitution: The Core Fix
@@ -685,9 +663,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               : srcType;
 
       if (!isTypeCompatible(targetInner, srcInner)) {
-        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
-                                 srcType->toString(), Cast->TargetType);
-        HasError = true;
+        error(Cast, DiagID::ERR_CAST_MISMATCH, srcType->toString(),
+              Cast->TargetType);
       }
 
       // Semantic Side-Effect: Register this as a borrow
@@ -721,57 +698,38 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         }
       }
     } else if (targetType->isSmartPointer() && !srcType->isSmartPointer()) {
-      // Rule: Smart Pointer Creation Restriction
-      DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_SMART_PTR_FROM_STACK,
-                               Cast->TargetType[0]);
-      HasError = true;
+      error(Cast, DiagID::ERR_SMART_PTR_FROM_STACK, Cast->TargetType[0]);
     } else if (targetIsRaw &&
                (srcType->isUniquePtr() || srcType->isSharedPtr())) {
-      // [Guard] Explicit Allocation Sourcing Guard
-      // "Identity Intrusion: Managed memory cannot degraded to raw pointer"
-      // "身份僭越：托管内存禁止降级为裸指针"
-      DiagnosticEngine::report(
-          getLoc(Cast), DiagID::ERR_GENERIC_PARSE,
-          "Identity Intrusion: Managed memory ('" + srcType->toString() +
-              "') cannot be degraded to raw pointer ('" + Cast->TargetType +
-              "'). Violation of Allocation Sourcing.");
-      HasError = true;
+      error(Cast, DiagID::ERR_GENERIC_PARSE,
+            "Identity Intrusion: Managed memory ('" + srcType->toString() +
+                "') cannot be degraded to raw pointer ('" + Cast->TargetType +
+                "'). Violation of Allocation Sourcing.");
     } else if (targetIsAddr) {
-      // Rule: Addr can be cast from Addr, Raw Pointer, or Numeric
       if (!(srcIsAddr || srcIsRaw || srcIsNumeric)) {
-        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
-                                 srcType->toString(), Cast->TargetType);
-        HasError = true;
+        error(Cast, DiagID::ERR_CAST_MISMATCH, srcType->toString(),
+              Cast->TargetType);
       }
     } else if (srcIsAddr) {
-      // Rule: Addr can be cast to Addr, Raw Pointer, or Numeric
       if (!(targetIsAddr || targetIsRaw || targetIsNumeric)) {
-        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
-                                 srcType->toString(), Cast->TargetType);
-        HasError = true;
+        error(Cast, DiagID::ERR_CAST_MISMATCH, srcType->toString(),
+              Cast->TargetType);
       }
     } else if (targetIsOAddr) {
-      // Rule: Pointer to OAddr is always allowed
       if (!srcType->isPointer()) {
-        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
-                                 srcType->toString(), Cast->TargetType);
-        HasError = true;
+        error(Cast, DiagID::ERR_CAST_MISMATCH, srcType->toString(),
+              Cast->TargetType);
       }
     } else if (targetIsRaw) {
-      // Rule: Raw Pointer can be cast from Addr, Numeric, Raw Pointer, OR
-      // String (str)
       bool srcIsStr = (srcType->toString() == "str");
       if (!(srcIsAddr || srcIsRaw || srcIsNumeric || srcIsStr)) {
-        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
-                                 srcType->toString(), Cast->TargetType);
-        HasError = true;
+        error(Cast, DiagID::ERR_CAST_MISMATCH, srcType->toString(),
+              Cast->TargetType);
       }
     } else if (srcIsRaw) {
-      // Rule: Raw Pointer can be cast to Addr, Numeric, or Raw Pointer
       if (!(targetIsAddr || targetIsRaw || targetIsNumeric)) {
-        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
-                                 srcType->toString(), Cast->TargetType);
-        HasError = true;
+        error(Cast, DiagID::ERR_CAST_MISMATCH, srcType->toString(),
+              Cast->TargetType);
       }
     } else if (!srcType->equals(*targetType)) {
       // Rule: Union Reinterpretation
@@ -797,16 +755,12 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           }
         }
         if (!found) {
-          // Fallback: check nested tuple/struct layout compatibility if needed?
-          // The design doc says: "TargetType must be one of the variants".
-          DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
-                                   srcType->toString(), Cast->TargetType);
-          HasError = true;
+          error(Cast, DiagID::ERR_CAST_MISMATCH, srcType->toString(),
+                Cast->TargetType);
         }
       } else if (!isTypeCompatible(targetType, srcType)) {
-        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
-                                 srcType->toString(), Cast->TargetType);
-        HasError = true;
+        error(Cast, DiagID::ERR_CAST_MISMATCH, srcType->toString(),
+              Cast->TargetType);
       }
     }
 
@@ -938,20 +892,16 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     if (isReceiver) {
       if (thenType == "void" && !allPathsJump(ie->Then.get()))
-        DiagnosticEngine::report(getLoc(ie->Then.get()),
-                                 DiagID::ERR_YIELD_VALUE_REQUIRED, "if branch");
+        error(ie->Then.get(), DiagID::ERR_YIELD_VALUE_REQUIRED, "if branch");
       if (!ie->Else)
-        DiagnosticEngine::report(getLoc(ie), DiagID::ERR_YIELD_ELSE_REQUIRED);
+        error(ie, DiagID::ERR_YIELD_ELSE_REQUIRED);
       else if (elseType == "void" && !allPathsJump(ie->Else.get()))
-        DiagnosticEngine::report(getLoc(ie->Else.get()),
-                                 DiagID::ERR_YIELD_VALUE_REQUIRED,
-                                 "else branch");
+        error(ie->Else.get(), DiagID::ERR_YIELD_VALUE_REQUIRED, "else branch");
     }
 
     if (thenType != "void" && elseType != "void" &&
         !isTypeCompatible(thenType, elseType)) {
-      DiagnosticEngine::report(getLoc(ie), DiagID::ERR_BRANCH_TYPE_MISMATCH,
-                               "If", thenType, elseType);
+      error(ie, DiagID::ERR_BRANCH_TYPE_MISMATCH, "If", thenType, elseType);
     }
     return toka::Type::fromString((thenType != "void") ? thenType : elseType);
   } else if (auto *we = dynamic_cast<WhileExpr *>(E)) {
@@ -985,26 +935,21 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     if (isReceiver) {
       if (bodyType == "void" && !allPathsJump(we->Body.get()))
-        DiagnosticEngine::report(getLoc(we->Body.get()),
-                                 DiagID::ERR_YIELD_VALUE_REQUIRED,
-                                 "while loop");
+        error(we->Body.get(), DiagID::ERR_YIELD_VALUE_REQUIRED, "while loop");
       if (!we->ElseBody)
-        DiagnosticEngine::report(getLoc(we), DiagID::ERR_YIELD_OR_REQUIRED,
-                                 "while");
+        error(we, DiagID::ERR_YIELD_OR_REQUIRED, "while");
       else if (elseType == "void" && !allPathsJump(we->ElseBody.get()))
-        DiagnosticEngine::report(getLoc(we->ElseBody.get()),
-                                 DiagID::ERR_YIELD_VALUE_REQUIRED,
-                                 "'or' block");
+        error(we->ElseBody.get(), DiagID::ERR_YIELD_VALUE_REQUIRED,
+              "'or' block");
     }
 
     if (bodyType != "void" && !we->ElseBody) {
-      DiagnosticEngine::report(getLoc(we), DiagID::ERR_YIELD_OR_REQUIRED,
-                               "while");
+      error(we, DiagID::ERR_YIELD_OR_REQUIRED, "while");
     }
     if (bodyType != "void" && elseType != "void" &&
         !isTypeCompatible(bodyType, elseType)) {
-      DiagnosticEngine::report(getLoc(we), DiagID::ERR_BRANCH_TYPE_MISMATCH,
-                               "While loop", bodyType, elseType);
+      error(we, DiagID::ERR_BRANCH_TYPE_MISMATCH, "While loop", bodyType,
+            elseType);
     }
     return toka::Type::fromString((bodyType != "void") ? bodyType : elseType);
   } else if (auto *le = dynamic_cast<LoopExpr *>(E)) {
@@ -1028,8 +973,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       m_ControlFlowStack.pop_back();
 
     if (isReceiver && res == "void" && !allPathsJump(le->Body.get())) {
-      DiagnosticEngine::report(getLoc(le), DiagID::ERR_YIELD_VALUE_REQUIRED,
-                               "loop");
+      error(le, DiagID::ERR_YIELD_VALUE_REQUIRED, "loop");
     }
     return toka::Type::fromString(res);
   } else if (auto *fe = dynamic_cast<ForExpr *>(E)) {
@@ -1079,25 +1023,21 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     if (isReceiver) {
       if (bodyType == "void" && !allPathsJump(fe->Body.get()))
-        DiagnosticEngine::report(getLoc(fe->Body.get()),
-                                 DiagID::ERR_YIELD_VALUE_REQUIRED, "for loop");
+        error(fe->Body.get(), DiagID::ERR_YIELD_VALUE_REQUIRED, "for loop");
       if (!fe->ElseBody)
-        DiagnosticEngine::report(getLoc(fe), DiagID::ERR_YIELD_OR_REQUIRED,
-                                 "for");
+        error(fe, DiagID::ERR_YIELD_OR_REQUIRED, "for");
       else if (elseType == "void" && !allPathsJump(fe->ElseBody.get()))
-        DiagnosticEngine::report(getLoc(fe->ElseBody.get()),
-                                 DiagID::ERR_YIELD_VALUE_REQUIRED,
-                                 "'or' block");
+        error(fe->ElseBody.get(), DiagID::ERR_YIELD_VALUE_REQUIRED,
+              "'or' block");
     }
 
     if (bodyType != "void" && !fe->ElseBody) {
-      DiagnosticEngine::report(getLoc(fe), DiagID::ERR_YIELD_OR_REQUIRED,
-                               "for");
+      error(fe, DiagID::ERR_YIELD_OR_REQUIRED, "for");
     }
     if (bodyType != "void" && elseType != "void" &&
         !isTypeCompatible(bodyType, elseType)) {
-      DiagnosticEngine::report(getLoc(fe), DiagID::ERR_BRANCH_TYPE_MISMATCH,
-                               "For loop", bodyType, elseType);
+      error(fe, DiagID::ERR_BRANCH_TYPE_MISMATCH, "For loop", bodyType,
+            elseType);
     }
     return toka::Type::fromString((bodyType != "void") ? bodyType : elseType);
   } else if (auto *pe = dynamic_cast<PassExpr *>(E)) {
@@ -1147,8 +1087,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           if (it->ExpectedType == "void") {
             it->ExpectedType = valType;
           } else if (!isTypeCompatible(it->ExpectedType, valType)) {
-            DiagnosticEngine::report(getLoc(pe), DiagID::ERR_TYPE_MISMATCH,
-                                     valType, it->ExpectedType);
+            error(pe, DiagID::ERR_TYPE_MISMATCH, valType, it->ExpectedType);
           }
           break;
         }
@@ -1156,7 +1095,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     if (!foundReceiver) {
-      DiagnosticEngine::report(getLoc(pe), DiagID::ERR_PASS_NO_RECEIVER);
+      error(pe, DiagID::ERR_PASS_NO_RECEIVER);
     }
 
     return toka::Type::fromString((isPrefixMatch || isPrefixIf || isPrefixFor ||
@@ -1206,8 +1145,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         if (target->ExpectedType == "void") {
           target->ExpectedType = valType;
         } else if (!isTypeCompatible(target->ExpectedType, valType)) {
-          DiagnosticEngine::report(getLoc(be), DiagID::ERR_TYPE_MISMATCH,
-                                   valType, target->ExpectedType);
+          error(be, DiagID::ERR_TYPE_MISMATCH, valType, target->ExpectedType);
         }
       }
     }
@@ -1306,9 +1244,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               std::string tdDeclFile =
                   DiagnosticEngine::SrcMgr->getFullSourceLoc(TD->Loc).FileName;
               if (metCallFile != tdDeclFile && !sameModule) {
-                DiagnosticEngine::report(
-                    getLoc(Met), DiagID::ERR_METHOD_PRIVATE, Met->Method,
-                    "trait " + traitName, getModuleName(CurrentModule));
+                error(Met, DiagID::ERR_METHOD_PRIVATE, Met->Method,
+                      "trait " + traitName, getModuleName(CurrentModule));
               }
             }
             return toka::Type::fromString(M->ReturnType);
@@ -1374,9 +1311,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               DiagnosticEngine::SrcMgr->getFullSourceLoc(FD->Loc).FileName;
 
           if (metCallFile != fdDeclFile && !sameModule) {
-            DiagnosticEngine::report(getLoc(Met), DiagID::ERR_METHOD_PRIVATE,
-                                     Met->Method, soulType,
-                                     getModuleName(CurrentModule));
+            error(Met, DiagID::ERR_METHOD_PRIVATE, Met->Method, soulType,
+                  getModuleName(CurrentModule));
           }
         }
       }
@@ -1409,8 +1345,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       return ObjTypeObj->withAttributes(ObjTypeObj->IsWritable, false);
     }
 
-    DiagnosticEngine::report(getLoc(Met), DiagID::ERR_NO_SUCH_MEMBER, ObjType,
-                             Met->Method);
+    error(Met, DiagID::ERR_NO_SUCH_MEMBER, ObjType, Met->Method);
     return toka::Type::fromString("unknown");
   } else if (auto *Init = dynamic_cast<InitStructExpr *>(E)) {
     return checkShapeInit(Init);
@@ -1642,10 +1577,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               }
 
               if (!accessible) {
-                error(Memb, "field '" + requestedMember + "' of struct '" +
-                                ObjType +
-                                "' is private and not accessible from this "
-                                "context");
+                error(Memb, DiagID::ERR_MEMBER_PRIVATE, requestedMember,
+                      ObjType);
               }
             }
           }
@@ -1712,8 +1645,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           }
         }
       }
-      error(Memb, "struct/union '" + ObjType + "' has no member named '" +
-                      Memb->Member + "'");
+      error(Memb, DiagID::ERR_NO_SUCH_MEMBER, ObjType, Memb->Member);
+
       return toka::Type::fromString("unknown");
     } else {
       auto soulType = objTypeObj;
@@ -1731,14 +1664,15 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
             Memb->Index = idx; // Set index for CodeGen
             return TT->Elements[idx];
           } else {
-            error(Memb, "tuple index " + Memb->Member + " out of range");
+            error(Memb, DiagID::ERR_TUPLE_INDEX_OOB, Memb->Member,
+                  std::to_string(TT->Elements.size()));
           }
         } catch (...) {
-          error(Memb, "invalid member access on tuple: " + Memb->Member);
+          error(Memb, DiagID::ERR_MEMBER_NOT_FOUND, Memb->Member, "tuple");
         }
         return toka::Type::fromString("unknown");
       } else if (ObjType != "unknown") {
-        error(Memb, "member access on non-struct type '" + ObjType + "'");
+        error(Memb, DiagID::ERR_NOT_A_STRUCT, Memb->Member, ObjType);
       }
     }
     return toka::Type::fromString("unknown");
@@ -1751,8 +1685,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (auto *Var = dynamic_cast<VariableExpr *>(Post->LHS.get())) {
       SymbolInfo Info;
       if (CurrentScope->lookup(Var->Name, Info) && !Info.IsMutable()) {
-        error(Post, "cannot modify immutable variable '" + Var->Name +
-                        "' (# suffix required)");
+        error(Post, DiagID::ERR_IMMUTABLE_MOD, Var->Name);
       }
     }
     if (Post->Op == TokenType::TokenWrite) {
@@ -1794,7 +1727,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // Normal Array Indexing
     auto arrTypeObj = checkExpr(Arr->Array.get());
     if (Arr->Indices.size() != 1) {
-      error(Arr, "Array indexing expects exactly 1 index");
+      error(Arr, DiagID::ERR_INVALID_OP, "indexing", "array",
+            "multiple indices");
     }
     Arr->Indices[0] =
         foldGenericConstant(std::move(Arr->Indices[0])); // [FIX] Substitution
@@ -1858,8 +1792,10 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       checkPattern(arm->Pat.get(), targetType, false);
       if (arm->Guard) {
         auto guardTypeObj = checkExpr(arm->Guard.get());
-        if (!guardTypeObj->isBoolean())
-          error(arm->Guard.get(), "guard must be bool");
+        if (!arm->Guard->ResolvedType->isBoolean()) {
+          error(arm->Guard.get(), DiagID::ERR_OPERAND_TYPE_MISMATCH,
+                "match guard", "bool", arm->Guard->ResolvedType->toString());
+        }
       }
       m_ControlFlowStack.push_back({"", "void", false, isReceiver});
       checkStmt(arm->Body.get());
@@ -1867,21 +1803,22 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       m_ControlFlowStack.pop_back();
 
       if (isReceiver && armType == "void" && !allPathsJump(arm->Body.get())) {
-        error(arm->Body.get(), "Yielding match arm must pass a value");
+        error(arm->Body.get(), DiagID::ERR_YIELD_VALUE_REQUIRED, "match arm");
       }
 
       if (resultType == "void")
         resultType = armType;
       else if (armType != "void" && !isTypeCompatible(resultType, armType)) {
-        if (resultType != "unknown" && armType != "unknown")
-          error(me, "Match arms have incompatible types ('" + resultType +
-                        "' vs '" + armType + "')");
+        if (!isTypeCompatible(resultType, armType)) {
+          error(me, DiagID::ERR_BRANCH_TYPE_MISMATCH, "match", resultType,
+                armType);
+        }
+        exitScope();
       }
-      exitScope();
     }
 
     if (isReceiver && resultType == "void") {
-      error(me, "Yielding match expression must pass a value in all arms");
+      error(me, DiagID::ERR_YIELD_VALUE_REQUIRED, "match expression");
     }
 
     // Check for private variants if @encap is active
@@ -1894,8 +1831,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         }
       }
       if (!hasWildcard) {
-        error(me, "match on encapsulated type '" + targetType +
-                      "' requires a default '_' branch (Rule 412)");
+        error(me, DiagID::ERR_GENERIC_PARSE,
+              "match on encapsulated type '" + targetType +
+                  "' requires a default '_' branch (Rule 412)");
       }
       return toka::Type::fromString(resultType);
     }
@@ -2012,9 +1950,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           return Info->TypeObj->withAttributes(rhsType->IsWritable,
                                                rhsType->IsNullable);
         }
-        DiagnosticEngine::report(getLoc(Unary),
-                                 DiagID::ERR_SMART_PTR_FROM_STACK, "^");
-        HasError = true;
+        error(Unary, DiagID::ERR_SMART_PTR_FROM_STACK, "^");
+
         auto unq = std::make_shared<toka::UniquePointerType>(rhsType);
         unq->IsWritable = Unary->IsRebindable;
         unq->IsNullable = Unary->HasNull;
@@ -2024,9 +1961,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           return Info->TypeObj->withAttributes(rhsType->IsWritable,
                                                rhsType->IsNullable);
         }
-        DiagnosticEngine::report(getLoc(Unary),
-                                 DiagID::ERR_SMART_PTR_FROM_STACK, "~");
-        HasError = true;
+        error(Unary, DiagID::ERR_SMART_PTR_FROM_STACK, "~");
+
         auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
         sh->IsNullable = Unary->HasNull;
         sh->IsWritable = Unary->IsRebindable;
@@ -2092,9 +2028,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   if (Unary->Op == TokenType::Caret) {
     if (rhsType->isUniquePtr())
       return rhsType;
-    DiagnosticEngine::report(getLoc(Unary), DiagID::ERR_SMART_PTR_FROM_STACK,
-                             "^");
-    HasError = true;
+    error(Unary, DiagID::ERR_SMART_PTR_FROM_STACK, "^");
+
     auto unq = std::make_shared<toka::UniquePointerType>(rhsType);
     unq->IsNullable = Unary->HasNull;
     unq->IsWritable = Unary->IsRebindable;
@@ -2103,9 +2038,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   if (Unary->Op == TokenType::Tilde) {
     if (rhsType->isSharedPtr())
       return rhsType;
-    DiagnosticEngine::report(getLoc(Unary), DiagID::ERR_SMART_PTR_FROM_STACK,
-                             "~");
-    HasError = true;
+    error(Unary, DiagID::ERR_SMART_PTR_FROM_STACK, "~");
+
     auto sh = std::make_shared<toka::SharedPointerType>(rhsType);
     sh->IsNullable = Unary->HasNull;
     sh->IsWritable = Unary->IsRebindable;
@@ -2113,19 +2047,17 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   }
   if (Unary->Op == TokenType::PlusPlus || Unary->Op == TokenType::MinusMinus) {
     if (!rhsType->isInteger()) {
-      error(Unary, "operand of increment/decrement must be integer, got '" +
-                       rhsInfo + "'");
+      error(Unary, DiagID::ERR_OPERAND_TYPE_MISMATCH, "++/--", "integer",
+            rhsInfo);
     }
     if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
       SymbolInfo *Info = nullptr;
       if (CurrentScope->findSymbol(Var->Name, Info)) {
-        if (!Info->IsMutable()) {
-          error(Unary, "cannot modify immutable variable '" + Var->Name +
-                           "' (# suffix required)");
+        if (Info->IsBorrowed()) {
+          error(Unary, DiagID::ERR_MOVE_BORROWED, Var->Name);
         }
         if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
-          error(Unary,
-                "cannot modify '" + Var->Name + "' while it is borrowed");
+          error(Unary, DiagID::ERR_BORROW_MUT, Var->Name);
         }
       }
     }
@@ -2133,7 +2065,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   }
   if (Unary->Op == TokenType::KwBnot) {
     if (!rhsType->isInteger()) {
-      error(Unary, "operand of 'bnot' must be integer, got '" + rhsInfo + "'");
+      error(Unary, DiagID::ERR_OPERAND_TYPE_MISMATCH, "bnot", "integer",
+            rhsInfo);
     }
     return rhsType;
   }
@@ -2246,11 +2179,21 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       SymbolInfo *RHSInfoPtr = nullptr;
       if (CurrentScope->findSymbol(RHSVar->Name, RHSInfoPtr) &&
           RHSInfoPtr->IsUnique()) {
-        if (RHSInfoPtr->IsMutablyBorrowed ||
-            RHSInfoPtr->ImmutableBorrowCount > 0) {
-          error(Bin, "cannot move '" + RHSVar->Name + "' while it is borrowed");
+        if (RHSInfoPtr->IsBorrowed()) {
+          error(Bin, DiagID::ERR_MOVE_BORROWED, RHSVar->Name);
         }
         CurrentScope->markMoved(RHSVar->Name);
+      }
+    } else if (auto *Memb = dynamic_cast<MemberExpr *>(RHSExpr)) {
+      // [Move Restriction Rule] Prohibit moving member out of shape that has
+      // drop() Rule ONLY applies if we are moving a resource (UniquePtr)
+      if (rhsType->isUniquePtr()) {
+        auto objType = checkExpr(Memb->Object.get());
+        std::shared_ptr<toka::Type> soulType = objType->getSoulType();
+        std::string soul = soulType->getSoulName();
+        if (m_ShapeProps.count(soul) && m_ShapeProps[soul].HasDrop) {
+          error(Bin, DiagID::ERR_MOVE_MEMBER_DROP, Memb->Member, soul);
+        }
       }
     }
 
@@ -2479,10 +2422,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
           lhsType->withAttributes(true, lhsType->IsNullable); // Valid Mutation
 
     if (!lhsType->IsWritable && !isRefAssign) {
-      std::string debugInfo = " [W=" + std::to_string(isLHSWritable) +
-                              " U=" + std::to_string(isLHSUnset) + "]";
-      error(Bin->LHS.get(), "Cannot assign to immutable view '" + LHS +
-                                "'. Missing writable token '#'." + debugInfo);
+      error(Bin->LHS.get(), DiagID::ERR_IMMUTABLE_MOD, LHS);
     }
 
     auto lhsCompatType = lhsType->withAttributes(false, lhsType->IsNullable);
@@ -2517,9 +2457,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         for (const auto &dep : rhsDeps) {
           int depDepth = getScopeDepth(dep);
           if (targetDepth < depDepth) { // outer < inner => error
-            DiagnosticEngine::report(getLoc(Bin), DiagID::ERR_BORROW_LIFETIME,
-                                     targetObjName, dep);
-            HasError = true;
+            error(Bin, DiagID::ERR_BORROW_LIFETIME, targetObjName, dep);
           }
           targetInfo->LifeDependencySet.insert(dep);
         }
@@ -2531,8 +2469,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     if (isRefAssign && !isUnsetInit) {
       // If LHS is Ref (&#), RHS must be Ref (&)
       if (!rhsType->isReference()) {
-        error(Bin->RHS.get(), "Reference rebinding requires '&' morphology on "
-                              "RHS to match LHS '&#'.");
+        error(Bin->RHS.get(), DiagID::ERR_MORPHOLOGY_MISMATCH, "&",
+              rhsType->toString());
       }
       // Compare types after stripping one layer of Reference
       auto target = lhsType->getPointeeType();
@@ -2540,11 +2478,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       if (target && source && isTypeCompatible(target, source)) {
         // OK
       } else {
-        std::string debugT = target ? target->toString() : "null";
-        std::string debugS = source ? source->toString() : "null";
-        error(Bin, "assignment type mismatch: cannot assign '" + RHS +
-                       "' to '" + LHS + "' (Pointees: " + debugT + " vs " +
-                       debugS + ")");
+        error(Bin, DiagID::ERR_TYPE_MISMATCH, RHS, LHS);
       }
       return lhsType;
     }
@@ -2575,25 +2509,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         // "Strict explicit morphology matching".
         // If LHS has no sigil, but is a pointer type?
         // "auto p = ^x". p is pointer. LHS sigil None. RHS sigil Unique.
-        // Mismatch. So checks apply.
-
-        // However, we need to know if LHS *is* a pointer type to enforce
-        // strictness. If LHS is i32, and RHS is i32. None == None. OK. If
-        // LHS is *i32 (via `*p` deref? No, `*p` assigns to `i32`). If `p`
-        // is
-        // `*i32`. `p = q`. LHS `p` has Morph::None. If strictness requires
-        // `*p` to be assigned? No, `*p` assigns to the *pointee*. We are
-        // assigning TO the pointer `p`. So `p = q` is "Value = Value"
-        // syntax. Does user want `*p = *q` for pointer assignment? No,
-        // that's partial update/deref assignment. `p = q` rebinds the
-        // pointer. If the rule is about *Declarations* majorly (`auto *p =
-        // ...`), maybe assignment `p=q` is exempt or `Valid`. The prompt
-        // says: "pointer morphology symbols... on both sides of an
-        // assignment... must explicitly match." Example: `auto *p = ^q` ->
-        // Invalid. `p = q` where p, q are pointers. Sigils are None. None
-        // == None. Matches. `p = ^q`. None != Unique. Mismatch. Correct. So
-        // `getSyntacticMorphology` returning None for VariableExpr is
-        // correct.
+        // Mismatch. Correct. So `getSyntacticMorphology` returning None for
+        // VariableExpr is correct.
 
         MorphKind sourceMorph = getSyntacticMorphology(Bin->RHS.get());
         checkStrictMorphology(Bin, targetMorph, sourceMorph, LHS);
@@ -2603,8 +2520,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     if (!isRefAssign && !isSmartNew &&
         !isTypeCompatible(lhsCompatType, rhsType) && LHS != "unknown" &&
         RHS != "unknown") {
-      error(Bin, "assignment type mismatch: cannot assign '" + RHS + "' to '" +
-                     LHS + "'");
+      error(Bin, DiagID::ERR_TYPE_MISMATCH, RHS, LHS);
     }
 
     // [Fix] Update InitMask logic for 'unset' variables
@@ -2630,9 +2546,9 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
             Sym->DirtyReferentMask = ~0ULL;
         } else {
           if (isPartial)
-            Sym->InitMask |= updateBits;
-          else
             Sym->InitMask = ~0ULL;
+          else
+            Sym->InitMask |= updateBits;
         }
 
         // Move to next upstream source
@@ -2709,14 +2625,15 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   // General Binary Ops
   if (Bin->Op == "&&" || Bin->Op == "||") {
     if (!lhsType->isBoolean() || !rhsType->isBoolean()) {
-      error(Bin, "operands of '" + Bin->Op + "' must be bool");
+      error(Bin, DiagID::ERR_INVALID_OP, Bin->Op, lhsType->toString(),
+            rhsType->toString());
     }
     return toka::Type::fromString("bool");
   }
 
   if (lhsType->isPointer() && (Bin->Op == "+" || Bin->Op == "-")) {
     if (!m_InUnsafeContext) {
-      error(Bin, "pointer arithmetic requires unsafe context");
+      error(Bin, DiagID::ERR_UNSAFE_ALLOC_CTX); // Reuse for ptr arithmetic
     }
     return lhsType->withAttributes(false, lhsType->IsNullable);
   }
@@ -2725,8 +2642,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       Bin->Op == "<=" || Bin->Op == ">=") {
     if (!isTypeCompatible(lhsType, rhsType) &&
         !isTypeCompatible(rhsType, lhsType)) {
-      error(Bin, "operands of '" + Bin->Op + "' must be same type ('" + LHS +
-                     "' vs '" + RHS + "')");
+      error(Bin, DiagID::ERR_INVALID_OP, Bin->Op, LHS, RHS);
     }
     // Strict Integer Check
     auto lRes = resolveType(lhsType);
@@ -2877,7 +2793,7 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         visible = true;
     }
     if (!visible) {
-      error(Call, "println must be explicitly imported from std/io");
+      error(Call, "println requires at least a format string");
       return toka::Type::fromString("void");
     }
     if (Call->Args.empty()) {
@@ -3572,29 +3488,27 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         if (exactMatchCount == 1) {
           Call->MatchedMemberIdx = exactMatchIdx;
         } else if (exactMatchCount > 1) {
-          DiagnosticEngine::report(getLoc(Call), DiagID::ERR_GENERIC_PARSE,
-                                   "Ambiguous Union constructor: multiple "
-                                   "exact matches found for "
-                                   "type " +
-                                       argType->toString());
+          error(Call, DiagID::ERR_GENERIC_PARSE,
+                "Ambiguous Union constructor: multiple "
+                "exact matches found for "
+                "type " +
+                    argType->toString());
           HasError = true;
           return toka::Type::fromString("unknown");
         } else if (fitMatchCount == 1) {
           Call->MatchedMemberIdx = fitMatchIdx;
         } else if (fitMatchCount > 1) {
-          DiagnosticEngine::report(getLoc(Call), DiagID::ERR_GENERIC_PARSE,
-                                   "Ambiguous Union constructor: multiple "
-                                   "safe-fit matches found for "
-                                   "type " +
-                                       argType->toString() +
-                                       ". Use explicit cast.");
+          error(Call, DiagID::ERR_GENERIC_PARSE,
+                "Ambiguous Union constructor: multiple "
+                "safe-fit matches found for "
+                "type " +
+                    argType->toString() + ". Use explicit cast.");
           HasError = true;
           return toka::Type::fromString("unknown");
         } else {
-          DiagnosticEngine::report(getLoc(Call), DiagID::ERR_GENERIC_PARSE,
-                                   "No matching member found in Union '" +
-                                       Sh->Name + "' for type " +
-                                       argType->toString());
+          error(Call, DiagID::ERR_GENERIC_PARSE,
+                "No matching member found in Union '" + Sh->Name +
+                    "' for type " + argType->toString());
           HasError = true;
           return toka::Type::fromString("unknown");
         }
@@ -3947,9 +3861,7 @@ Sema::checkStructInit(InitStructExpr *Init, ShapeDecl *SD,
     }
 
     if (!fieldFound) {
-      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_NO_SUCH_MEMBER,
-                               resolvedName, pair.first);
-      HasError = true;
+      error(Init, DiagID::ERR_NO_SUCH_MEMBER, resolvedName, pair.first);
       continue;
     }
 
@@ -3972,10 +3884,8 @@ Sema::checkStructInit(InitStructExpr *Init, ShapeDecl *SD,
     }
 
     if (!isTypeCompatible(memberTypeObj, exprTypeObj)) {
-      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MEMBER_TYPE_MISMATCH,
-                               pair.first, memberTypeObj->toString(),
-                               exprTypeObj->toString());
-      HasError = true;
+      error(Init, DiagID::ERR_MEMBER_TYPE_MISMATCH, pair.first,
+            memberTypeObj->toString(), exprTypeObj->toString());
     }
 
     // Lifetime dependency tracking
@@ -3997,9 +3907,7 @@ Sema::checkStructInit(InitStructExpr *Init, ShapeDecl *SD,
         !providedFields.count("~" + defField.Name) &&
         !providedFields.count("&" + defField.Name) &&
         !providedFields.count("^?" + defField.Name)) {
-      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
-                               defField.Name, Init->ShapeName);
-      HasError = true;
+      error(Init, DiagID::ERR_MISSING_MEMBER, defField.Name, Init->ShapeName);
     }
   }
 
@@ -4039,20 +3947,17 @@ Sema::checkUnionInit(InitStructExpr *Init, ShapeDecl *SD,
                      const std::string &resolvedName,
                      std::map<std::string, uint64_t> &memberMasks) {
   if (Init->Members.empty()) {
-    DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MISSING_MEMBER,
-                             "at least one variant", Init->ShapeName);
-    HasError = true;
+    error(Init, DiagID::ERR_MISSING_MEMBER, "at least one variant",
+          Init->ShapeName);
     m_LastInitMask = 0;
     return toka::Type::fromString(resolvedName);
   }
 
   if (Init->Members.size() > 1) {
-    // [NEW] Union specific check: only one member allowed
-    DiagnosticEngine::report(getLoc(Init), DiagID::ERR_GENERIC_PARSE,
-                             "Union '{}' initialization must specify exactly "
-                             "one variant, but {} were provided.",
-                             Init->ShapeName, Init->Members.size());
-    HasError = true;
+    error(Init, DiagID::ERR_GENERIC_PARSE,
+          "Union '{}' initialization must specify exactly "
+          "one variant, but {} were provided.",
+          Init->ShapeName, Init->Members.size());
   }
 
   auto &pair = Init->Members[0];
@@ -4068,9 +3973,7 @@ Sema::checkUnionInit(InitStructExpr *Init, ShapeDecl *SD,
   }
 
   if (!fieldFound) {
-    DiagnosticEngine::report(getLoc(Init), DiagID::ERR_NO_SUCH_MEMBER,
-                             resolvedName, pair.first);
-    HasError = true;
+    error(Init, DiagID::ERR_NO_SUCH_MEMBER, resolvedName, pair.first);
   } else {
     auto memberTypeObj = pDefMember->ResolvedType;
     if (!memberTypeObj)
@@ -4081,10 +3984,8 @@ Sema::checkUnionInit(InitStructExpr *Init, ShapeDecl *SD,
     m_LastInitMask = ~0ULL; // Union is fully initialized if one field is set
 
     if (!isTypeCompatible(memberTypeObj, exprTypeObj)) {
-      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_MEMBER_TYPE_MISMATCH,
-                               pair.first, memberTypeObj->toString(),
-                               exprTypeObj->toString());
-      HasError = true;
+      error(Init, DiagID::ERR_MEMBER_TYPE_MISMATCH, pair.first,
+            memberTypeObj->toString(), exprTypeObj->toString());
     }
   }
 

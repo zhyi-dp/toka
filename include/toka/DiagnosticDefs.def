@@ -21,8 +21,9 @@ DIAG(ERR_MODULE_NOT_FOUND,   Error, "Module '{}' not found")
 DIAG(ERR_SYMBOL_NOT_FOUND,   Error, "Symbol '{}' not found in module '{}'")
 DIAG(ERR_PRIVATE_TYPE,       Error, "Shape '{}' is private and cannot be accessed from module '{}'")
 
-// --- Sema: Checking ---
 DIAG(ERR_GENERIC_SEMA,       Error, "{}")
+DIAG(ERR_OPERAND_TYPE_MISMATCH, Error, "Operand of '{}' must be {}, got '{}'")
+DIAG(NOTE_GENERIC,           Note, "{}")
 
 // --- Sema: Type Checking & Operations ---
 DIAG(ERR_TYPE_MISMATCH,      Error, "Cannot convert type '{}' to '{}'")
@@ -37,6 +38,10 @@ DIAG(ERR_INFER_NULLPTR,      Error, "Cannot infer type from 'nullptr'; explicit 
 // --- Sema: Shape & Structs ---
 DIAG(ERR_UNKNOWN_STRUCT,     Error, "Unknown shape type '{}'")
 DIAG(ERR_NO_SUCH_MEMBER,     Error, "Shape '{}' has no member named '{}'")
+DIAG(ERR_MEMBER_PRIVATE,     Error, "Member '{}' of shape '{}' is private")
+DIAG(ERR_MEMBER_NOT_FOUND,   Error, "Member '{}' not found on type '{}'")
+DIAG(ERR_TUPLE_INDEX_OOB,    Error, "Tuple index '{}' out of range (size {})")
+DIAG(ERR_NOT_A_STRUCT,       Error, "Member access '{}' on non-shape type '{}'")
 DIAG(ERR_MEMBER_TYPE_MISMATCH, Error, "Type mismatch for member '{}': expected '{}', but got '{}'")
 DIAG(ERR_MISSING_MEMBER,     Error, "Missing initialization for member '{}' of shape '{}'")
 DIAG(ERR_DUPLICATE_FIELD,    Error, "Duplicate field '{}' in shape initialization")
@@ -61,6 +66,7 @@ DIAG(ERR_METHOD_PRIVATE,      Error, "Method '{}' is private to '{}' and cannot 
 
 // --- Sema: Ownership & Resources (Toka Specials) ---
 DIAG(ERR_USE_MOVED,          Error, "Use of moved value: '{}'")
+DIAG(ERR_MOVE_MEMBER_DROP,   Error, "Cannot move member '{}' out of shape '{}' because it implements 'drop'")
 DIAG(ERR_MOVE_BORROWED,      Error, "Cannot move '{}' while it is borrowed")
 DIAG(ERR_BORROW_MUT,         Error, "Cannot access '{}' while it is mutably borrowed")
 DIAG(ERR_BORROW_IMMUT,       Error, "Cannot mutably borrow immutable entity '{}'")
@@ -111,5 +117,3 @@ DIAG(WARN_CODEGEN_UNRESOLVED, Warning, "Unresolved member type for '{}'; default
 // --- System & CLI ---
 DIAG(ERR_FILE_IO,            Error, "File I/O Error: {}")
 DIAG(ERR_CLI_ARG,            Error, "Invalid command line argument: {}")
-
-DIAG(NOTE_GENERIC,            Note, "{}")

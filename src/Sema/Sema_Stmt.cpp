@@ -280,12 +280,13 @@ void Sema::checkStmt(Stmt *S) {
     clearStmtBorrows();
   } else if (auto *Var = dynamic_cast<VariableDecl *>(S)) {
     std::string InitType = "";
+    std::shared_ptr<toka::Type> InitTypeObj = nullptr;
     if (Var->Init) {
       Var->Init = foldGenericConstant(std::move(Var->Init));
       if (Var->IsReference)
         m_AllowUnsetUsage = true;
       m_ControlFlowStack.push_back({Var->Name, "void", false, true});
-      auto InitTypeObj = checkExpr(Var->Init.get());
+      InitTypeObj = checkExpr(Var->Init.get());
       InitType = InitTypeObj->toString();
       m_ControlFlowStack.pop_back();
       m_AllowUnsetUsage = false;
@@ -560,6 +561,17 @@ void Sema::checkStmt(Stmt *S) {
               HasError = true;
             }
             CurrentScope->markMoved(RHSVar->Name);
+          }
+        }
+      } else if (auto *Memb = dynamic_cast<MemberExpr *>(InitExpr)) {
+        // [Move Restriction Rule] Prohibit moving member out of shape that has
+        // drop() Rule ONLY applies if we are moving a resource (UniquePtr)
+        if (InitTypeObj->isUniquePtr()) {
+          auto objType = checkExpr(Memb->Object.get());
+          std::shared_ptr<toka::Type> soulType = objType->getSoulType();
+          std::string soul = soulType->getSoulName();
+          if (m_ShapeProps.count(soul) && m_ShapeProps[soul].HasDrop) {
+            error(Var, DiagID::ERR_MOVE_MEMBER_DROP, Memb->Member, soul);
           }
         }
       }
