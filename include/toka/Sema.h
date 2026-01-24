@@ -321,6 +321,7 @@ private:
   std::shared_ptr<toka::Type> resolveType(std::shared_ptr<toka::Type> Type,
                                           bool force = false);
   uint64_t getTypeSize(std::shared_ptr<toka::Type> Type);
+  bool checkVisibility(ASTNode *Node, ShapeDecl *SD);
   bool isTypeCompatible(const std::string &Target, const std::string &Source);
   bool isTypeCompatible(std::shared_ptr<toka::Type> Target,
                         std::shared_ptr<toka::Type> Source);

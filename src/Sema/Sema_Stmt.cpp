@@ -302,9 +302,7 @@ void Sema::checkStmt(Stmt *S) {
       } else {
         std::string Inferred = InitType;
         if (Inferred == "nullptr") {
-          DiagnosticEngine::report(getLoc(Var), DiagID::ERR_GENERIC_PARSE,
-                                   "Cannot infer type from 'nullptr'. Explicit "
-                                   "type annotation required.");
+          DiagnosticEngine::report(getLoc(Var), DiagID::ERR_INFER_NULLPTR);
           HasError = true;
           Var->TypeName = "unknown";
           return;
@@ -442,13 +440,23 @@ void Sema::checkStmt(Stmt *S) {
       }
 
       // [NEW] Register in ActiveBorrows for scope-based cleanup
-      bool isMut = false;
+      bool isMut = Var->IsValueMutable || Var->IsRebindable;
       for (auto const &b : m_CurrentStmtBorrows) {
         if (b.first == m_LastBorrowSource) {
-          isMut = b.second;
+          if (b.second)
+            isMut = true; // Already exclusive from expr
           break;
         }
       }
+
+      // Upgrade Source to MutablyBorrowed if reference is mutable
+      if (isMut) {
+        SymbolInfo *srcInfo = nullptr;
+        if (CurrentScope->findSymbol(m_LastBorrowSource, srcInfo)) {
+          srcInfo->IsMutablyBorrowed = true;
+        }
+      }
+
       CurrentScope->ActiveBorrows[Var->Name] = {m_LastBorrowSource, isMut};
 
       // Remove from temporary borrows since it's now persistent

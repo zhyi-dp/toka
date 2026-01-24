@@ -271,8 +271,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
   }
 
   if (auto *Null = dynamic_cast<NullExpr *>(E)) {
-    // nullptr is conceptually a raw pointer to any type
-    return toka::Type::fromString("*?void");
+    return toka::Type::fromString("nullptr");
   }
 
   if (auto *None = dynamic_cast<NoneExpr *>(E)) {
@@ -1316,6 +1315,19 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           }
         }
       }
+
+      // [Rule] Borrowing check for Method Call
+      if (auto *objVar = dynamic_cast<VariableExpr *>(Met->Object.get())) {
+        SymbolInfo *info = nullptr;
+        if (CurrentScope->findSymbol(objVar->Name, info)) {
+          if (info->IsMutablyBorrowed) {
+            DiagnosticEngine::report(getLoc(Met), DiagID::ERR_BORROW_MUT,
+                                     objVar->Name);
+            HasError = true;
+          }
+        }
+      }
+
       return toka::Type::fromString(MethodMap[soulType][Met->Method]);
     }
     // Check with @encap suffix as fallback
@@ -1447,17 +1459,24 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // Unset Check for Member Access
     if (!m_InLHS) {
       if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
-        SymbolInfo Info;
-        if (CurrentScope->lookup(objVar->Name, Info)) {
-          if (Info.TypeObj && Info.TypeObj->isShape()) {
+        SymbolInfo *Info = nullptr;
+        if (CurrentScope->findSymbol(objVar->Name, Info)) {
+          // [Rule] Borrowing check for Member Access
+          if (Info->IsMutablyBorrowed) {
+            DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_BORROW_MUT,
+                                     objVar->Name);
+            HasError = true;
+          }
+
+          if (Info->TypeObj && Info->TypeObj->isShape()) {
             // Determine which mask to check: InitMask (for values) or
             // DirtyReferentMask (for references)
-            uint64_t maskToCheck = Info.InitMask;
-            if (Info.IsReference()) {
-              maskToCheck = Info.DirtyReferentMask;
+            uint64_t maskToCheck = Info->InitMask;
+            if (Info->IsReference()) {
+              maskToCheck = Info->DirtyReferentMask;
             }
 
-            std::string soul = Info.TypeObj->getSoulName();
+            std::string soul = Info->TypeObj->getSoulName();
             if (ShapeMap.count(soul)) {
               ShapeDecl *SD = ShapeMap[soul];
               for (int i = 0; i < (int)SD->Members.size(); ++i) {
@@ -1478,6 +1497,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     std::string ObjTypeFull = objTypeObj->toString();
+
+    // Visibility Check for Private Member (Robust check using EncapMap exists
+    // later in loop)
 
     if (ObjTypeFull == "module") {
       // It's a module access
@@ -3195,6 +3217,9 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
     ReturnType = toka::Type::fromString(Ext->ReturnType);
     IsVariadic = Ext->IsVariadic;
   } else if (Sh) {
+    if (!checkVisibility(Call, Sh)) {
+      return toka::Type::fromString("unknown");
+    }
 
     // [NEW] Instantiate Generic Shape Constructor
     if (!Sh->GenericParams.empty() && !Call->GenericArgs.empty()) {
@@ -3379,63 +3404,6 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
                              "': expected " + memType->toString() + ", got " +
                              argType->toString());
         }
-
-        // [Rule] Strict Union Initialization Size Check
-        // Ensure initialized member covers the full size of the Union.
-        std::function<uint64_t(std::shared_ptr<toka::Type>)> getTypeSize =
-            [&](std::shared_ptr<toka::Type> t) -> uint64_t {
-          if (!t)
-            return 0;
-          if (t->isBoolean() || t->toString() == "u8" || t->toString() == "i8")
-            return 1;
-          if (t->toString() == "u16" || t->toString() == "i16")
-            return 2;
-          if (t->toString() == "u32" || t->toString() == "i32" ||
-              t->toString() == "f32" || t->toString() == "char")
-            return 4;
-          if (t->toString() == "u64" || t->toString() == "i64" ||
-              t->toString() == "f64" || t->toString() == "usize" ||
-              t->toString() == "isize")
-            return 8;
-          if (t->isPointer() || t->isReference())
-            return 8; // 64-bit assumption
-          if (t->isArray()) {
-            auto arr = std::dynamic_pointer_cast<toka::ArrayType>(t);
-            return arr->Size * getTypeSize(arr->ElementType);
-          }
-          if (auto st = std::dynamic_pointer_cast<toka::ShapeType>(t)) {
-            // Resolve Decl
-            ShapeDecl *Decl = st->Decl;
-            if (!Decl && ShapeMap.count(st->Name))
-              Decl = ShapeMap[st->Name];
-            if (Decl) {
-              if (Decl->Kind == ShapeKind::Union) {
-                uint64_t maxS = 0;
-                for (auto &m : Decl->Members) {
-                  uint64_t s = getTypeSize(
-                      m.ResolvedType
-                          ? m.ResolvedType
-                          : toka::Type::fromString(resolveType(m.Type)));
-                  if (s > maxS)
-                    maxS = s;
-                }
-                return maxS;
-              } else if (Decl->Kind == ShapeKind::Struct) {
-                // Simple sum for now (ignoring padding/alignment for
-                // simplicity in Sema check) Ideally should use TypeLayout,
-                // but this is a safety check. If we underestimate struct
-                // size, we might allow partial init of a larger union? No,
-                // if struct is member of union, we need its size. Let's
-                // assume packed or simple accumulation.
-                uint64_t sum = 0;
-                for (auto &m : Decl->Members)
-                  sum += getTypeSize(m.ResolvedType);
-                return sum;
-              }
-            }
-          }
-          return 0; // Unknown
-        };
 
         // 1. Calculate Union Size
         uint64_t unionSize = 0;
@@ -3778,35 +3746,8 @@ std::shared_ptr<toka::Type> Sema::checkShapeInit(InitStructExpr *Init) {
     performInference(resolvedName, SD);
     Init->ShapeName = resolvedName;
 
-    // Visibility Check
-    std::string sdFile =
-        DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc).FileName;
-    std::string initFile =
-        DiagnosticEngine::SrcMgr->getFullSourceLoc(Init->Loc).FileName;
-
-    if (!SD->IsPub && sdFile != initFile) {
-      bool sameModule = false;
-      if (CurrentModule && !CurrentModule->Shapes.empty()) {
-        for (const auto &shapeInModule : CurrentModule->Shapes) {
-          if (DiagnosticEngine::SrcMgr->getFullSourceLoc(shapeInModule->Loc)
-                  .FileName == sdFile) {
-            if (CurrentModule) {
-              std::string modFile =
-                  DiagnosticEngine::SrcMgr->getFullSourceLoc(CurrentModule->Loc)
-                      .FileName;
-              if (modFile == sdFile) { // Simplified same-file/module check
-                sameModule = true;
-              }
-            }
-            break;
-          }
-        }
-      }
-      if (!sameModule) {
-        DiagnosticEngine::report(getLoc(Init), DiagID::ERR_PRIVATE_TYPE,
-                                 Init->ShapeName, sdFile);
-        HasError = true;
-      }
+    if (!checkVisibility(Init, SD)) {
+      return toka::Type::fromString("unknown");
     }
 
     if (SD->Kind == ShapeKind::Union || SD->Kind == ShapeKind::Enum) {
@@ -3986,6 +3927,23 @@ Sema::checkUnionInit(InitStructExpr *Init, ShapeDecl *SD,
     if (!isTypeCompatible(memberTypeObj, exprTypeObj)) {
       error(Init, DiagID::ERR_MEMBER_TYPE_MISMATCH, pair.first,
             memberTypeObj->toString(), exprTypeObj->toString());
+    }
+
+    // [Rule] Strict Union Initialization Size Check
+    // Ensure initialized member covers the full size of the Union.
+    uint64_t unionSize = 0;
+    for (auto &m : SD->Members) {
+      auto mT = m.ResolvedType ? m.ResolvedType
+                               : toka::Type::fromString(resolveType(m.Type));
+      uint64_t s = getTypeSize(mT);
+      if (s > unionSize)
+        unionSize = s;
+    }
+    uint64_t variantSize = getTypeSize(memberTypeObj);
+    if (variantSize < unionSize) {
+      DiagnosticEngine::report(getLoc(Init), DiagID::ERR_UNION_PARTIAL_INIT,
+                               SD->Name, pair.first, variantSize, unionSize);
+      HasError = true;
     }
   }
 

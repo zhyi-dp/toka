@@ -1294,4 +1294,42 @@ int Sema::getScopeDepth(const std::string &Name) {
   return 0; // Global or not found (Global is 0)
 }
 
+bool Sema::checkVisibility(ASTNode *Node, ShapeDecl *SD) {
+  if (!SD)
+    return true;
+
+  // Visibility Check Logic
+  std::string sdFile =
+      DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc).FileName;
+  std::string nodeFile =
+      DiagnosticEngine::SrcMgr->getFullSourceLoc(Node->Loc).FileName;
+
+  if (!SD->IsPub && sdFile != nodeFile) {
+    bool sameModule = false;
+    if (CurrentModule && !CurrentModule->Shapes.empty()) {
+      for (const auto &shapeInModule : CurrentModule->Shapes) {
+        if (DiagnosticEngine::SrcMgr->getFullSourceLoc(shapeInModule->Loc)
+                .FileName == sdFile) {
+          if (CurrentModule) {
+            std::string modFile =
+                DiagnosticEngine::SrcMgr->getFullSourceLoc(CurrentModule->Loc)
+                    .FileName;
+            if (modFile == sdFile) { // Simplified same-file/module check
+              sameModule = true;
+            }
+          }
+          break;
+        }
+      }
+    }
+    if (!sameModule) {
+      DiagnosticEngine::report(getLoc(Node), DiagID::ERR_PRIVATE_TYPE, SD->Name,
+                               sdFile);
+      HasError = true;
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace toka

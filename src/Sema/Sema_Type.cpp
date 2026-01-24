@@ -503,11 +503,15 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
     sourceName = p->Name;
 
   if (!targetName.empty() && TypeAliasMap.count(targetName) &&
-      TypeAliasMap[targetName].IsStrong)
-    return false;
+      TypeAliasMap[targetName].IsStrong) {
+    if (!Target->equals(*Source))
+      return false;
+  }
   if (!sourceName.empty() && TypeAliasMap.count(sourceName) &&
-      TypeAliasMap[sourceName].IsStrong)
-    return false;
+      TypeAliasMap[sourceName].IsStrong) {
+    if (!Target->equals(*Source))
+      return false;
+  }
 
   auto T = resolveType(Target);
   auto S = resolveType(Source);
@@ -731,6 +735,53 @@ Sema::getDeepestUnderlyingType(std::shared_ptr<toka::Type> type) {
     break;
   }
   return resolveType(current);
+}
+
+uint64_t Sema::getTypeSize(std::shared_ptr<toka::Type> t) {
+  if (!t)
+    return 0;
+  if (t->isBoolean() || t->toString() == "u8" || t->toString() == "i8")
+    return 1;
+  if (t->toString() == "u16" || t->toString() == "i16")
+    return 2;
+  if (t->toString() == "u32" || t->toString() == "i32" ||
+      t->toString() == "f32" || t->toString() == "char")
+    return 4;
+  if (t->toString() == "u64" || t->toString() == "i64" ||
+      t->toString() == "f64" || t->toString() == "usize" ||
+      t->toString() == "isize")
+    return 8;
+  if (t->isPointer() || t->isReference())
+    return 8; // 64-bit assumption
+  if (t->isArray()) {
+    auto arr = std::dynamic_pointer_cast<toka::ArrayType>(t);
+    return arr->Size * getTypeSize(arr->ElementType);
+  }
+  if (auto st = std::dynamic_pointer_cast<toka::ShapeType>(t)) {
+    ShapeDecl *Decl = st->Decl;
+    if (!Decl && ShapeMap.count(st->Name))
+      Decl = ShapeMap[st->Name];
+    if (Decl) {
+      if (Decl->Kind == ShapeKind::Union) {
+        uint64_t maxS = 0;
+        for (auto &m : Decl->Members) {
+          uint64_t s = getTypeSize(
+              m.ResolvedType ? m.ResolvedType
+                             : toka::Type::fromString(resolveType(m.Type)));
+          if (s > maxS)
+            maxS = s;
+        }
+        return maxS;
+      } else if (Decl->Kind == ShapeKind::Struct) {
+        uint64_t sum = 0;
+        for (auto &m : Decl->Members) {
+          sum += getTypeSize(m.ResolvedType);
+        }
+        return sum;
+      }
+    }
+  }
+  return 0; // Unknown
 }
 
 } // namespace toka
