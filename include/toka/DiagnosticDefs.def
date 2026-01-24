@@ -52,11 +52,19 @@ DIAG(ERR_TRAIT_NOT_FOUND,    Error, "Trait '{}' is not implemented for type '{}'
 
 // --- Sema: Control Flow & Functions ---
 DIAG(ERR_CONTROL_REACHES_END, Error, "Control flow reaches end of non-void function '{}'")
+DIAG(ERR_YIELD_VALUE_REQUIRED, Error, "Yielding {} must pass a value")
+DIAG(ERR_YIELD_ELSE_REQUIRED,  Error, "Yielding if expression must have an 'else' block")
+DIAG(ERR_YIELD_OR_REQUIRED,    Error, "Yielding {} loop must have an 'or' block")
+DIAG(ERR_BRANCH_TYPE_MISMATCH, Error, "{} branches have incompatible types: '{}' vs '{}'")
+DIAG(ERR_PASS_NO_RECEIVER,    Error, "'pass' used without a receiver; prefix the expression with 'auto x =' or 'alias y ='")
+DIAG(ERR_METHOD_PRIVATE,      Error, "Method '{}' is private to '{}' and cannot be accessed from module '{}'")
 
 // --- Sema: Ownership & Resources (Toka Specials) ---
 DIAG(ERR_USE_MOVED,          Error, "Use of moved value: '{}'")
 DIAG(ERR_MOVE_BORROWED,      Error, "Cannot move '{}' while it is borrowed")
 DIAG(ERR_BORROW_MUT,         Error, "Cannot access '{}' while it is mutably borrowed")
+DIAG(ERR_BORROW_IMMUT,       Error, "Cannot mutably borrow immutable entity '{}'")
+DIAG(ERR_IMMUTABLE_MOD,      Error, "Cannot modify immutable entity '{}'")
 DIAG(ERR_SHAPE_NO_DROP,      Error, "Shape '{}' manages resources but does not implement 'drop'")
 DIAG(ERR_UNSAFE_RAW_PTR,     Error, "Shape '{}' manages raw pointers but does not implement 'drop'")
 DIAG(ERR_UNSAFE_RESOURCE,    Error, "Shape '{}' contains managed resources but does not implement 'drop'")

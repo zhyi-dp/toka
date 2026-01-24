@@ -225,6 +225,7 @@ private:
   std::map<std::string, ModuleScope> ModuleMap; // FullPath -> Scope
 
   ModuleScope *getModule(const std::string &Path);
+  std::string getModuleName(Module *M);
 
   Module *CurrentModule = nullptr;
   bool m_InUnsafeContext = false;

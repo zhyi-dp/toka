@@ -159,11 +159,12 @@ std::string UniquePointerType::toString() const {
 
 bool UniquePointerType::isCompatibleWith(const Type &target) const {
   const auto *otherPtr = dynamic_cast<const UniquePointerType *>(&target);
-  if (otherPtr)
+  if (otherPtr) {
     if (otherPtr->PointeeType->IsWritable && !PointeeType->IsWritable)
       return false;
-  return Type::isCompatibleWith(target) &&
-         PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+    return Type::isCompatibleWith(target) &&
+           PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+  }
   return false;
 }
 
@@ -217,11 +218,12 @@ std::string ReferenceType::toString() const {
 
 bool ReferenceType::isCompatibleWith(const Type &target) const {
   const auto *otherPtr = dynamic_cast<const ReferenceType *>(&target);
-  if (otherPtr)
+  if (otherPtr) {
     if (otherPtr->PointeeType->IsWritable && !PointeeType->IsWritable)
       return false;
-  return Type::isCompatibleWith(target) &&
-         PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+    return Type::isCompatibleWith(target) &&
+           PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+  }
   return false;
 }
 

@@ -1263,6 +1263,27 @@ FunctionDecl *Sema::instantiateGenericFunction(
   return Instance;
 }
 
+Sema::ModuleScope *Sema::getModule(const std::string &Path) {
+  if (ModuleMap.count(Path))
+    return &ModuleMap[Path];
+  return nullptr;
+}
+
+std::string Sema::getModuleName(Module *M) {
+  if (!M)
+    return "root";
+  std::string fullPath =
+      DiagnosticEngine::SrcMgr->getFullSourceLoc(M->Loc).FileName;
+  size_t lastSlash = fullPath.find_last_of('/');
+  std::string name = (lastSlash == std::string::npos)
+                         ? fullPath
+                         : fullPath.substr(lastSlash + 1);
+  size_t dot = name.find_last_of('.');
+  if (dot != std::string::npos)
+    name = name.substr(0, dot);
+  return name;
+}
+
 int Sema::getScopeDepth(const std::string &Name) {
   Scope *S = CurrentScope;
   while (S) {

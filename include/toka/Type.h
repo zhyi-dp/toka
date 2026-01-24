@@ -41,6 +41,15 @@ public:
     Unresolved // String-based placeholder
   };
 
+  enum class Morphology {
+    None,
+    Raw,       // *
+    Unique,    // ^
+    Shared,    // ~
+    Reference, // &
+    Any
+  };
+
   Kind typeKind;
   bool IsWritable = false; // '#' (Content mutation)
   bool IsNullable = false; // '?' (Content nullability)
@@ -97,7 +106,11 @@ public:
   virtual std::string getSoulName() const { return toString(); }
 
   // [NEW] Get the "Soul" Type (underlying non-pointer type)
-  virtual std::shared_ptr<Type> getSoulType() { return shared_from_this(); }
+  virtual std::shared_ptr<Type> getSoulType() const {
+    return const_cast<Type *>(this)->shared_from_this();
+  }
+
+  virtual Morphology getMorphology() const { return Morphology::None; }
 };
 
 // --- Basic Types ---
@@ -145,10 +158,10 @@ public:
   bool equals(const Type &other) const override;
   bool isCompatibleWith(const Type &target) const override;
   std::shared_ptr<Type> getPointeeType() const override { return PointeeType; }
-  std::shared_ptr<Type> getSoulType() override {
+  std::shared_ptr<Type> getSoulType() const override {
     if (PointeeType)
       return PointeeType->getSoulType();
-    return shared_from_this();
+    return const_cast<PointerType *>(this)->shared_from_this();
   }
 };
 
@@ -159,6 +172,7 @@ public:
   std::string toString() const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
   bool isCompatibleWith(const Type &target) const override;
+  Morphology getMorphology() const override { return Morphology::Raw; }
 };
 
 class UniquePointerType : public PointerType {
@@ -168,6 +182,7 @@ public:
   std::string toString() const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
   bool isCompatibleWith(const Type &target) const override;
+  Morphology getMorphology() const override { return Morphology::Unique; }
 };
 
 class SharedPointerType : public PointerType {
@@ -177,6 +192,7 @@ public:
   std::string toString() const override;
   std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
   bool isCompatibleWith(const Type &target) const override;
+  Morphology getMorphology() const override { return Morphology::Shared; }
 };
 
 class ReferenceType : public PointerType {

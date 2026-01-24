@@ -35,21 +35,7 @@ static std::string getStringifyPath(Expr *E) {
     return ve->Name;
   }
   if (auto *me = dynamic_cast<MemberExpr *>(E)) {
-    std::string member = me->Member;
-    // Strip morphology and attributes from member name
-    size_t start = 0;
-    while (start < member.size() &&
-           (member[start] == '^' || member[start] == '*' ||
-            member[start] == '~' || member[start] == '&' ||
-            member[start] == '?' || member[start] == '#' ||
-            member[start] == '!'))
-      start++;
-    size_t end = member.size();
-    while (end > start && (member[end - 1] == '?' || member[end - 1] == '#' ||
-                           member[end - 1] == '!'))
-      end--;
-    member = member.substr(start, end - start);
-
+    std::string member = toka::Type::stripMorphology(me->Member);
     return getStringifyPath(me->Object.get()) + "." + member;
   }
   if (auto *ue = dynamic_cast<UnaryExpr *>(E)) {
@@ -171,6 +157,18 @@ Sema::MorphKind Sema::getSyntacticMorphology(Expr *E) {
     default:
       return MorphKind::None;
     }
+  }
+
+  if (E->ResolvedType) {
+    auto m = E->ResolvedType->getMorphology();
+    if (m == toka::Type::Morphology::Raw)
+      return MorphKind::Raw;
+    if (m == toka::Type::Morphology::Unique)
+      return MorphKind::Unique;
+    if (m == toka::Type::Morphology::Shared)
+      return MorphKind::Shared;
+    if (m == toka::Type::Morphology::Reference)
+      return MorphKind::Ref;
   }
 
   // Binary Expressions: Pointer Arithmetic or Computed Values
@@ -940,17 +938,20 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     if (isReceiver) {
       if (thenType == "void" && !allPathsJump(ie->Then.get()))
-        error(ie->Then.get(), "Yielding if branch must pass a value");
+        DiagnosticEngine::report(getLoc(ie->Then.get()),
+                                 DiagID::ERR_YIELD_VALUE_REQUIRED, "if branch");
       if (!ie->Else)
-        error(ie, "Yielding if expression must have an 'else' block");
+        DiagnosticEngine::report(getLoc(ie), DiagID::ERR_YIELD_ELSE_REQUIRED);
       else if (elseType == "void" && !allPathsJump(ie->Else.get()))
-        error(ie->Else.get(), "Yielding else branch must pass a value");
+        DiagnosticEngine::report(getLoc(ie->Else.get()),
+                                 DiagID::ERR_YIELD_VALUE_REQUIRED,
+                                 "else branch");
     }
 
     if (thenType != "void" && elseType != "void" &&
         !isTypeCompatible(thenType, elseType)) {
-      error(ie, "If branches have incompatible types: '" + thenType +
-                    "' and '" + elseType + "'");
+      DiagnosticEngine::report(getLoc(ie), DiagID::ERR_BRANCH_TYPE_MISMATCH,
+                               "If", thenType, elseType);
     }
     return toka::Type::fromString((thenType != "void") ? thenType : elseType);
   } else if (auto *we = dynamic_cast<WhileExpr *>(E)) {
@@ -984,20 +985,26 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     if (isReceiver) {
       if (bodyType == "void" && !allPathsJump(we->Body.get()))
-        error(we->Body.get(), "Yielding while loop body must pass a value");
+        DiagnosticEngine::report(getLoc(we->Body.get()),
+                                 DiagID::ERR_YIELD_VALUE_REQUIRED,
+                                 "while loop");
       if (!we->ElseBody)
-        error(we, "Yielding while loop must have an 'or' block");
+        DiagnosticEngine::report(getLoc(we), DiagID::ERR_YIELD_OR_REQUIRED,
+                                 "while");
       else if (elseType == "void" && !allPathsJump(we->ElseBody.get()))
-        error(we->ElseBody.get(),
-              "Yielding while loop 'or' block must pass a value");
+        DiagnosticEngine::report(getLoc(we->ElseBody.get()),
+                                 DiagID::ERR_YIELD_VALUE_REQUIRED,
+                                 "'or' block");
     }
 
     if (bodyType != "void" && !we->ElseBody) {
-      error(we, "Yielding while loop must have an 'or' block");
+      DiagnosticEngine::report(getLoc(we), DiagID::ERR_YIELD_OR_REQUIRED,
+                               "while");
     }
     if (bodyType != "void" && elseType != "void" &&
         !isTypeCompatible(bodyType, elseType)) {
-      error(we, "While loop branches have incompatible types");
+      DiagnosticEngine::report(getLoc(we), DiagID::ERR_BRANCH_TYPE_MISMATCH,
+                               "While loop", bodyType, elseType);
     }
     return toka::Type::fromString((bodyType != "void") ? bodyType : elseType);
   } else if (auto *le = dynamic_cast<LoopExpr *>(E)) {
@@ -1021,7 +1028,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       m_ControlFlowStack.pop_back();
 
     if (isReceiver && res == "void" && !allPathsJump(le->Body.get())) {
-      error(le, "Yielding loop body must pass a value");
+      DiagnosticEngine::report(getLoc(le), DiagID::ERR_YIELD_VALUE_REQUIRED,
+                               "loop");
     }
     return toka::Type::fromString(res);
   } else if (auto *fe = dynamic_cast<ForExpr *>(E)) {
@@ -1071,20 +1079,25 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     if (isReceiver) {
       if (bodyType == "void" && !allPathsJump(fe->Body.get()))
-        error(fe->Body.get(), "Yielding for loop body must pass a value");
+        DiagnosticEngine::report(getLoc(fe->Body.get()),
+                                 DiagID::ERR_YIELD_VALUE_REQUIRED, "for loop");
       if (!fe->ElseBody)
-        error(fe, "Yielding for loop must have an 'or' block");
+        DiagnosticEngine::report(getLoc(fe), DiagID::ERR_YIELD_OR_REQUIRED,
+                                 "for");
       else if (elseType == "void" && !allPathsJump(fe->ElseBody.get()))
-        error(fe->ElseBody.get(),
-              "Yielding for loop 'or' block must pass a value");
+        DiagnosticEngine::report(getLoc(fe->ElseBody.get()),
+                                 DiagID::ERR_YIELD_VALUE_REQUIRED,
+                                 "'or' block");
     }
 
     if (bodyType != "void" && !fe->ElseBody) {
-      error(fe, "Yielding for loop must have an 'or' block");
+      DiagnosticEngine::report(getLoc(fe), DiagID::ERR_YIELD_OR_REQUIRED,
+                               "for");
     }
     if (bodyType != "void" && elseType != "void" &&
         !isTypeCompatible(bodyType, elseType)) {
-      error(fe, "For loop branches have incompatible types");
+      DiagnosticEngine::report(getLoc(fe), DiagID::ERR_BRANCH_TYPE_MISMATCH,
+                               "For loop", bodyType, elseType);
     }
     return toka::Type::fromString((bodyType != "void") ? bodyType : elseType);
   } else if (auto *pe = dynamic_cast<PassExpr *>(E)) {
@@ -1134,8 +1147,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           if (it->ExpectedType == "void") {
             it->ExpectedType = valType;
           } else if (!isTypeCompatible(it->ExpectedType, valType)) {
-            error(pe, "Yield type mismatch ('" + it->ExpectedType + "' vs '" +
-                          valType + "')");
+            DiagnosticEngine::report(getLoc(pe), DiagID::ERR_TYPE_MISMATCH,
+                                     valType, it->ExpectedType);
           }
           break;
         }
@@ -1143,8 +1156,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
 
     if (!foundReceiver) {
-      error(pe, "'pass' used without a receiver. Prefix the expression with "
-                "'pass' or assign it to a variable.");
+      DiagnosticEngine::report(getLoc(pe), DiagID::ERR_PASS_NO_RECEIVER);
     }
 
     return toka::Type::fromString((isPrefixMatch || isPrefixIf || isPrefixFor ||
@@ -1194,8 +1206,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
         if (target->ExpectedType == "void") {
           target->ExpectedType = valType;
         } else if (!isTypeCompatible(target->ExpectedType, valType)) {
-          error(be, "Break type mismatch ('" + target->ExpectedType + "' vs '" +
-                        valType + "')");
+          DiagnosticEngine::report(getLoc(be), DiagID::ERR_TYPE_MISMATCH,
+                                   valType, target->ExpectedType);
         }
       }
     }
@@ -1294,8 +1306,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               std::string tdDeclFile =
                   DiagnosticEngine::SrcMgr->getFullSourceLoc(TD->Loc).FileName;
               if (metCallFile != tdDeclFile && !sameModule) {
-                error(Met, "method '" + Met->Method +
-                               "' is private to trait '" + traitName + "'");
+                DiagnosticEngine::report(
+                    getLoc(Met), DiagID::ERR_METHOD_PRIVATE, Met->Method,
+                    "trait " + traitName, getModuleName(CurrentModule));
               }
             }
             return toka::Type::fromString(M->ReturnType);
@@ -1361,8 +1374,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               DiagnosticEngine::SrcMgr->getFullSourceLoc(FD->Loc).FileName;
 
           if (metCallFile != fdDeclFile && !sameModule) {
-            error(Met, "method '" + Met->Method + "' is private to '" +
-                           fdDeclFile + "'");
+            DiagnosticEngine::report(getLoc(Met), DiagID::ERR_METHOD_PRIVATE,
+                                     Met->Method, soulType,
+                                     getModuleName(CurrentModule));
           }
         }
       }
@@ -1395,8 +1409,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       return ObjTypeObj->withAttributes(ObjTypeObj->IsWritable, false);
     }
 
-    error(Met,
-          "method '" + Met->Method + "' not found on type '" + ObjType + "'");
+    DiagnosticEngine::report(getLoc(Met), DiagID::ERR_NO_SUCH_MEMBER, ObjType,
+                             Met->Method);
     return toka::Type::fromString("unknown");
   } else if (auto *Init = dynamic_cast<InitStructExpr *>(E)) {
     return checkShapeInit(Init);
