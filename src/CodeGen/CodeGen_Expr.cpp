@@ -159,13 +159,11 @@ void CodeGen::emitEnvelopeRebind(llvm::Value *handleAddr, llvm::Value *rhsVal,
     return;
 
   if (sym.morphology == Morphology::Shared) {
-    // 1. Acquire(New) - Order prevents self-assignment suicide
-    emitAcquire(rhsVal);
-    // 2. Release(Old)
+    // 1. Release(Old)
     llvm::Value *oldVal =
         m_Builder.CreateLoad(rhsVal->getType(), handleAddr, "sh.old_handle");
     emitRelease(oldVal, sym);
-    // 3. Update(Handle)
+    // 2. Update(Handle) with new owning handle from genExpr
     m_Builder.CreateStore(rhsVal, handleAddr);
   } else if (sym.morphology == Morphology::Unique) {
     // Unique: simple Release(Old) + Update
@@ -1098,40 +1096,16 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
   }
 
   // Morphology symbols: ^p, ~p
+  // Morphology symbols: ^p, ~p
   if (unary->Op == TokenType::Caret) {
-    if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-      std::string vName = v->Name;
-      while (!vName.empty() && (vName.back() == '?' || vName.back() == '!'))
-        vName.pop_back();
-
-      llvm::Value *alloca = getIdentityAddr(vName);
-      if (alloca) {
-        llvm::Value *val =
-            m_Builder.CreateLoad(m_Builder.getPtrTy(), alloca, vName + ".move");
-        m_Builder.CreateStore(
-            llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), alloca);
-        return val;
-      } else {
-        PhysEntity ent = genExpr(unary->RHS.get());
-        return ent.load(m_Builder);
-      }
-    } else if (auto *me = dynamic_cast<const MemberExpr *>(unary->RHS.get())) {
-      PhysEntity meEnt = genAddr(me);
-      if (meEnt.value && meEnt.isAddress) {
-        llvm::Value *val = m_Builder.CreateLoad(
-            m_Builder.getPtrTy(), meEnt.value, me->Member + ".move");
-        m_Builder.CreateStore(
-            llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), meEnt.value);
-        return val;
-      } else {
-        return genExpr(unary->RHS.get()).load(m_Builder);
-      }
-    } else {
-      return genExpr(unary->RHS.get()).load(m_Builder);
-    }
+    // [Fix] Simplified Move: Rely on genExpr (genVariableExpr) to handle
+    // ownership transfer (Load + Store Null).
+    return genExpr(unary->RHS.get()).load(m_Builder);
   }
 
   if (unary->Op == TokenType::Tilde) {
+    // [Fix] Simplified Share: Rely on genExpr (genVariableExpr) to handle
+    // ownership transfer (SharedPtr Acquire).
     return genExpr(unary->RHS.get());
   }
 
@@ -1354,13 +1328,15 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
 
   // [Fix] Shared Pointer Handle Type Correction
   if (isShared && soulType) {
-    // If it is shared, the soulAddr is the address of the Handle {ptr,
-    // ref*}. But soulType from symbol is the Element Type. We must
-    // construct the Handle Type so the load is correct.
     llvm::Type *ptrTy = llvm::PointerType::getUnqual(soulType);
     llvm::Type *refTy =
         llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
     soulType = llvm::StructType::get(m_Context, {ptrTy, refTy});
+  } else if (var->ResolvedType && var->ResolvedType->isUniquePtr() &&
+             soulType) {
+    // [Fix] Unique Pointer Handle is Ptr to Soul
+    // The symbol stores the Soul type (Data), but the alloca stores Data*.
+    soulType = llvm::PointerType::getUnqual(soulType);
   }
 
   if (!soulType) {
@@ -1370,22 +1346,43 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
   }
 
   std::string typeName = "";
-  if (m_Symbols.count(baseName))
+  TokaSymbol *sym = nullptr;
+  if (m_Symbols.count(baseName)) {
     typeName = m_Symbols[baseName].typeName;
-  else if (m_TypeToName.count(soulType))
+    sym = &m_Symbols[baseName];
+  } else if (m_TypeToName.count(soulType)) {
     typeName = m_TypeToName[soulType];
+  }
 
-  // [Fix] Move Semantics for Unique Pointers
-  // If we are using a Unique Pointer as an RValue (not in LHS), we must
-  // perform a Move: load the value and then nullify the source alloca to
-  // prevent double-free.
-  if (var->ResolvedType && var->ResolvedType->isUniquePtr() && !m_InLHS &&
-      soulAddr && !llvm::isa<llvm::Function>(soulAddr) &&
+  // [Fix] Uniform Ownership Transfer for Smart Pointers
+  // If we are using a Smart Pointer as an RValue (not in LHS), we must perform
+  // an ownership transfer to ensure it survives the current statement.
+  bool isUnique = (var->ResolvedType && var->ResolvedType->isUniquePtr());
+  if (sym && sym->morphology == Morphology::Unique)
+    isUnique = true;
+
+  // [Fix] Handle Type Adjustment for Unique Pointers
+  if (isUnique && soulType && !soulType->isPointerTy()) {
+    soulType = llvm::PointerType::getUnqual(soulType);
+  }
+
+  if (!m_InLHS && soulAddr && !llvm::isa<llvm::Function>(soulAddr) &&
       !llvm::isa<llvm::GlobalVariable>(soulAddr)) {
-    llvm::Value *val = m_Builder.CreateLoad(soulType, soulAddr, "move.val");
-    m_Builder.CreateStore(llvm::ConstantPointerNull::get(m_Builder.getPtrTy()),
-                          soulAddr);
-    return PhysEntity(val, typeName, soulType, false); // Return Value
+
+    if (isUnique) {
+      // UniquePtr: Move (Load + Store Null)
+      llvm::Value *val = m_Builder.CreateLoad(soulType, soulAddr, "move.val");
+      m_Builder.CreateStore(
+          llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), soulAddr);
+      return PhysEntity(val, typeName, soulType, false); // Return RValue
+    }
+
+    if (var->ResolvedType && var->ResolvedType->isSharedPtr()) {
+      // SharedPtr: Share (Load + Acquire)
+      llvm::Value *val = m_Builder.CreateLoad(soulType, soulAddr, "share.val");
+      emitAcquire(val);
+      return PhysEntity(val, typeName, soulType, false); // Return RValue
+    }
   }
 
   return PhysEntity(soulAddr, typeName, soulType, true);
@@ -2500,6 +2497,12 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
             isCaptured = true;
         }
       }
+
+      // [Fix] Unique Pointers MUST be passed by Value (Move Semantics)
+      // Even if HasPointer is false (parser quirk), IsUnique confirms intent.
+      if (arg.IsUnique) {
+        isCaptured = false;
+      }
     } else if (extDecl && i < extDecl->Args.size()) {
       const auto &arg = extDecl->Args[i];
       if (!arg.HasPointer) {
@@ -2507,6 +2510,15 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
           isCaptured = true;
       }
+    }
+
+    // [Debug] Arg detection
+    if (funcDecl && i < funcDecl->Args.size()) {
+      const auto &arg = funcDecl->Args[i];
+      std::cerr << "DEBUG: CallArg " << i << " Name=" << arg.Name
+                << " HasRef=" << arg.IsReference << " HasPtr=" << arg.HasPointer
+                << " IsUni=" << arg.IsUnique << " Cap=" << isCaptured
+                << " ShouldAddr=" << shouldPassAddr << "\n";
     }
 
     if (isCaptured || isRef) {

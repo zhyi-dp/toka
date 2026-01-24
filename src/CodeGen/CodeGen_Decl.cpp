@@ -836,47 +836,9 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
 
   m_NamedValues[varName] = alloca;
 
-  // [Fix] Shared Pointer Init RC Logic
-  // Distinguish Copy (LValue) vs Transfer (RValue)
-  if (var->IsShared && initVal) {
-    bool isCopy = false;
-    // Check if Init is LValue-like
-    if (auto *ue = dynamic_cast<const UnaryExpr *>(var->Init.get())) {
-      // e.g. auto ~x = ~y;  (~y is LValue copy)
-      isCopy = true;
-    } else if (dynamic_cast<const VariableExpr *>(var->Init.get())) {
-      isCopy = true;
-    } else if (dynamic_cast<const MemberExpr *>(var->Init.get())) {
-      isCopy = true;
-    } else if (dynamic_cast<const ArrayIndexExpr *>(var->Init.get())) {
-      isCopy = true;
-    }
-
-    // If initVal is just {ptr, ptr}, we need to extract refPtr to IncRef
-    if (isCopy && initVal->getType()->isStructTy()) {
-      llvm::Value *refPtr =
-          m_Builder.CreateExtractValue(initVal, 1, "init_refptr");
-      llvm::Value *refNN = m_Builder.CreateIsNotNull(refPtr, "init_ref_nn");
-
-      llvm::Function *F = m_Builder.GetInsertBlock()->getParent();
-      llvm::BasicBlock *doIncBB =
-          llvm::BasicBlock::Create(m_Context, "init_inc", F);
-      llvm::BasicBlock *contBB =
-          llvm::BasicBlock::Create(m_Context, "init_inc_cont", F);
-
-      m_Builder.CreateCondBr(refNN, doIncBB, contBB);
-      m_Builder.SetInsertPoint(doIncBB);
-
-      llvm::Value *cnt =
-          m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
-      llvm::Value *inc = m_Builder.CreateAdd(
-          cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-      m_Builder.CreateStore(inc, refPtr);
-
-      m_Builder.CreateBr(contBB);
-      m_Builder.SetInsertPoint(contBB);
-    }
-  }
+  // [Refactor] Shared Pointer Init RC Logic
+  // Redundant IncRef removed because genExpr (via genVariableExpr) now
+  // handle ownership transfer (Acquire) for RValues.
 
   if (initVal) {
     if (initVal->getType() != type) {
