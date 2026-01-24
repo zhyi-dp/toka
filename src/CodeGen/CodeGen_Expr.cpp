@@ -963,26 +963,18 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
 
       if (m_Symbols.count(cleanName)) {
         auto &sym = m_Symbols[cleanName];
-        if (sym.mode == AddressingMode::Reference) {
-          // Rebinding Support: &ref returns the Handle's Address (L-Value)
-          llvm::Value *handleAddr = getEntityAddr(cleanName);
-          return PhysEntity(handleAddr, sym.typeName, m_Builder.getPtrTy(),
-                            true);
-        }
-        if (sym.morphology == Morphology::Unique ||
-            sym.morphology == Morphology::Shared) {
-          // Implicit Dereference: &smart_ptr -> &pointee
-          // Load the pointer from the stack slot (the handle)
+        bool isIdentityPeek = (sym.mode == AddressingMode::Reference ||
+                               sym.morphology == Morphology::Unique ||
+                               sym.morphology == Morphology::Shared);
+
+        if (isIdentityPeek) {
+          // [Constitution 1.3] Identity Peek: &ptr peeks at the stored identity
           llvm::Value *handleSlot = getIdentityAddr(cleanName);
           llvm::Value *ptrVal = m_Builder.CreateLoad(
-              m_Builder.getPtrTy(), handleSlot, cleanName + ".unwrap");
+              m_Builder.getPtrTy(), handleSlot, cleanName + ".peek");
 
-          std::string pointeeType = sym.typeName;
-          if (pointeeType.size() > 1 &&
-              (pointeeType[0] == '^' || pointeeType[0] == '~')) {
-            pointeeType = pointeeType.substr(1);
-          }
-          return PhysEntity(ptrVal, pointeeType, m_Builder.getPtrTy(), false);
+          std::string typeName = sym.typeName;
+          return PhysEntity(ptrVal, typeName, m_Builder.getPtrTy(), false);
         }
       }
       // Standard Address-Of (R-Value)

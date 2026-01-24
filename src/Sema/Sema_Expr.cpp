@@ -676,6 +676,52 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     if (srcIsNumeric && targetIsNumeric) {
       // Normal numeric cast, allow.
+    } else if (targetType->isReference()) {
+      // [Constitution 1.3] Borrow-Cast: var as &Node or var as &var
+      // Re-interpreting identity as a direct borrow view.
+      auto targetInner = targetType->getPointeeType();
+      auto srcInner =
+          (srcType->isPointer())
+              ? std::dynamic_pointer_cast<toka::PointerType>(srcType)
+                    ->getPointeeType()
+              : srcType;
+
+      if (!isTypeCompatible(targetInner, srcInner)) {
+        DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
+                                 srcType->toString(), Cast->TargetType);
+        HasError = true;
+      }
+
+      // Semantic Side-Effect: Register this as a borrow
+      Expr *Traverse = Cast->Expression.get();
+      // Peel Identity Op if present: ^p -> p
+      if (auto *UE = dynamic_cast<UnaryExpr *>(Traverse)) {
+        if (UE->Op == TokenType::Caret || UE->Op == TokenType::Tilde ||
+            UE->Op == TokenType::Star) {
+          Traverse = UE->RHS.get();
+        }
+      }
+
+      while (true) {
+        if (auto *M = dynamic_cast<MemberExpr *>(Traverse)) {
+          Traverse = M->Object.get();
+        } else if (auto *Idx = dynamic_cast<ArrayIndexExpr *>(Traverse)) {
+          Traverse = Idx->Array.get();
+        } else {
+          break;
+        }
+      }
+
+      if (auto *Var = dynamic_cast<VariableExpr *>(Traverse)) {
+        SymbolInfo *Info = nullptr;
+        if (CurrentScope->findSymbol(Var->Name, Info)) {
+          if (!m_InLHS) {
+            Info->ImmutableBorrowCount++;
+            m_LastBorrowSource = Var->Name;
+            m_CurrentStmtBorrows.push_back({Var->Name, false});
+          }
+        }
+      }
     } else if (targetType->isSmartPointer() && !srcType->isSmartPointer()) {
       // Rule: Smart Pointer Creation Restriction
       DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_SMART_PTR_FROM_STACK,
@@ -2022,6 +2068,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   }
 
   if (Unary->Op == TokenType::Ampersand) {
+    if (rhsType->isReference())
+      return rhsType;
     auto ref = std::make_shared<toka::ReferenceType>(rhsType);
     ref->IsNullable = Unary->HasNull;
     ref->IsWritable = Unary->IsRebindable;
@@ -2198,7 +2246,6 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       LHSScan = un->RHS.get();
     }
     if (auto *LHSVar = dynamic_cast<VariableExpr *>(LHSScan)) {
-      std::cerr << "DEBUG: resetMoved for " << LHSVar->Name << "\n";
       CurrentScope->resetMoved(LHSVar->Name);
     }
 
@@ -2398,12 +2445,6 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
                   uint64_t bit = (1ULL << i);
                   bool isUnset = !(EffectiveInfo->InitMask & bit) &&
                                  !(EffectiveInfo->DirtyReferentMask & bit);
-
-                  std::cerr << "DEBUG: Unset Check. Member=" << M->Member
-                            << " Bit=" << i
-                            << " Mask=" << EffectiveInfo->InitMask
-                            << " Dirty=" << EffectiveInfo->DirtyReferentMask
-                            << " Result=" << isUnset << "\n";
 
                   if (isUnset) {
                     isLHSUnset = true;
@@ -3091,8 +3132,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
           continue;
 
         // DEBUG:
-        std::cerr << "Deduce: Arg " << i << " Type=" << argType->toString()
-                  << "\n";
+        // std::cerr << "Deduce: Arg " << i << " Type=" << argType->toString()
+        // << "\n";
 
         const auto &Param = Fn->Args[i];
         std::string PType = Param.Type;
@@ -3124,11 +3165,6 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
             break;
           }
         }
-
-        // DEBUG:
-        std::cerr << "Deduce: Param " << i << " Type=" << PType
-                  << " Generic=" << isGeneric
-                  << " HasPointer=" << Param.HasPointer << "\n";
 
         if (isGeneric) {
           // Strict Match: T matches ArgType
@@ -3181,9 +3217,6 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
             }
           } else {
             Deduced[PType] = candidate;
-            // DEBUG:
-            std::cerr << "Deduce: Deduced " << PType << " = "
-                      << candidate->toString() << "\n";
           }
         }
       }
