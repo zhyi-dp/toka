@@ -74,7 +74,7 @@ fn main() -> i32 {
         assert(p1_drop_flag == true, "p1_drop_flag should be true")
 
         auto ~s2 = ~s1
-        println("s2_drop_flag: {}", s2_drop_flag)
+        println("s2_drop_flag: {}", s1_drop_flag)
         
         auto r2 = Resource(id=41, point=Point(x=40,y=1,&drop_flag = &r2_drop_flag#))
         println("reached end of block")
@@ -83,6 +83,33 @@ fn main() -> i32 {
     assert(s1_drop_flag == true, "s1_drop_flag should be true")
     assert(r2_drop_flag == true, "r2_drop_flag should be true")
     assert(tmp_drop_flag == true, "tmp_drop_flag should be true")
+
+    p1_drop_flag# = false
+    s1_drop_flag# = false
+    r2_drop_flag# = false
+    tmp_drop_flag# = false
+    {
+        auto ~#p1 = new Resource(id=11, point=Point(x=10,y=1,&drop_flag = &p1_drop_flag#))
+        auto ~pp1 = ~p1
+        assert(p1_drop_flag == false, "p1_drop_flag should be false")
+
+        auto ~s1 = new Resource(id=21, point=Point(x=20,y=1,&drop_flag = &s1_drop_flag#))
+        println("s1_drop_flag: {}", s1_drop_flag#)
+        assert(s1_drop_flag == false, "s1_drop_flag should be false")
+
+        //auto ~p2 = ~p1
+        println("2 will rebind ~#p1")
+        tmp_drop_flag# = false
+        ~#p1 = new Resource(id=31, point=Point(x=30,y=1,&drop_flag = &tmp_drop_flag#))
+        println("2 after rebind ~#p1")
+        assert(p1_drop_flag == false, "p1_drop_flag should be false because old ~#p1 is not only ßßowned")
+
+        auto ~s2 = ~s1
+        println("2 s2_drop_flag: {}", s1_drop_flag)
+        
+        auto r2 = Resource(id=41, point=Point(x=40,y=1,&drop_flag = &r2_drop_flag#))
+        println("2 reached end of block")
+    }
     println("End of main")
     return 0
 }

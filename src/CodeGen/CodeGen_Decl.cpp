@@ -298,8 +298,24 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
       if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(finalStorage))
         argAllocTy = AI->getAllocatedType();
 
-      m_ScopeStack.back().push_back(
-          {argName, finalStorage, argAllocTy, false, false});
+      bool argHasDrop = false;
+      std::string argDropFunc = "";
+      if (argDecl.ResolvedType) {
+        auto soul = argDecl.ResolvedType->getSoulType();
+        std::string soulName = soul->getSoulName();
+        // Check authoritative metadata from Sema
+        if (m_Shapes.count(soulName)) {
+          auto SD = m_Shapes[soulName];
+          if (!SD->MangledDestructorName.empty()) {
+            argHasDrop = true;
+            argDropFunc = SD->MangledDestructorName;
+          }
+        }
+      }
+
+      m_ScopeStack.back().push_back({argName, finalStorage, argAllocTy,
+                                     argDecl.IsUnique, argDecl.IsShared, false,
+                                     ""}); // Callee does NOT drop args
     }
 
     idx++;
@@ -954,21 +970,11 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
                (base.back() == '#' || base.back() == '?' || base.back() == '!'))
           base.pop_back();
 
-        std::string tryName = base + "_encap_drop";
-        if (m_Module->getFunction(tryName)) {
-          hasDrop = true;
-          dropFunc = tryName;
-        } else {
-          std::string altName = "encap_" + base + "_drop";
-          if (m_Module->getFunction(altName)) {
+        if (m_Shapes.count(base)) {
+          auto SD = m_Shapes[base];
+          if (!SD->MangledDestructorName.empty()) {
             hasDrop = true;
-            dropFunc = altName;
-          } else {
-            std::string try3 = base + "_drop";
-            if (m_Module->getFunction(try3)) {
-              hasDrop = true;
-              dropFunc = try3;
-            }
+            dropFunc = SD->MangledDestructorName;
           }
         }
       }

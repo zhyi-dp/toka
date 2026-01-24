@@ -458,7 +458,7 @@ void Sema::registerImpl(ImplDecl *Impl) {
 
   // [Toka] Resource Management: Mark type as having drop if @encap is
   // implemented
-  if (Impl->TraitName == "@encap") {
+  if (Impl->TraitName == "encap") {
     if (implemented.count("drop")) {
       m_ShapeProps[resolvedTypeName].HasDrop = true;
       // [Single Source of Truth] Store the authoritative mangled name
