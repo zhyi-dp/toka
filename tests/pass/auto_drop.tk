@@ -94,7 +94,7 @@ fn main() -> i32 {
         assert(p1_drop_flag == 0, "p1_drop_flag should be 0")
 
         auto ~s1 = new Resource(id=21, point=Point(x=20,y=1,&drop_flag = &s1_drop_flag#))
-        println("s1_drop_flag: {}", s1_drop_flag#)
+        println("s1_drop_flag: {}", s1_drop_flag)
         assert(s1_drop_flag == 0, "s1_drop_flag should be 0")
 
         //auto ~p2 = ~p1

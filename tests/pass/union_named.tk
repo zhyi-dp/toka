@@ -21,7 +21,7 @@ fn main() -> i32 {
     }
     
     // 3. Store via dot-access (L-Value)
-    r.low = 0xFFFF
+    r#.low = 0xFFFF
     println("after modifying low, full: {}", r.full)
     
     if r.full == 0xAABBFFFF {
@@ -32,7 +32,7 @@ fn main() -> i32 {
     // We can also test the tuple view
     println("bits.0: {}", r.bits.0)
     
-    r.bits.0 = 0xAA
+    r#.bits.0 = 0xAA
     if r.bits.0 == 0xAA {
         println("bits OK")
     }

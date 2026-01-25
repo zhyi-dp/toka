@@ -394,6 +394,13 @@ private:
       Signature += "*";
 
     Signature += toka::Type::stripPrefixes(Arg.Type);
+
+    // Soul/Object Attributes (Suffix Zone)
+    if (Arg.IsValueNullable)
+      Signature += "?";
+    if (Arg.IsValueMutable)
+      Signature += "#";
+
     return Signature;
   }
 

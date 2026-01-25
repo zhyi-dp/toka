@@ -300,6 +300,8 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   } else if (match(TokenType::KwSelf)) {
     Token tok = previous();
     auto node = std::make_unique<VariableExpr>("self");
+    node->IsValueMutable = tok.HasWrite;
+    node->IsValueNullable = tok.HasNull;
     node->setLocation(tok, m_CurrentFile);
     expr = std::move(node);
   } else if (match(TokenType::KwUnsafe)) {
@@ -694,7 +696,24 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
           // Member Access
           auto node = std::make_unique<MemberExpr>(std::move(expr), memberName);
           node->setLocation(dotTok, m_CurrentFile);
-          expr = std::move(node);
+
+          Token nameTok =
+              previous(); // The identifier matched at loop start or later?
+          // Wait, 'prefix + previous().Text' was used. previous() is the
+          // identifier.
+          if (nameTok.HasWrite) {
+            auto wrapper = std::make_unique<PostfixExpr>(TokenType::TokenWrite,
+                                                         std::move(node));
+            wrapper->setLocation(nameTok, m_CurrentFile);
+            expr = std::move(wrapper);
+          } else if (nameTok.HasNull) {
+            auto wrapper = std::make_unique<PostfixExpr>(TokenType::TokenNull,
+                                                         std::move(node));
+            wrapper->setLocation(nameTok, m_CurrentFile);
+            expr = std::move(wrapper);
+          } else {
+            expr = std::move(node);
+          }
         }
       } else if (prefix.empty() && match(TokenType::Integer)) {
         auto node =

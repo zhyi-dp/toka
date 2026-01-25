@@ -1634,13 +1634,23 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
           // Determine if the field's soul should be writable based on
           // inheritance
-          bool isFieldMarked = (Field.Type.find('#') != std::string::npos ||
-                                Field.Type.find('$') != std::string::npos ||
-                                Field.Type.find('!') != std::string::npos);
+          bool isFieldMarked = Field.IsValueMutable;
 
-          bool finalSoulWritable = isFieldMarked
-                                       ? fieldType->getSoulType()->IsWritable
-                                       : objTypeObj->IsWritable;
+          if (isFieldMarked) {
+            // [Fix] If member is marked mutable, it means the SOUL is mutable.
+            // For pointers/refs, this means the Pointee must be writable.
+            if (fieldType->isPointer() || fieldType->isReference() ||
+                fieldType->isSmartPointer()) {
+              if (auto pt = fieldType->getPointeeType()) {
+                pt->IsWritable = true;
+              }
+            } else {
+              fieldType->IsWritable = true;
+            }
+          }
+
+          bool finalSoulWritable =
+              isFieldMarked ? true : objTypeObj->IsWritable;
 
           if (requestedPrefix.empty() && !m_DisableSoulCollapse) {
             // obj.field (Hat-Off) -> Soul Collapse.
@@ -1721,10 +1731,13 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
     return toka::Type::fromString("unknown");
   } else if (auto *Post = dynamic_cast<PostfixExpr *>(E)) {
-    bool oldDisable = m_DisableSoulCollapse;
-    m_DisableSoulCollapse = true;
+    // [Fix] Do NOT disable soul collapse.
+    // If the user wants the handle, they must use explicit prefix (e.g. ^ptr#).
+    // Otherwise `ptr#` means "Mutable Value".
+    // bool oldDisable = m_DisableSoulCollapse;
+    // m_DisableSoulCollapse = true;
     auto lhsObj = checkExpr(Post->LHS.get());
-    m_DisableSoulCollapse = oldDisable;
+    // m_DisableSoulCollapse = oldDisable;
     std::string lhsInfo = lhsObj->toString();
     if (auto *Var = dynamic_cast<VariableExpr *>(Post->LHS.get())) {
       SymbolInfo Info;
@@ -2272,8 +2285,31 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
           }
         } else {
           // Soul Mutation
-          if (InfoPtr->IsMutable() || Var->IsValueMutable)
-            isLHSWritable = true;
+          // [Constitution 3.0] Explicit Mutability Enforcement
+          // Usage site MUST show '#' or '!' (Var->IsValueMutable)
+          if (Var->IsValueMutable) {
+            bool authorized = InfoPtr->IsMutable();
+            // detailed check for Pointers: Soul is the Pointee
+            if (!authorized) {
+              if (InfoPtr->IsReference() ||
+                  (InfoPtr->TypeObj && InfoPtr->TypeObj->isPointer())) {
+                if (InfoPtr->TypeObj && InfoPtr->TypeObj->getPointeeType()) {
+                  if (InfoPtr->TypeObj->getPointeeType()->IsWritable) {
+                    authorized = true;
+                  }
+                }
+              }
+            }
+
+            if (authorized) {
+              isLHSWritable = true;
+            } else {
+              // User asserted mutability (#) on an immutable variable
+              error(Bin, DiagID::ERR_IMMUTABLE_MOD, Var->Name);
+              HasError = true;
+              isLHSWritable = true; // Bypasses subsequent error
+            }
+          }
         }
 
         // [Unset Safety] Allow writing to immutable variables if they are
@@ -2285,6 +2321,10 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
           if (InfoPtr->InitMask != ~0ULL)
             isLHSWritable = true;
         }
+      }
+    } else if (auto *Post = dynamic_cast<PostfixExpr *>(Traverse)) {
+      if (Post->Op == TokenType::TokenWrite || Post->Op == TokenType::Bang) {
+        isLHSWritable = true;
       }
     } else if (auto *Un = dynamic_cast<UnaryExpr *>(Traverse)) {
       // [Constitution] Explicit Rebind/Access check

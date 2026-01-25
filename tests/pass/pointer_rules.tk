@@ -8,14 +8,14 @@ pub fn main() -> i32 {
     unsafe {
         // 1. Allocate 2 points (uninitialized, writable)
         // [Alloc Syntax]: No initialization for arrays
-        auto *#p = unsafe alloc [2]Point(x=1, y=2)
+        auto *#p# = unsafe alloc [2]Point(x=1, y=2)
 
         println("p[0].x: {}, p[1].x: {}", p[0].x, p[1].x)
         assert(p[0].x == 1, "check p[0].x (broadcast init)")
         assert(p.x == 1, "check p.x (same as p[0].x)")
         assert(p[1].x == 1, "check p[1].x (broadcast init)")
 
-        p[1] = Point(x=1*2 + 1, y=(1+1) * 2) 
+        p#[1] = Point(x=1*2 + 1, y=(1+1) * 2)
         assert(p[1].x == 3, "check p[1].x (after p[1] assignment)")
         assert(p[0].x == 1, "check p[0].x (after p[1] assignment, p[0] not affected)")        
 

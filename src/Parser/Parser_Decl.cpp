@@ -96,7 +96,10 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
       ShapeMember m;
       match(TokenType::KwAs); // Optional 'as' in this syntax
       if (check(TokenType::Identifier) && checkAt(1, TokenType::Colon)) {
-        m.Name = advance().Text;
+        Token nameTok = advance();
+        m.Name = nameTok.Text;
+        m.IsValueMutable = nameTok.HasWrite;
+        m.IsValueNullable = nameTok.HasNull;
         consume(TokenType::Colon, "Expected ':'");
         m.Type = parseTypeString();
       } else {
@@ -137,7 +140,10 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
         consume(TokenType::KwAs, "Expected 'as' for union variant");
         ShapeMember v;
         if (check(TokenType::Identifier) && checkAt(1, TokenType::Colon)) {
-          v.Name = advance().Text;
+          Token nameTok = advance();
+          v.Name = nameTok.Text;
+          v.IsValueMutable = nameTok.HasWrite;
+          v.IsValueNullable = nameTok.HasNull;
           consume(TokenType::Colon, "Expected ':'");
           v.Type = parseTypeString();
         } else {
@@ -222,7 +228,10 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
               prefixType += "!";
           }
 
-          m.Name = consume(TokenType::Identifier, "Expected field name").Text;
+          Token nameTok = consume(TokenType::Identifier, "Expected field name");
+          m.Name = nameTok.Text;
+          m.IsValueMutable = nameTok.HasWrite;
+          m.IsValueNullable = nameTok.HasNull;
           consume(TokenType::Colon, "Expected ':'");
 
           m.Type = prefixType; // Start with prefix

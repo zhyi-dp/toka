@@ -47,9 +47,9 @@ impl<T> SharedPtr<T> {
         unsafe {
             // [Alloc Syntax]: 按照你的要求，*data 接收 *ptr
             //println("allocating for {}", val)
-            auto *data_ptr = unsafe alloc T(val)
+            auto *data_ptr# = unsafe alloc T(val)
             auto rc1 = Atomic<u64>(1)
-            auto *cb_ptr = unsafe alloc RcWrapper<T>(
+            auto *cb_ptr# = unsafe alloc RcWrapper<T>(
                 ref_count = rc1, 
                 *data = *data_ptr 
             )
@@ -62,7 +62,7 @@ impl<T> SharedPtr<T> {
     // 2. 拷贝赋值：修复了逻辑顺序和帽子规则解引用
     pub fn assign(self#, rhs: SharedPtr<T>) {
         // [帽子规则]: 比较指针地址不需要解引用
-        if self.*#wrapper == rhs.*wrapper {
+        if self.*wrapper == rhs.*wrapper {
             unsafe println("lhs wrapper:{} == rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.data)
             return
         }
@@ -72,7 +72,7 @@ impl<T> SharedPtr<T> {
         self.xdrop() 
 
         // 接纳新值
-        self.*#wrapper = rhs.*wrapper
+        self#.*wrapper = rhs.*wrapper
 
         // [帽子规则]: 原始指针必须显式解包 (*ptr) 才能访问成员
         if self.*wrapper != nullptr {
@@ -110,8 +110,21 @@ impl<T> SharedPtr<T> {
         }
         
         // 置空
-        self.*wrapper = nullptr
+        self#.*wrapper = nullptr
  
+    }
+
+    pub fn new(val: T) -> SharedPtr<T> {
+        unsafe {
+            // [Fix] Use alloc to create initialized mutable RcWrapper directly
+            // This avoids casting issues and ensures correct mutable pointer type
+            auto *val_ptr = unsafe alloc T(val)
+            auto *cb# = unsafe alloc RcWrapper<T>(
+                ref_count = Atomic<u64>(1),
+                *data = *val_ptr
+            )
+            return SharedPtr<T>(*wrapper = *cb)
+        }
     }
 }
 

@@ -984,6 +984,8 @@ struct ShapeMember {
   bool IsUnique = false;
   bool IsShared = false;
   bool IsReference = false;
+  bool IsValueMutable = false;
+  bool IsValueNullable = false;
 
   // For Bare Union (as ...)
   std::vector<ShapeMember> SubMembers;

@@ -399,7 +399,7 @@ impl String {
     }
 
     pub fn to_upper(self) -> String {
-        auto res = String::from_with_len(self.c_str(), self.len)
+        auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0
             while i < res.len {
@@ -414,7 +414,7 @@ impl String {
     }
 
     pub fn to_lower(self) -> String {
-        auto res = String::from_with_len(self.c_str(), self.len)
+        auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0
             while i < res.len {
@@ -429,7 +429,7 @@ impl String {
     }
 
     pub fn replace_char(self, old_c: char, new_c: char) -> String {
-        auto res = String::from_with_len(self.c_str(), self.len)
+        auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0
             while i < res.len {
