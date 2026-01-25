@@ -298,7 +298,28 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
   if (!rhsVal)
     return nullptr;
 
-  if (hasRebind && symLHS && lhsAlloca) {
+  // [Fix] Smart Pointer Assignment Ambiguity
+  bool effectiveRebind = hasRebind;
+  if (effectiveRebind && symLHS && rhsVal) {
+    bool isHandleType = rhsVal->getType()->isStructTy(); // SharedPtr
+    if (rhsVal->getType()->isPointerTy()) {
+      // Could be RawPtr, UniquePtr, or promoted SharedPtr source
+      isHandleType = true;
+    }
+    // If RHS matches Soul Type exactly, prefer Soul Assignment
+    if (rhsVal->getType() == symLHS->soulType) {
+      // e.g. s has soul i32. RHS is i32.
+      // Even if i32 could be a pointer (no), it matches soul.
+      isHandleType = false;
+    }
+
+    // Determine strict preference
+    if (!isHandleType) {
+      effectiveRebind = false;
+    }
+  }
+
+  if (effectiveRebind && symLHS && lhsAlloca) {
     // Scene B: Envelope Rebind
     if (symLHS->morphology == Morphology::Shared &&
         rhsVal->getType()->isPointerTy()) {
@@ -1265,9 +1286,11 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
 
   if (var->ResolvedType && var->ResolvedType->isSharedPtr()) {
     isShared = true;
+    soulAddr = getIdentityAddr(var->Name); // [Fix] Handle Address for RValue
   } else if (m_Symbols.count(checkName) &&
              m_Symbols[checkName].morphology == Morphology::Shared) {
     isShared = true;
+    soulAddr = getIdentityAddr(checkName); // [Fix] Handle Address for RValue
   }
 
   if (!soulAddr) {
@@ -1344,14 +1367,6 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
 
   if (!m_InLHS && soulAddr && !llvm::isa<llvm::Function>(soulAddr) &&
       !llvm::isa<llvm::GlobalVariable>(soulAddr)) {
-
-    if (isUnique) {
-      // UniquePtr: Move (Load + Store Null)
-      llvm::Value *val = m_Builder.CreateLoad(soulType, soulAddr, "move.val");
-      m_Builder.CreateStore(
-          llvm::ConstantPointerNull::get(m_Builder.getPtrTy()), soulAddr);
-      return PhysEntity(val, typeName, soulType, false); // Return RValue
-    }
 
     if (var->ResolvedType && var->ResolvedType->isSharedPtr()) {
       // SharedPtr: Share (Load + Acquire)

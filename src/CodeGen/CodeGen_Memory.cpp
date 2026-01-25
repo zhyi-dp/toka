@@ -131,8 +131,11 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
     }
   }
 
-  if (!ptrAddr)
-    ptrAddr = genAddr(fs->Expression.get());
+  if (!ptrAddr) {
+    // [Fix] Always load the pointer value. free() expects the heap address
+    // (RValue), not the variable address (LValue).
+    ptrAddr = genExpr(fs->Expression.get()).load(m_Builder);
+  }
 
   if (freeHook && ptrAddr) {
     // [Feature] Drop before Free for Raw Pointers
