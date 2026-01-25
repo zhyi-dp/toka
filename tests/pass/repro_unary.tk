@@ -15,13 +15,12 @@ import std/io::println
 import std/debug::assert
 
 shape Data (
-    val: i32,
-    name: str
+    val: i32
 )
 
 impl Data@encap {
     fn drop(self#) {
-        println("Dropping Data, name={} val={}", self.name, self.val)
+        println("Dropping Data, val={}", self.val)
     }
 }
 
@@ -57,7 +56,7 @@ fn check_raw_ptr(*?ptr: Data) {
 
 
 fn main() -> i32 {
-    auto *?q# = unsafe alloc [2]Data(val = 999, name = "raw[]")
+    auto *?q# = unsafe alloc [2]Data(val = 999)
     println("--- Before check_raw_ptr ---")
     check_raw_ptr(*?q)
     println("--- Before unsafe free ---")
@@ -81,13 +80,13 @@ fn main() -> i32 {
         println("--- After unsafe free ---")
     }    
 
-    auto ~?r = new Data(val = 20, name = "shared_r")
+    auto ~?r = new Data(val = 20)
     check_shared_ptr(~?r)
     auto ~?rr = ~?r
     check_shared_ptr(~?rr)
 
 
-    auto ^?p = new Data(val = 10, name = "unique_q")
+    auto ^?p = new Data(val = 10)
     check_unique_ptr(^?p)
     if ^?p is ^p {
         println("Unique pointer is not nullptr confirmed, ptr.val={}", p.val)
@@ -100,7 +99,7 @@ fn main() -> i32 {
     check_unique_ptr(^?pp)
 
 
-    auto ~?r = new Data(val = 20, name = "shared_r2")
+    auto ~?r = new Data(val = 20)
     check_shared_ptr(~?r)
 
     return 0

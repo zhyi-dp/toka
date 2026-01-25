@@ -1939,6 +1939,26 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
   if (pat->PatternKind == MatchArm::Pattern::Variable) {
     llvm::Value *val = targetAddr;
     std::string pName = pat->Name;
+    bool isUnique = false;
+    bool isShared = false;
+    bool isRaw = false;
+
+    // Detect Morphology from Name
+    std::string checkName = pName;
+    while (!checkName.empty()) {
+      char c = checkName[0];
+      if (c == '^')
+        isUnique = true;
+      else if (c == '~')
+        isShared = true;
+      else if (c == '*')
+        isRaw = true;
+      else if (c == '#' || c == '&' || c == '!') { /* skip */
+      } else
+        break;
+      checkName = checkName.substr(1);
+    }
+
     while (!pName.empty() &&
            (pName[0] == '*' || pName[0] == '#' || pName[0] == '&' ||
             pName[0] == '^' || pName[0] == '~' || pName[0] == '!'))
@@ -1957,13 +1977,6 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
     m_Builder.CreateStore(val, alloca);
 
     m_NamedValues[pName] = alloca;
-    // m_ValueTypes[pName] = allocaType; // LEGACY REMOVED
-    // m_ValueElementTypes[pName] = targetType; // LEGACY REMOVED
-    // Legacy maps removed
-    // m_ValueIsReference[pName] = pat->IsReference;
-    // m_ValueIsMutable[pName] = pat->IsMutable;
-    // m_ValueIsUnique[pName] = false;
-    // m_ValueIsShared[pName] = false;
 
     TokaSymbol sym;
     sym.allocaPtr = alloca;
@@ -1972,10 +1985,28 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
                        pat->IsValueMutable, false, targetType);
     sym.isRebindable = false;
     sym.isContinuous = targetType->isArrayTy();
+
+    // [Fix] Set Morphology and Indirection explicitly for Pattern Bindings
+    if (isUnique) {
+      sym.morphology = Morphology::Unique;
+      sym.indirectionLevel = 1;
+    } else if (isShared) {
+      sym.morphology = Morphology::Shared;
+      // Shared is a struct value, so indirection is 0 (alloca holds the struct)
+      // Unless targetType was already a pointer to shared?
+      // genMatchExpr loads target. If variable was ~T, targetVal is {T*, Ref}.
+      // So alloca stores {T*, Ref}. Indirection 0.
+      sym.indirectionLevel = 0;
+    } else if (isRaw || targetType->isPointerTy()) {
+      sym.morphology = Morphology::Raw;
+      sym.indirectionLevel = 1;
+    }
+
     m_Symbols[pName] = sym;
 
     if (!m_ScopeStack.empty()) {
-      m_ScopeStack.back().push_back({pName, alloca, targetType, false, false});
+      m_ScopeStack.back().push_back(
+          {pName, alloca, targetType, isUnique, isShared});
     }
   } else if (pat->PatternKind == MatchArm::Pattern::Decons) {
     if (targetType->isStructTy()) {
@@ -2474,10 +2505,12 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         }
       }
 
-      // [Fix] Unique Pointers MUST be passed by Value (Move Semantics)
-      // Even if HasPointer is false (parser quirk), IsUnique confirms intent.
-      if (arg.IsUnique) {
-        isCaptured = false;
+      // [Fix] Unique/Shared Pointers MUST be passed by Reference (Capture)
+      // This matches genFunction ABI where they are treated as Captured
+      // Arguments. This allows the Callee to manipulate the Handle (e.g.
+      // invalidating it on Move).
+      if (arg.IsUnique || arg.IsShared) {
+        isCaptured = true;
       }
     } else if (extDecl && i < extDecl->Args.size()) {
       const auto &arg = extDecl->Args[i];

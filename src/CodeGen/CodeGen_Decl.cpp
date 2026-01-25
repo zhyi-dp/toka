@@ -313,9 +313,10 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
         }
       }
 
-      m_ScopeStack.back().push_back({argName, finalStorage, argAllocTy,
-                                     argDecl.IsUnique, argDecl.IsShared, false,
-                                     ""}); // Callee does NOT drop args
+      m_ScopeStack.back().push_back(
+          {argName, finalStorage, argAllocTy, false, false,
+           false, // [Fix] Borrowed Args: IsUnique=false, IsShared=false
+           ""});  // Callee does NOT drop args
     }
 
     idx++;

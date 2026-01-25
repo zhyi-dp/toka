@@ -411,6 +411,43 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
     st = llvm::cast<llvm::StructType>(objType);
   }
 
+  // [Fix] Handle Auto-Dereference (Identity -> Soul) for Deref Expressions
+  // (*p.x) If the object expression is a Dereference (*p), genAddr returned the
+  // Identity (Handle Address). We need the Soul (Data Address) to access
+  // members.
+  const Expr *baseExpr = mem->Object.get();
+  if (auto *ue = dynamic_cast<const UnaryExpr *>(baseExpr)) {
+    if (ue->Op == TokenType::Star || ue->Op == TokenType::Caret ||
+        ue->Op == TokenType::Tilde || ue->Op == TokenType::TokenNull) {
+
+      bool isShared = false;
+      if (ue->RHS->ResolvedType && ue->RHS->ResolvedType->isSharedPtr()) {
+        isShared = true;
+      }
+
+      if (isShared) {
+        // Shared Pointer Identity is { T*, Ref* }*
+        // We want T*.
+        // 1. GEP to data ptr (index 0)
+        llvm::Value *dataAddr = m_Builder.CreateStructGEP(
+            llvm::StructType::get(
+                m_Context,
+                {llvm::PointerType::getUnqual(st ? (llvm::Type *)st
+                                                 : m_Builder.getInt8Ty()),
+                 llvm::PointerType::getUnqual(m_Builder.getInt32Ty())}),
+            objAddr, 0, "member.sh_data_gep");
+        // 2. Load T*
+        objAddr = m_Builder.CreateLoad(m_Builder.getPtrTy(), dataAddr,
+                                       "member.sh_soul");
+      } else {
+        // Raw/Unique Pointer Identity is T**.
+        // We want T*.
+        objAddr = m_Builder.CreateLoad(m_Builder.getPtrTy(), objAddr,
+                                       "member.peel_soul");
+      }
+    }
+  }
+
   std::string memberName = mem->Member;
   while (!memberName.empty() && (memberName[0] == '^' || memberName[0] == '*' ||
                                  memberName[0] == '&' || memberName[0] == '#' ||
