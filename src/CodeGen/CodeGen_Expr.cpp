@@ -1101,6 +1101,9 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
     if (rhs->getType()->isFloatingPointTy())
       return m_Builder.CreateFNeg(rhs, "negtmp");
     return m_Builder.CreateNeg(rhs, "negtmp");
+  } else if (unary->Op == TokenType::TokenNull) {
+    // Morphology pass-through
+    return rhs_ent;
   }
   return nullptr;
 }

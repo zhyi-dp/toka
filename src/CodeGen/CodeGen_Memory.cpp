@@ -118,13 +118,17 @@ PhysEntity CodeGen::genAllocExpr(const AllocExpr *ae) {
 }
 
 llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
-  llvm::Function *freeHook = m_Module->getFunction("__toka_free");
+  llvm::Function *freeHook = m_Module->getFunction("free");
 
   llvm::Value *ptrAddr = nullptr;
   if (auto *unary = dynamic_cast<const UnaryExpr *>(fs->Expression.get())) {
-    // TokenType::Star is explicitly the Soul (Pointer Value), so we let it fall
-    // through to genAddr which correctly resolves to the Soul address (Heap
-    // Address).
+    if (unary->Op == TokenType::Star || unary->Op == TokenType::Caret ||
+        unary->Op == TokenType::Tilde) {
+      // [Fix] Freeing a pointer (*p) means freeing the Value (the Soul),
+      // not the Stack Address (identity). genAddr(*p) returns Identity.
+      // genExpr(*p) returns Soul.
+      ptrAddr = genExpr(fs->Expression.get()).load(m_Builder);
+    }
   }
 
   if (!ptrAddr)
@@ -642,6 +646,10 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
       }
       // For recursive unary, we'd need to go deeper, but Toka usually has 1
       // level.
+      return genAddr(unary->RHS.get());
+    }
+    if (unary->Op == TokenType::TokenNull) {
+      // Morphology is transparent to address
       return genAddr(unary->RHS.get());
     }
   }
