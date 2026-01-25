@@ -1296,8 +1296,11 @@ void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
 
   // [NEW] Skip Impls for template shapes (they won't have LLVM types)
   if (!resolveType(decl->TypeName, false)) {
+    llvm::errs() << "DEBUG: genImpl Skipping " << decl->TypeName
+                 << " (Type not resolved)\n";
     return;
   }
+  llvm::errs() << "DEBUG: genImpl Generating " << decl->TypeName << "\n";
 
   m_CurrentSelfType = decl->TypeName;
   std::set<std::string> implementedMethods;

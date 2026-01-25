@@ -24,24 +24,7 @@ impl Counter {
     }
 }
 
-// Module-level factory functions (Bypassing static generic method CodeGen limitations)
-pub fn new_vec<T>() -> Vec<T> {
-    // Implicit conversation works for assignment/init of pointer variable
-    auto *null_ptr : T = nullptr
-    return Vec<T>(*buf=*null_ptr, len=0, cap=0)
-}
-
-pub fn vec_with_capacity<T>(capacity: usize) -> Vec<T> {
-    unsafe {
-        if capacity == 0 {
-            auto *null_ptr : T = nullptr
-            return Vec<T>(*buf=*null_ptr, len=0, cap=0)
-        }
-        // alloc array syntax
-        auto *new_buf# = unsafe alloc [capacity] T
-        return Vec<T>(*buf=*new_buf, len=0, cap=capacity)
-    }
-}
+// Module-level factory functions removed. using static methods.
 
 pub shape Vec<T> (
     *buf#: T,
@@ -49,9 +32,35 @@ pub shape Vec<T> (
     cap: usize
 )
 
-impl<T> Vec<T>@encap {
-    pub len
-    pub cap
+impl<T> Vec<T> {
+    // Getters for length and capacity
+    pub fn len(self) -> usize {
+        return self.len
+    }
+
+    pub fn cap(self) -> usize {
+        return self.cap
+    }
+    
+    // Create empty vector (Static Method)
+    pub fn new() -> Vec<T> {
+        // Implicit conversation works for assignment/init of pointer variable
+        auto *null_ptr : T = nullptr
+        return Vec<T>(*buf=*null_ptr, len=0, cap=0)
+    }
+
+    // Create vector with capacity (Static Method)
+    pub fn with_capacity(capacity: usize) -> Vec<T> {
+        unsafe {
+            if capacity == 0 {
+                auto *null_ptr : T = nullptr
+                return Vec<T>(*buf=*null_ptr, len=0, cap=0)
+            }
+            // alloc array syntax
+            auto *new_buf# = unsafe alloc [capacity] T
+            return Vec<T>(*buf=*new_buf, len=0, cap=capacity)
+        }
+    }
     
     // Get raw pointer to data
     pub fn as_ptr(self) -> *T {

@@ -1,5 +1,5 @@
 import std/io::println
-import std/vec::{Vec, new_vec, vec_with_capacity}
+import std/vec::Vec
 
 shape Point(x: i32, y: i32)
 
@@ -7,13 +7,13 @@ fn main() -> i32 {
     unsafe {
         // Test 1: Vec<i32>
         println("--- Test 1: Vec<i32> ---")
-        auto v1# = new_vec<i32>()
+        auto v1# = Vec<i32>::new()
         v1.push(10)
         v1.push(20)
         v1.push(30)
         
-        println("len: {}, cap: {}", v1.len, v1.cap)
-        if v1.len != 3 {
+        println("len: {}, cap: {}", v1.len(), v1.cap())
+        if v1.len() != 3 {
              println("FAIL: len should be 3")
              return 1
         }
@@ -31,12 +31,12 @@ fn main() -> i32 {
         v1.push(60)
         v1.push(70) 
         
-        println("len: {}, cap: {}", v1.len, v1.cap)
+        println("len: {}, cap: {}", v1.len(), v1.cap())
         println("v1[0]: {}", v1.get(0))
         
         // Use loop to print
         auto i# = 0:u64
-        while i < v1.len {
+        while i < v1.len() {
             println("v1[{}] = {}", i, v1.get(i))
             i# = i + 1
         }
@@ -45,13 +45,13 @@ fn main() -> i32 {
         
         // Test 2: Vec<Point>
         println("\n--- Test 2: Vec<Point> ---")
-        auto v2# = vec_with_capacity<Point>(2)
+        auto v2# = Vec<Point>::with_capacity(2)
         v2.push(Point(x=1, y=2))
         v2.push(Point(x=3, y=4))
         // Trigger grow
         v2.push(Point(x=5, y=6))
         
-        println("len: {}, cap: {}", v2.len, v2.cap)
+        println("len: {}, cap: {}", v2.len(), v2.cap())
         
         auto p = v2.get(2)
         println("p.x: {}, p.y: {}", p.x, p.y)
