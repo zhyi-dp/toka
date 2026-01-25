@@ -31,10 +31,10 @@ fn main() -> i32 {
         // 3. Identity access: *ptr is the pointer address
         println("Address (*ptr) = {}", *ptr as *void)
         
-        // 4. Explicit pointer access: (*ptr)->y
-        println("(*ptr)->y = {} (expected 20)", (*ptr)->y)
+        // 4. Arrow abolished. Use dot.
+        println("ptr.y = {} (expected 20)", ptr.y)
         assert(ptr.x == 100, "ptr.x mismatch")
-        assert((*ptr)->y == 20, "(*ptr)->y mismatch")
+        assert(ptr.y == 20, "ptr.y mismatch")
         
         free *ptr
     }

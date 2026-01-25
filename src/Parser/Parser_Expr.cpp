@@ -724,17 +724,11 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         error(peek(), "Expected member name or index after '.'");
       }
     } else if (match(TokenType::Arrow)) {
-      Token arrowTok = previous();
-      if (match(TokenType::Identifier) || match(TokenType::Integer) ||
-          match(TokenType::KwUnset) || match(TokenType::KwNull) ||
-          match(TokenType::KwSelf)) {
-        auto node = std::make_unique<MemberExpr>(std::move(expr),
-                                                 previous().Text, true);
-        node->setLocation(arrowTok, m_CurrentFile);
-        expr = std::move(node);
-      } else {
-        error(peek(), "Expected member name or index after '->'");
-      }
+      // [Abolished] Arrow syntax for member access is removed.
+      // Use implicit dereference via dot (.) instead.
+      error(previous(),
+            "Arrow '->' member access is abolished. Use dot '.' instead.");
+      return nullptr;
     } else if (match(TokenType::LBracket)) {
       std::vector<std::unique_ptr<Expr>> indices;
       if (!check(TokenType::RBracket)) {

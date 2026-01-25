@@ -11,12 +11,12 @@ fn main() -> i32 {
         // 2. Member Access: Dot - Implicit Deref
         println("p.x: {}", p.x)
         
-        // 3. Member Access: Arrow - Explicit Sigil
-        println("^p->y: {}", ^p->y)
+        // 3. Member Access: Arrow is abolished -> Use Dot on Soul
+        println("p.y: {}", p.y)
         
         // 4. Mutation
         p#.x = 100
-        ^p#->y = 200
+        p#.y = 200
         
         println("Modified: {}, {}", p.x, p.y)
     }
