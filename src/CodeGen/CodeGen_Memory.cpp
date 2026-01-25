@@ -635,9 +635,13 @@ llvm::Value *CodeGen::genAddr(const Expr *expr) {
     }
     if (unary->Op == TokenType::Star || unary->Op == TokenType::Caret ||
         unary->Op == TokenType::Tilde) {
-      // *p, ^p, ~p -> The Identity address (pointer value).
-      // genAddr(p) already peels the onion to return the Soul address (the
-      // location pointed to).
+      // [Constitution] *p, ^p, ~p refer to the Identity (the pointer handle).
+      // Their "address" is the address of the handle box (the alloca).
+      if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+        return getIdentityAddr(v->Name);
+      }
+      // For recursive unary, we'd need to go deeper, but Toka usually has 1
+      // level.
       return genAddr(unary->RHS.get());
     }
   }

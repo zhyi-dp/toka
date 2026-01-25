@@ -24,6 +24,11 @@ namespace toka {
 void CodeGen::emitAcquire(llvm::Value *sharedHandle) {
   if (!sharedHandle || !sharedHandle->getType()->isStructTy())
     return;
+
+  auto *ST = llvm::cast<llvm::StructType>(sharedHandle->getType());
+  if (ST->getNumElements() < 2)
+    return;
+
   llvm::Value *refPtr =
       m_Builder.CreateExtractValue(sharedHandle, 1, "sh.acq_ref_ptr");
   llvm::Value *nn = m_Builder.CreateIsNotNull(refPtr, "sh.acq_nn");
@@ -922,6 +927,7 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 }
 
 PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
+  std::cerr << "DEBUG: genUnaryExpr op=" << (int)unary->Op << "\n";
   if (unary->Op == TokenType::PlusPlus || unary->Op == TokenType::MinusMinus) {
     llvm::Value *addr = genAddr(unary->RHS.get());
     if (!addr)
@@ -957,156 +963,132 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
     return m_Builder.CreateNot(rhs, "nottmp");
   }
 
-  // Identity and address-of: *p, &p
-  if (unary->Op == TokenType::Ampersand) {
-    if (auto *var = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
-      std::string cleanName = var->Name;
-      while (!cleanName.empty() &&
-             (cleanName.back() == '?' || cleanName.back() == '!'))
-        cleanName.pop_back();
-
-      if (m_Symbols.count(cleanName)) {
-        auto &sym = m_Symbols[cleanName];
-        bool isIdentityPeek = (sym.mode == AddressingMode::Reference ||
-                               sym.morphology == Morphology::Unique ||
-                               sym.morphology == Morphology::Shared);
-
-        if (isIdentityPeek) {
-          // [Constitution 1.3] Identity Peek: &ptr peeks at the stored
-          // identity
-          llvm::Value *handleSlot = getIdentityAddr(cleanName);
-          llvm::Value *ptrVal = m_Builder.CreateLoad(
-              m_Builder.getPtrTy(), handleSlot, cleanName + ".peek");
-
-          std::string typeName = sym.typeName;
-          return PhysEntity(ptrVal, typeName, m_Builder.getPtrTy(), false);
-        }
+  // [Constitution 1.3] Morphology symbols: *p (Raw Pointer Identity)
+  if (unary->Op == TokenType::Star) {
+    // A handle is something that contains the pointer (Unique/Shared/Reference)
+    bool isHandle = false;
+    if (unary->RHS->ResolvedType) {
+      auto t = unary->RHS->ResolvedType;
+      // Note: We only treat it as a handle if it's a Top-Level pointer
+      // variable/member access. If it's an indexed access like raw[i], it's a
+      // value.
+      if ((t->isPointer() || t->isReference() || t->isSmartPointer()) &&
+          !dynamic_cast<const ArrayIndexExpr *>(unary->RHS.get())) {
+        isHandle = true;
       }
-      // Standard Address-Of (R-Value)
-      return getEntityAddr(
-          var->Name); // Implicit conversion to R-Value PhysEntity?
-                      // Actually getEntityAddr returns Value*, likely need
-                      // explicit PhysEntity if we want to be strict, but
-                      // existing code returned it directly so implicit ctor
-                      // must exist or it returns Value* and PhysEntity isn't
-                      // used here? Wait, return type is PhysEntity. Existing
-                      // code: return getEntityAddr(var->Name); This implies
-                      // PhysEntity has a ctor(Value*). I will use explicit
-                      // PhysEntity for the L-Value case to be sure.
     }
-    return genAddr(unary->RHS.get());
+
+    if (isHandle) {
+      llvm::Value *identityAddr = emitHandleAddr(unary->RHS.get());
+      if (!identityAddr)
+        return nullptr;
+      llvm::Type *ptrTy = m_Builder.getPtrTy();
+      if (unary->RHS->ResolvedType)
+        ptrTy = getLLVMType(unary->RHS->ResolvedType);
+      llvm::Value *val = m_Builder.CreateLoad(ptrTy, identityAddr, "raw.ident");
+      std::string typeName =
+          unary->RHS->ResolvedType ? unary->RHS->ResolvedType->toString() : "";
+      return PhysEntity(val, typeName, ptrTy, false);
+    } else {
+      // It's a value (like raw[start] or a simple local i32). *p is the
+      // address.
+      llvm::Value *addr = genAddr(unary->RHS.get());
+      if (!addr)
+        return nullptr;
+      std::string typeName = "";
+      if (unary->RHS->ResolvedType)
+        typeName = "*" + unary->RHS->ResolvedType->toString();
+      return PhysEntity(addr, typeName, addr->getType(), false);
+    }
   }
 
-  if (unary->Op == TokenType::Star) {
-    llvm::Value *val = emitEntityAddr(unary->RHS.get());
+  // [Constitution 1.3] Reference Sigil: &p (Static Borrow)
+  if (unary->Op == TokenType::Ampersand) {
+    llvm::Value *soulAddr = emitEntityAddr(unary->RHS.get());
     std::string typeName = "";
-    if (auto *idxExpr =
-            dynamic_cast<const ArrayIndexExpr *>(unary->RHS.get())) {
-      if (auto *v = dynamic_cast<const VariableExpr *>(idxExpr->Array.get())) {
-        std::string baseName = v->Name;
-        while (!baseName.empty() && (baseName[0] == '*' || baseName[0] == '#' ||
-                                     baseName[0] == '&' || baseName[0] == '^' ||
-                                     baseName[0] == '~' || baseName[0] == '!'))
-          baseName = baseName.substr(1);
-        while (!baseName.empty() &&
-               (baseName.back() == '#' || baseName.back() == '?' ||
-                baseName.back() == '!'))
-          baseName.pop_back();
+    if (unary->RHS->ResolvedType)
+      typeName = "&" + unary->RHS->ResolvedType->toString();
+    return PhysEntity(soulAddr, typeName, m_Builder.getPtrTy(), false);
+  }
 
-        if (m_Symbols.count(baseName)) {
-          std::string T = m_Symbols[baseName].typeName;
-          while (!T.empty() && (T[0] == '*' || T[0] == '^' || T[0] == '&' ||
-                                T[0] == '~' || T[0] == '[')) {
-            if (T[0] == '[') {
-              size_t end = T.find(']');
-              if (end != std::string::npos)
-                T = T.substr(end + 1);
-              else
-                T = T.substr(1);
-            } else {
-              T = T.substr(1);
-            }
-          }
-          typeName = "*" + T;
-        }
-      }
-    }
+  // [Constitution 1.3] Morphology symbols: ^p, ~p
+  if (unary->Op == TokenType::Caret) {
+    llvm::Value *identityAddr = emitHandleAddr(unary->RHS.get());
+    if (!identityAddr)
+      return nullptr;
 
+    // Favor actual symbol handle type over resolved soul type
+    llvm::Type *handleTy = nullptr;
     if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
       std::string baseName = v->Name;
-      while (!baseName.empty() &&
-             (baseName[0] == '*' || baseName[0] == '#' || baseName[0] == '&' ||
-              baseName[0] == '^' || baseName[0] == '~' || baseName[0] == '!'))
+      while (!baseName.empty() && (baseName[0] == '*' || baseName[0] == '^' ||
+                                   baseName[0] == '~' || baseName[0] == '&'))
         baseName = baseName.substr(1);
-      while (!baseName.empty() &&
-             (baseName.back() == '#' || baseName.back() == '?' ||
-              baseName.back() == '!'))
-        baseName.pop_back();
-
-      // [Fix] Move Semantics for Unique Pointers
-      // If we are passing a Unique Pointer to a function that expects a
-      // Unique Pointer AND we have captured it (Pass-By-Reference/Address),
-      // we can simply nullify the source memory directly via 'val'. This
-      // block seems misplaced here, as it refers to `funcDecl`, `extDecl`,
-      // `i`, `isCaptured` which are typically found in `genCallExpr`. As per
-      // instructions, I must make the change faithfully and without making
-      // any unrelated edits. Since the instruction explicitly says "Update
-      // `genCallExpr`" and the provided content does not contain
-      // `genCallExpr`, I cannot apply this change. However, if the user
-      // *intended* for this to be inserted at this specific location in
-      // `genUnaryExpr` despite the instruction's function name, then the code
-      // would be syntactically incorrect due to undefined variables
-      // (`funcDecl`, `extDecl`, `i`, `isCaptured`). Given the constraint to
-      // return syntactically correct code, and the mismatch between
-      // instruction and context, I will *not* insert the problematic block
-      // here. I will proceed with the original interpretation of the `*`
-      // operator in `genUnaryExpr`. The instruction's code snippet is
-      // malformed at the end, containing "typically returns...". I will
-      // assume the user meant to insert the block *before* the return
-      // statement, and the "typically returns..." was an accidental copy.
-
       if (m_Symbols.count(baseName)) {
-        // If variable is 'char', *var is effectively 'char' (or *char
-        // depending on semantics) println allows 'char' or '*char' to print
-        // as string
-        typeName = m_Symbols[baseName].typeName;
+        TokaSymbol &sym = m_Symbols[baseName];
+        if (sym.morphology == Morphology::Shared) {
+          llvm::Type *ptrTy = llvm::PointerType::getUnqual(sym.soulType);
+          llvm::Type *refTy =
+              llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+          handleTy = llvm::StructType::get(m_Context, {ptrTy, refTy});
+        } else if (sym.morphology == Morphology::Unique ||
+                   sym.morphology == Morphology::Raw) {
+          handleTy = m_Builder.getPtrTy();
+        }
       }
     }
-    // Assuming the user intended to insert this logic into `genCallExpr` but
-    // provided the surrounding context from `genUnaryExpr` by mistake. As per
-    // instructions, I must make the change faithfully and without making any
-    // unrelated edits. Since the instruction explicitly says "Update
-    // `genCallExpr`" and the provided content does not contain `genCallExpr`,
-    // I cannot apply this change. However, if the user *intended* for this to
-    // be inserted at this specific location in `genUnaryExpr` despite the
-    // instruction's function name, then the code would be syntactically
-    // incorrect due to undefined variables (`funcDecl`, `extDecl`, `i`,
-    // `isCaptured`). Given the constraint to return syntactically correct
-    // code, and the mismatch between instruction and context, I will *not*
-    // insert the problematic block here. I will proceed with the original
-    // interpretation of the `*` operator in `genUnaryExpr`. The instruction's
-    // code snippet is malformed at the end, containing "typically
-    // returns...". I will assume the user meant to insert the block *before*
-    // the return statement, and the "typically returns..." was an accidental
-    // copy.
+    if (!handleTy)
+      handleTy = getLLVMType(unary->RHS->ResolvedType);
 
-    // *ptr typically returns the pointer address as R-value, but semantically
-    // it's accessing the value
-    return PhysEntity(val, typeName, val ? val->getType() : nullptr, false);
-  }
+    llvm::Value *val = m_Builder.CreateLoad(handleTy, identityAddr, "move.val");
 
-  // Morphology symbols: ^p, ~p
-  // Morphology symbols: ^p, ~p
-  if (unary->Op == TokenType::Caret) {
-    // [Fix] Simplified Move: Rely on genExpr (genVariableExpr) to handle
-    // ownership transfer (Load + Store Null).
-    return genExpr(unary->RHS.get()).load(m_Builder);
+    // For Move (^): Nullify the handle
+    if (handleTy->isPointerTy()) {
+      m_Builder.CreateStore(llvm::ConstantPointerNull::get(
+                                llvm::cast<llvm::PointerType>(handleTy)),
+                            identityAddr);
+    } else if (handleTy->isStructTy()) {
+      m_Builder.CreateStore(llvm::ConstantAggregateZero::get(handleTy),
+                            identityAddr);
+    }
+
+    std::string typeName =
+        unary->RHS->ResolvedType ? unary->RHS->ResolvedType->toString() : "";
+    return PhysEntity(val, typeName, handleTy, false);
   }
 
   if (unary->Op == TokenType::Tilde) {
-    // [Fix] Simplified Share: Rely on genExpr (genVariableExpr) to handle
-    // ownership transfer (SharedPtr Acquire).
-    return genExpr(unary->RHS.get());
+    llvm::Value *identityAddr = emitHandleAddr(unary->RHS.get());
+    if (!identityAddr)
+      return nullptr;
+
+    // Favor actual symbol handle type
+    llvm::Type *handleTy = nullptr;
+    if (auto *v = dynamic_cast<const VariableExpr *>(unary->RHS.get())) {
+      std::string baseName = v->Name;
+      while (!baseName.empty() && (baseName[0] == '*' || baseName[0] == '^' ||
+                                   baseName[0] == '~' || baseName[0] == '&'))
+        baseName = baseName.substr(1);
+      if (m_Symbols.count(baseName)) {
+        TokaSymbol &sym = m_Symbols[baseName];
+        if (sym.morphology == Morphology::Shared) {
+          llvm::Type *ptrTy = llvm::PointerType::getUnqual(sym.soulType);
+          llvm::Type *refTy =
+              llvm::PointerType::getUnqual(llvm::Type::getInt32Ty(m_Context));
+          handleTy = llvm::StructType::get(m_Context, {ptrTy, refTy});
+        }
+      }
+    }
+    if (!handleTy)
+      handleTy = getLLVMType(unary->RHS->ResolvedType);
+
+    llvm::Value *val =
+        m_Builder.CreateLoad(handleTy, identityAddr, "share.val");
+    emitAcquire(val);
+
+    std::string typeName =
+        unary->RHS->ResolvedType ? unary->RHS->ResolvedType->toString() : "";
+    return PhysEntity(val, typeName, handleTy, false);
   }
 
   PhysEntity rhs_ent = genExpr(unary->RHS.get()).load(m_Builder);
@@ -1275,23 +1257,14 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
          (checkName.back() == '?' || checkName.back() == '!'))
     checkName.pop_back();
 
-  // [New] Annotated AST: Use ResolvedType for Morphology (Safe Hybrid)
-  if (var->ResolvedType) {
-    if (var->ResolvedType->isSharedPtr()) {
-      isShared = true;
-      soulAddr = getIdentityAddr(checkName);
-    } else {
-      soulAddr = getEntityAddr(var->Name);
-    }
-  } else {
-    // Legacy Fallback
-    if (m_Symbols.count(checkName) &&
-        m_Symbols[checkName].morphology == Morphology::Shared) {
-      soulAddr = getIdentityAddr(checkName);
-      isShared = true;
-    } else {
-      soulAddr = getEntityAddr(var->Name);
-    }
+  // Use getEntityAddr to get the Soul address (fully dereferenced if needed)
+  soulAddr = getEntityAddr(var->Name);
+
+  if (var->ResolvedType && var->ResolvedType->isSharedPtr()) {
+    isShared = true;
+  } else if (m_Symbols.count(checkName) &&
+             m_Symbols[checkName].morphology == Morphology::Shared) {
+    isShared = true;
   }
 
   if (!soulAddr) {
