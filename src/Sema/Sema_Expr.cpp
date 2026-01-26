@@ -1392,362 +1392,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
   } else if (auto *Init = dynamic_cast<InitStructExpr *>(E)) {
     return checkShapeInit(Init);
   } else if (auto *Memb = dynamic_cast<MemberExpr *>(E)) {
-    std::string path = getStringifyPath(Memb);
-    bool isNarrowed = m_NarrowedPaths.count(path);
-
-    // [Fix] Visual Semantics Enforcement: Symmetry Rule
-    // 1. Arrow '->' REQUIRES explicit pointer sigil (UnaryExpr with ^, *,
-    // ~, &)
-    // 2. Dot '.' FORBIDS explicit pointer sigil
-    bool isExplicitPtr = false;
-    if (auto *UE = dynamic_cast<UnaryExpr *>(Memb->Object.get())) {
-      if (UE->Op == TokenType::Caret || UE->Op == TokenType::Star ||
-          UE->Op == TokenType::Tilde || UE->Op == TokenType::Ampersand) {
-        isExplicitPtr = true;
-      }
-    }
-
-    // [FIX] Handle context-aware sigil (^p->x)
-    if (!isExplicitPtr && (m_OuterPointerSigil == TokenType::Caret ||
-                           m_OuterPointerSigil == TokenType::Star ||
-                           m_OuterPointerSigil == TokenType::Tilde ||
-                           m_OuterPointerSigil == TokenType::Ampersand)) {
-      isExplicitPtr = true;
-    }
-
-    if (Memb->IsArrow) {
-      if (!isExplicitPtr) {
-        DiagnosticEngine::report(getLoc(Memb),
-                                 DiagID::ERR_ARROW_SIGIL_REQUIRED);
-        HasError = true;
-        return toka::Type::fromString("unknown");
-      }
-    } else {
-      if (isExplicitPtr) {
-        DiagnosticEngine::report(getLoc(Memb),
-                                 DiagID::ERR_MEMBER_SIGIL_MISMATCH);
-        HasError = true;
-        return toka::Type::fromString("unknown");
-      }
-    }
-
-    // [FIX] Manual Peeling for Explicit Semantic Access
-    // If Object is (^p)->x or *p->x, checkMemberExpr receives
-    // UnaryExpr(^p). checking ^p via verifyUnaryExpr triggers "stack
-    // variable" error. We must manually peel it, verify morphology, and
-    // proceed.
-    std::shared_ptr<toka::Type> objTypeObj;
-    bool isExplicitPeel = false;
-    TokenType explicitOp = TokenType::TokenNone;
-
-    // Check peeling FIRST
-    if (auto *UE = dynamic_cast<UnaryExpr *>(Memb->Object.get())) {
-      // DEBUG:
-      // llvm::errs() << "DEBUG: checkMemberExpr Object is UnaryExpr Op="
-      //              << (int)UE->Op << "\n";
-
-      if (UE->Op == TokenType::Caret || UE->Op == TokenType::Star ||
-          UE->Op == TokenType::Tilde || UE->Op == TokenType::Ampersand) {
-
-        // Manual Check of Inner Logic
-        objTypeObj = checkExpr(UE->RHS.get());
-        isExplicitPeel = true;
-        explicitOp = UE->Op;
-
-        // Match Logic:
-        // ^ requires UniquePtr
-        // ~ requires SharedPtr
-        // * requires Any Pointer (Raw/Smart/Array)
-        // & requires Any (Address of)
-
-        bool match = false;
-        if (explicitOp == TokenType::Caret && (objTypeObj->isUniquePtr()))
-          match = true;
-        else if (explicitOp == TokenType::Tilde && (objTypeObj->isSharedPtr()))
-          match = true;
-        else if (explicitOp == TokenType::Star &&
-                 (objTypeObj->isPointer() || objTypeObj->isArray() ||
-                  objTypeObj->isSmartPointer()))
-          match = true;
-        else if (explicitOp == TokenType::Ampersand)
-          match = true; // Always valid to refer
-
-        if (!match && objTypeObj->toString() != "unknown") {
-          // Let strict checks later decide, but for now we peeled it.
-        }
-      }
-    } else if (auto *Post = dynamic_cast<PostfixExpr *>(Memb->Object.get())) {
-      // Handle Postfix like p# passed to us?
-      // No, p# is internal.
-      // If ^p#, then Unary -> Postfix. handled above.
-    }
-
-    if (!isExplicitPeel) {
-      objTypeObj = checkExpr(Memb->Object.get());
-    }
-
-    // Unset Check for Member Access
-    if (!m_InLHS) {
-      if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
-        SymbolInfo *Info = nullptr;
-        if (CurrentScope->findSymbol(objVar->Name, Info)) {
-          // [Rule] Borrowing check for Member Access
-          if (Info->IsMutablyBorrowed) {
-            DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_BORROW_MUT,
-                                     objVar->Name);
-            HasError = true;
-          }
-
-          if (Info->TypeObj && Info->TypeObj->isShape()) {
-            // Determine which mask to check: InitMask (for values) or
-            // DirtyReferentMask (for references)
-            uint64_t maskToCheck = Info->InitMask;
-            if (Info->IsReference()) {
-              maskToCheck = Info->DirtyReferentMask;
-            }
-
-            std::string soul = Info->TypeObj->getSoulName();
-            if (ShapeMap.count(soul)) {
-              ShapeDecl *SD = ShapeMap[soul];
-              for (int i = 0; i < (int)SD->Members.size(); ++i) {
-                if (SD->Members[i].Name == Memb->Member) {
-                  if (i < 64 && !(maskToCheck & (1ULL << i))) {
-                    DiagnosticEngine::report(getLoc(Memb),
-                                             DiagID::ERR_USE_UNSET,
-                                             objVar->Name + "." + Memb->Member);
-                    HasError = true;
-                  }
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    std::string ObjTypeFull = objTypeObj->toString();
-
-    // Visibility Check for Private Member (Robust check using EncapMap exists
-    // later in loop)
-
-    if (ObjTypeFull == "module") {
-      // It's a module access
-      if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
-        SymbolInfo modSpec;
-        if (CurrentScope->lookup(objVar->Name, modSpec) &&
-            modSpec.ReferencedModule) {
-          ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
-          if (target->Functions.count(Memb->Member)) {
-            return toka::Type::fromString("fn");
-          }
-          if (target->Globals.count(Memb->Member)) {
-            return toka::Type::fromString(
-                resolveType(target->Globals[Memb->Member]->TypeName));
-          }
-        }
-      }
-    }
-
-    // std::cerr << "DEBUG: checkMemberExpr Object=" << objTypeObj->toString()
-    //           << " IsNullable=" << objTypeObj->IsNullable
-    //           << " isNarrowed=" << isNarrowed << "\n";
-
-    // [Constitution] Strict Null Safety: No Flow-Sensitive Analysis
-    // We enforce explicit unwrap/check. "isNarrowed" suppression is removed.
-    if (objTypeObj->IsNullable) {
-      //      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
-      //                               objTypeObj->toString());
-      //      HasError = true;
-      // [Update] Reporting logic kept same
-      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
-                               objTypeObj->toString());
-      HasError = true;
-    }
-
-    std::string ObjType =
-        toka::Type::stripMorphology(resolveType(objTypeObj, true)->toString());
-
-    if (ShapeMap.count(ObjType)) {
-      ShapeDecl *SD = ShapeMap[ObjType];
-      std::string requestedMember = Memb->Member;
-      std::string requestedPrefix = "";
-      if (!requestedMember.empty() &&
-          (requestedMember[0] == '*' || requestedMember[0] == '^' ||
-           requestedMember[0] == '~' || requestedMember[0] == '&')) {
-        size_t prefixEnd = 0;
-        while (prefixEnd < requestedMember.size() &&
-               (requestedMember[prefixEnd] == '*' ||
-                requestedMember[prefixEnd] == '^' ||
-                requestedMember[prefixEnd] == '~' ||
-                requestedMember[prefixEnd] == '&' ||
-                requestedMember[prefixEnd] == '?' ||
-                requestedMember[prefixEnd] == '#' ||
-                requestedMember[prefixEnd] == '!')) {
-          prefixEnd++;
-        }
-        requestedPrefix = requestedMember.substr(0, prefixEnd);
-        requestedMember = requestedMember.substr(prefixEnd);
-      }
-
-      for (int i = 0; i < (int)SD->Members.size(); ++i) {
-        const auto &Field = SD->Members[i];
-        if (toka::Type::stripMorphology(Field.Name) == requestedMember) {
-          Memb->Index = i; // [FIX] Set index for CodeGen
-          // Visibility Check: God-eye view (same file)
-          std::string membFile =
-              DiagnosticEngine::SrcMgr->getFullSourceLoc(Memb->Loc).FileName;
-          std::string sdFile =
-              DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc).FileName;
-
-          if (membFile != sdFile) {
-            // Check EncapMap
-            if (EncapMap.count(ObjType)) {
-              bool accessible = false;
-              for (const auto &entry : EncapMap[ObjType]) {
-                bool fieldMatches = false;
-                if (entry.IsExclusion) {
-                  fieldMatches = true;
-                  for (const auto &f : entry.Fields) {
-                    if (f == requestedMember) {
-                      fieldMatches = false;
-                      break;
-                    }
-                  }
-                } else {
-                  for (const auto &f : entry.Fields) {
-                    if (f == requestedMember) {
-                      fieldMatches = true;
-                      break;
-                    }
-                  }
-                }
-
-                if (fieldMatches) {
-                  if (entry.Level == EncapEntry::Global) {
-                    accessible = true;
-                  } else if (entry.Level == EncapEntry::Crate) {
-                    accessible = true;
-                  } else if (entry.Level == EncapEntry::Path) {
-                    if (membFile.find(entry.TargetPath) != std::string::npos) {
-                      accessible = true;
-                    }
-                  }
-                }
-                if (accessible)
-                  break;
-              }
-
-              if (!accessible) {
-                error(Memb, DiagID::ERR_MEMBER_PRIVATE, requestedMember,
-                      ObjType);
-              }
-            }
-          }
-
-          // Return type based on Toka 1.3 Pointer-Value Duality
-          std::string fullType = Sema::synthesizePhysicalType(Field);
-          std::shared_ptr<toka::Type> fieldType =
-              toka::Type::fromString(fullType);
-
-          // Determine if the field's soul should be writable based on
-          // inheritance
-          bool isFieldMarked = Field.IsValueMutable;
-
-          if (isFieldMarked) {
-            // [Fix] If member is marked mutable, it means the SOUL is mutable.
-            // For pointers/refs, this means the Pointee must be writable.
-            if (fieldType->isPointer() || fieldType->isReference() ||
-                fieldType->isSmartPointer()) {
-              if (auto pt = fieldType->getPointeeType()) {
-                pt->IsWritable = true;
-              }
-            } else {
-              fieldType->IsWritable = true;
-            }
-          }
-
-          bool finalSoulWritable =
-              isFieldMarked ? true : objTypeObj->IsWritable;
-
-          if (requestedPrefix.empty() && !m_DisableSoulCollapse) {
-            // obj.field (Hat-Off) -> Soul Collapse.
-            return fieldType->getSoulType()->withAttributes(
-                finalSoulWritable, isNarrowed ? false : fieldType->IsNullable);
-          } else {
-            // Hatted Access (Identity Access)
-            // Use fieldType directly as the base (preserving its morphologies)
-            std::shared_ptr<toka::Type> result = fieldType;
-
-            // If requested prefix exists, wrap it
-            if (!requestedPrefix.empty()) {
-              // Check if field already has this morphology
-              bool matches = false;
-              if (requestedPrefix == "&" && fieldType->isReference())
-                matches = true;
-              else if (requestedPrefix == "^" && fieldType->isUniquePtr())
-                matches = true;
-              else if (requestedPrefix == "~" && fieldType->isSharedPtr())
-                matches = true;
-              else if (requestedPrefix == "*" && fieldType->isRawPointer())
-                matches = true;
-
-              if (!matches) {
-                if (requestedPrefix == "&") {
-                  result = std::make_shared<ReferenceType>(fieldType);
-                } else if (requestedPrefix == "^") {
-                  result = std::make_shared<UniquePointerType>(fieldType);
-                } else if (requestedPrefix == "~") {
-                  result = std::make_shared<SharedPointerType>(fieldType);
-                } else if (requestedPrefix == "*") {
-                  result = std::make_shared<RawPointerType>(fieldType);
-                }
-              }
-            }
-
-            // [Toka 1.3] Inheritance for Handles:
-            // If field is NOT marked (#?!), it inherits handle writability from
-            // object.
-            bool finalHandleWritable =
-                isFieldMarked ? result->IsWritable : objTypeObj->IsWritable;
-
-            // Apply attributes to the resulting handle
-            return result->withAttributes(finalHandleWritable,
-                                          result->IsNullable);
-          }
-        }
-      }
-      error(Memb, DiagID::ERR_NO_SUCH_MEMBER, ObjType, Memb->Member);
-
-      return toka::Type::fromString("unknown");
-    } else {
-      auto soulType = objTypeObj;
-      while (soulType && (soulType->isPointer() || soulType->isReference() ||
-                          soulType->isSmartPointer())) {
-        soulType = soulType->getPointeeType();
-      }
-
-      auto resSoul = resolveType(soulType, true);
-      if (auto TT = std::dynamic_pointer_cast<toka::TupleType>(resSoul)) {
-        // Tuple access: .0, .1
-        try {
-          int idx = std::stoi(Memb->Member);
-          if (idx >= 0 && idx < (int)TT->Elements.size()) {
-            Memb->Index = idx; // Set index for CodeGen
-            return TT->Elements[idx];
-          } else {
-            error(Memb, DiagID::ERR_TUPLE_INDEX_OOB, Memb->Member,
-                  std::to_string(TT->Elements.size()));
-          }
-        } catch (...) {
-          error(Memb, DiagID::ERR_MEMBER_NOT_FOUND, Memb->Member, "tuple");
-        }
-        return toka::Type::fromString("unknown");
-      } else if (ObjType != "unknown") {
-        error(Memb, DiagID::ERR_NOT_A_STRUCT, Memb->Member, ObjType);
-      }
-    }
-    return toka::Type::fromString("unknown");
+    return checkMemberExpr(Memb);
   } else if (auto *Post = dynamic_cast<PostfixExpr *>(E)) {
     // [Fix] Do NOT disable soul collapse.
     // If the user wants the handle, they must use explicit prefix (e.g. ^ptr#).
@@ -1916,6 +1561,360 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return toka::Type::fromString(resultType);
   }
 
+  return toka::Type::fromString("unknown");
+}
+
+std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
+  std::string path = getStringifyPath(Memb);
+  bool isNarrowed = m_NarrowedPaths.count(path);
+
+  // [Fix] Visual Semantics Enforcement: Symmetry Rule
+  // 1. Arrow '->' REQUIRES explicit pointer sigil (UnaryExpr with ^, *,
+  // ~, &)
+  // 2. Dot '.' FORBIDS explicit pointer sigil
+  bool isExplicitPtr = false;
+  if (auto *UE = dynamic_cast<UnaryExpr *>(Memb->Object.get())) {
+    if (UE->Op == TokenType::Caret || UE->Op == TokenType::Star ||
+        UE->Op == TokenType::Tilde || UE->Op == TokenType::Ampersand) {
+      isExplicitPtr = true;
+    }
+  }
+
+  // [FIX] Handle context-aware sigil (^p->x)
+  if (!isExplicitPtr && (m_OuterPointerSigil == TokenType::Caret ||
+                         m_OuterPointerSigil == TokenType::Star ||
+                         m_OuterPointerSigil == TokenType::Tilde ||
+                         m_OuterPointerSigil == TokenType::Ampersand)) {
+    isExplicitPtr = true;
+  }
+
+  if (Memb->IsArrow) {
+    if (!isExplicitPtr) {
+      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_ARROW_SIGIL_REQUIRED);
+      HasError = true;
+      return toka::Type::fromString("unknown");
+    }
+  } else {
+    if (isExplicitPtr) {
+      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_MEMBER_SIGIL_MISMATCH);
+      HasError = true;
+      return toka::Type::fromString("unknown");
+    }
+  }
+
+  // [FIX] Manual Peeling for Explicit Semantic Access
+  // If Object is (^p)->x or *p->x, checkMemberExpr receives
+  // UnaryExpr(^p). checking ^p via verifyUnaryExpr triggers "stack
+  // variable" error. We must manually peel it, verify morphology, and
+  // proceed.
+  std::shared_ptr<toka::Type> objTypeObj;
+  bool isExplicitPeel = false;
+  TokenType explicitOp = TokenType::TokenNone;
+
+  // Check peeling FIRST
+  if (auto *UE = dynamic_cast<UnaryExpr *>(Memb->Object.get())) {
+    // DEBUG:
+    // llvm::errs() << "DEBUG: checkMemberExpr Object is UnaryExpr Op="
+    //              << (int)UE->Op << "\n";
+
+    if (UE->Op == TokenType::Caret || UE->Op == TokenType::Star ||
+        UE->Op == TokenType::Tilde || UE->Op == TokenType::Ampersand) {
+
+      // Manual Check of Inner Logic
+      objTypeObj = checkExpr(UE->RHS.get());
+      isExplicitPeel = true;
+      explicitOp = UE->Op;
+
+      // Match Logic:
+      // ^ requires UniquePtr
+      // ~ requires SharedPtr
+      // * requires Any Pointer (Raw/Smart/Array)
+      // & requires Any (Address of)
+
+      bool match = false;
+      if (explicitOp == TokenType::Caret && (objTypeObj->isUniquePtr()))
+        match = true;
+      else if (explicitOp == TokenType::Tilde && (objTypeObj->isSharedPtr()))
+        match = true;
+      else if (explicitOp == TokenType::Star &&
+               (objTypeObj->isPointer() || objTypeObj->isArray() ||
+                objTypeObj->isSmartPointer()))
+        match = true;
+      else if (explicitOp == TokenType::Ampersand)
+        match = true; // Always valid to refer
+
+      if (!match && objTypeObj->toString() != "unknown") {
+        // Let strict checks later decide, but for now we peeled it.
+      }
+    }
+  } else if (auto *Post = dynamic_cast<PostfixExpr *>(Memb->Object.get())) {
+    // Handle Postfix like p# passed to us?
+    // No, p# is internal.
+    // If ^p#, then Unary -> Postfix. handled above.
+  }
+
+  if (!isExplicitPeel) {
+    objTypeObj = checkExpr(Memb->Object.get());
+  }
+
+  // Unset Check for Member Access
+  if (!m_InLHS) {
+    if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
+      SymbolInfo *Info = nullptr;
+      if (CurrentScope->findSymbol(objVar->Name, Info)) {
+        // [Rule] Borrowing check for Member Access
+        if (Info->IsMutablyBorrowed) {
+          DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_BORROW_MUT,
+                                   objVar->Name);
+          HasError = true;
+        }
+
+        if (Info->TypeObj && Info->TypeObj->isShape()) {
+          // Determine which mask to check: InitMask (for values) or
+          // DirtyReferentMask (for references)
+          uint64_t maskToCheck = Info->InitMask;
+          if (Info->IsReference()) {
+            maskToCheck = Info->DirtyReferentMask;
+          }
+
+          std::string soul = Info->TypeObj->getSoulName();
+          if (ShapeMap.count(soul)) {
+            ShapeDecl *SD = ShapeMap[soul];
+            for (int i = 0; i < (int)SD->Members.size(); ++i) {
+              if (SD->Members[i].Name == Memb->Member) {
+                if (i < 64 && !(maskToCheck & (1ULL << i))) {
+                  DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_USE_UNSET,
+                                           objVar->Name + "." + Memb->Member);
+                  HasError = true;
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  std::string ObjTypeFull = objTypeObj->toString();
+
+  // Visibility Check for Private Member (Robust check using EncapMap exists
+  // later in loop)
+
+  if (ObjTypeFull == "module") {
+    // It's a module access
+    if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
+      SymbolInfo modSpec;
+      if (CurrentScope->lookup(objVar->Name, modSpec) &&
+          modSpec.ReferencedModule) {
+        ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
+        if (target->Functions.count(Memb->Member)) {
+          return toka::Type::fromString("fn");
+        }
+        if (target->Globals.count(Memb->Member)) {
+          return toka::Type::fromString(
+              resolveType(target->Globals[Memb->Member]->TypeName));
+        }
+      }
+    }
+  }
+
+  // std::cerr << "DEBUG: checkMemberExpr Object=" << objTypeObj->toString()
+  //           << " IsNullable=" << objTypeObj->IsNullable
+  //           << " isNarrowed=" << isNarrowed << "\n";
+
+  // [Constitution] Strict Null Safety: No Flow-Sensitive Analysis
+  // We enforce explicit unwrap/check. "isNarrowed" suppression is removed.
+  if (objTypeObj->IsNullable) {
+    //      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
+    //                               objTypeObj->toString());
+    //      HasError = true;
+    // [Update] Reporting logic kept same
+    DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
+                             objTypeObj->toString());
+    HasError = true;
+  }
+
+  std::string ObjType =
+      toka::Type::stripMorphology(resolveType(objTypeObj, true)->toString());
+
+  if (ShapeMap.count(ObjType)) {
+    ShapeDecl *SD = ShapeMap[ObjType];
+    std::string requestedMember = Memb->Member;
+    std::string requestedPrefix = "";
+    if (!requestedMember.empty() &&
+        (requestedMember[0] == '*' || requestedMember[0] == '^' ||
+         requestedMember[0] == '~' || requestedMember[0] == '&')) {
+      size_t prefixEnd = 0;
+      while (prefixEnd < requestedMember.size() &&
+             (requestedMember[prefixEnd] == '*' ||
+              requestedMember[prefixEnd] == '^' ||
+              requestedMember[prefixEnd] == '~' ||
+              requestedMember[prefixEnd] == '&' ||
+              requestedMember[prefixEnd] == '?' ||
+              requestedMember[prefixEnd] == '#' ||
+              requestedMember[prefixEnd] == '!')) {
+        prefixEnd++;
+      }
+      requestedPrefix = requestedMember.substr(0, prefixEnd);
+      requestedMember = requestedMember.substr(prefixEnd);
+    }
+
+    for (int i = 0; i < (int)SD->Members.size(); ++i) {
+      const auto &Field = SD->Members[i];
+      if (toka::Type::stripMorphology(Field.Name) == requestedMember) {
+        Memb->Index = i; // [FIX] Set index for CodeGen
+        // Visibility Check: God-eye view (same file)
+        std::string membFile =
+            DiagnosticEngine::SrcMgr->getFullSourceLoc(Memb->Loc).FileName;
+        std::string sdFile =
+            DiagnosticEngine::SrcMgr->getFullSourceLoc(SD->Loc).FileName;
+
+        if (membFile != sdFile) {
+          // Check EncapMap
+          if (EncapMap.count(ObjType)) {
+            bool accessible = false;
+            for (const auto &entry : EncapMap[ObjType]) {
+              bool fieldMatches = false;
+              if (entry.IsExclusion) {
+                fieldMatches = true;
+                for (const auto &f : entry.Fields) {
+                  if (f == requestedMember) {
+                    fieldMatches = false;
+                    break;
+                  }
+                }
+              } else {
+                for (const auto &f : entry.Fields) {
+                  if (f == requestedMember) {
+                    fieldMatches = true;
+                    break;
+                  }
+                }
+              }
+
+              if (fieldMatches) {
+                if (entry.Level == EncapEntry::Global) {
+                  accessible = true;
+                } else if (entry.Level == EncapEntry::Crate) {
+                  accessible = true;
+                } else if (entry.Level == EncapEntry::Path) {
+                  if (membFile.find(entry.TargetPath) != std::string::npos) {
+                    accessible = true;
+                  }
+                }
+              }
+              if (accessible)
+                break;
+            }
+
+            if (!accessible) {
+              error(Memb, DiagID::ERR_MEMBER_PRIVATE, requestedMember, ObjType);
+            }
+          }
+        }
+
+        // Return type based on Toka 1.3 Pointer-Value Duality
+        std::string fullType = Sema::synthesizePhysicalType(Field);
+        std::shared_ptr<toka::Type> fieldType =
+            toka::Type::fromString(fullType);
+
+        // Determine if the field's soul should be writable based on
+        // inheritance
+        bool isFieldMarked = Field.IsValueMutable;
+
+        if (isFieldMarked) {
+          // [Fix] If member is marked mutable, it means the SOUL is mutable.
+          // For pointers/refs, this means the Pointee must be writable.
+          if (fieldType->isPointer() || fieldType->isReference() ||
+              fieldType->isSmartPointer()) {
+            if (auto pt = fieldType->getPointeeType()) {
+              pt->IsWritable = true;
+            }
+          } else {
+            fieldType->IsWritable = true;
+          }
+        }
+
+        bool finalSoulWritable = isFieldMarked ? true : objTypeObj->IsWritable;
+
+        if (requestedPrefix.empty() && !m_DisableSoulCollapse) {
+          // obj.field (Hat-Off) -> Soul Collapse.
+          return fieldType->getSoulType()->withAttributes(
+              finalSoulWritable, isNarrowed ? false : fieldType->IsNullable);
+        } else {
+          // Hatted Access (Identity Access)
+          // Use fieldType directly as the base (preserving its morphologies)
+          std::shared_ptr<toka::Type> result = fieldType;
+
+          // If requested prefix exists, wrap it
+          if (!requestedPrefix.empty()) {
+            // Check if field already has this morphology
+            bool matches = false;
+            if (requestedPrefix == "&" && fieldType->isReference())
+              matches = true;
+            else if (requestedPrefix == "^" && fieldType->isUniquePtr())
+              matches = true;
+            else if (requestedPrefix == "~" && fieldType->isSharedPtr())
+              matches = true;
+            else if (requestedPrefix == "*" && fieldType->isRawPointer())
+              matches = true;
+
+            if (!matches) {
+              if (requestedPrefix == "&") {
+                result = std::make_shared<ReferenceType>(fieldType);
+              } else if (requestedPrefix == "^") {
+                result = std::make_shared<UniquePointerType>(fieldType);
+              } else if (requestedPrefix == "~") {
+                result = std::make_shared<SharedPointerType>(fieldType);
+              } else if (requestedPrefix == "*") {
+                result = std::make_shared<RawPointerType>(fieldType);
+              }
+            }
+          }
+
+          // [Toka 1.3] Inheritance for Handles:
+          // If field is NOT marked (#?!), it inherits handle writability from
+          // object.
+          bool finalHandleWritable =
+              isFieldMarked ? result->IsWritable : objTypeObj->IsWritable;
+
+          // Apply attributes to the resulting handle
+          return result->withAttributes(finalHandleWritable,
+                                        result->IsNullable);
+        }
+      }
+    }
+    error(Memb, DiagID::ERR_NO_SUCH_MEMBER, ObjType, Memb->Member);
+
+    return toka::Type::fromString("unknown");
+  } else {
+    auto soulType = objTypeObj;
+    while (soulType && (soulType->isPointer() || soulType->isReference() ||
+                        soulType->isSmartPointer())) {
+      soulType = soulType->getPointeeType();
+    }
+
+    auto resSoul = resolveType(soulType, true);
+    if (auto TT = std::dynamic_pointer_cast<toka::TupleType>(resSoul)) {
+      // Tuple access: .0, .1
+      try {
+        int idx = std::stoi(Memb->Member);
+        if (idx >= 0 && idx < (int)TT->Elements.size()) {
+          Memb->Index = idx; // Set index for CodeGen
+          return TT->Elements[idx];
+        } else {
+          error(Memb, DiagID::ERR_TUPLE_INDEX_OOB, Memb->Member,
+                std::to_string(TT->Elements.size()));
+        }
+      } catch (...) {
+        error(Memb, DiagID::ERR_MEMBER_NOT_FOUND, Memb->Member, "tuple");
+      }
+      return toka::Type::fromString("unknown");
+    } else if (ObjType != "unknown") {
+      error(Memb, DiagID::ERR_NOT_A_STRUCT, Memb->Member, ObjType);
+    }
+  }
   return toka::Type::fromString("unknown");
 }
 

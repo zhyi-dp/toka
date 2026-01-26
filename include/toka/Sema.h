@@ -297,6 +297,7 @@ private:
   checkUnaryExpr(UnaryExpr *Unary); // New Object API
   std::shared_ptr<toka::Type>
   checkBinaryExpr(BinaryExpr *Bin); // New Object API
+  std::shared_ptr<toka::Type> checkMemberExpr(MemberExpr *Memb);
   std::shared_ptr<toka::Type>
   checkIndexExpr(ArrayIndexExpr *Idx);                       // New Object API
   std::shared_ptr<toka::Type> checkCallExpr(CallExpr *Call); // New Object API
