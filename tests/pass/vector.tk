@@ -1,35 +1,33 @@
 import std/io::println
 import std/vec::Vec
+import std/debug::assert
+
+alias TestType = i64
 
 shape Point(x: i32, y: i32)
 
 fn main() -> i32 {
-    unsafe {
+    {
         // Test 1: Vec<i32>
         println("--- Test 1: Vec<i32> ---")
-        auto v1# = Vec<i32>::new()
-        v1.push(10)
-        v1.push(20)
-        v1.push(30)
+        auto v1# = Vec<TestType>::new()
+        v1#.push(10)
+        v1#.push(20)
+        v1#.push(30)
         
         println("len: {}, cap: {}", v1.len(), v1.cap())
-        if v1.len() != 3 {
-             println("FAIL: len should be 3")
-             return 1
-        }
+        assert(v1.len() == 3,"len should be 3")
+        assert(v1.cap() == 4,"cap should be 4")
         
-        auto val = v1.pop()
+        auto val = v1#.pop()
         println("pop: {}", val)
-        if val != 30 {
-             println("FAIL: popped value should be 30")
-             return 1
-        }
+        assert(val == 30:TestType,"popped value should be 30")
         
-        v1.push(40)
-        v1.push(50)
+        v1#.push(40)
+        v1#.push(50)
         // Should trigger growth (default cap might be 0 -> 4 -> ...)
-        v1.push(60)
-        v1.push(70) 
+        v1#.push(60)
+        v1#.push(70) 
         
         println("len: {}, cap: {}", v1.len(), v1.cap())
         println("v1[0]: {}", v1.get(0))
@@ -40,27 +38,25 @@ fn main() -> i32 {
             println("v1[{}] = {}", i, v1.get(i))
             i# = i + 1
         }
-        
+    }  
         // v1.drop() // Explicit drop is private
         
+    {
         // Test 2: Vec<Point>
         println("\n--- Test 2: Vec<Point> ---")
         auto v2# = Vec<Point>::with_capacity(2)
-        v2.push(Point(x=1, y=2))
-        v2.push(Point(x=3, y=4))
+        v2#.push(Point(x=1, y=2))
+        v2#.push(Point(x=3, y=4))
         // Trigger grow
-        v2.push(Point(x=5, y=6))
+        v2#.push(Point(x=5, y=6))
         
         println("len: {}, cap: {}", v2.len(), v2.cap())
         
         auto p = v2.get(2)
         println("p.x: {}, p.y: {}", p.x, p.y)
-        if p.x != 5 {
-             println("FAIL: p.x should be 5")
-             return 1
-        }
+        assert(p.x == 5:i32,"p.x should be 5")
         
-        // v2.drop()
+        // v2.drop() // Explicit drop is private
     }
     
     println("\nVec tests passed!")

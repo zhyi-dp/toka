@@ -28,7 +28,7 @@ impl Counter {
 // Module-level factory functions removed. using static methods.
 
 pub shape Vec<T> (
-    *buf#: T,
+    *?buf#: T,
     len: usize,
     cap: usize
 )
@@ -38,8 +38,8 @@ impl<T> Vec<T>@encap {
         println("drop Vec<T>")
         unsafe {
             if self.*buf != nullptr {
-                unsafe free self.*buf
-                self#.*buf = nullptr // Explicit nullify
+                unsafe free [self.cap]self#.*buf
+                self#.*?buf = nullptr // Explicit nullify
                 // self#.len = 0
                 // self#.cap = 0
             }
@@ -60,26 +60,19 @@ impl<T> Vec<T> {
     // Create empty vector (Static Method)
     pub fn new() -> Vec<T> {
         // Implicit conversation works for assignment/init of pointer variable
-        auto *null_ptr : T = nullptr
-        return Vec<T>(*buf=*null_ptr, len=0, cap=0)
+        return Vec<T>(*?buf=nullptr, len=0, cap=0)
     }
 
     // Create vector with capacity (Static Method)
     pub fn with_capacity(capacity: usize) -> Vec<T> {
         unsafe {
             if capacity == 0 {
-                auto *null_ptr : T = nullptr
-                return Vec<T>(*buf=*null_ptr, len=0, cap=0)
+                return Vec<T>(*?buf=nullptr, len=0, cap=0)
             }
             // alloc array syntax
             auto *new_buf# = unsafe alloc [capacity] T
             return Vec<T>(*buf=*new_buf, len=0, cap=capacity)
         }
-    }
-    
-    // Get raw pointer to data
-    pub fn as_ptr(self) -> *T {
-        return self.*buf
     }
 
     // Push element to end
@@ -91,7 +84,7 @@ impl<T> Vec<T> {
             
             // Pointer indexing handles
             // *self.buf provides the handle.
-            (*self.*buf)[self.len] = val
+            self#.buf[self.len] = val
             self#.len += 1
         }
     }
@@ -105,7 +98,7 @@ impl<T> Vec<T> {
             }
             
             self#.len -= 1
-            return (*self.*buf)[self.len]
+            return self.buf[self.len]
         }
     }
     
@@ -116,44 +109,44 @@ impl<T> Vec<T> {
                  libc_printf("Error: index out of bounds\n")
                  libc_exit(1)
              }
-             return (*self.*buf)[index]
+             return self.buf[index]
         }
     }
 
     // Helper: Grow buffer
     fn grow(self#) {
+        println("grow, old cap: {}", self.cap)
         unsafe {
             // Determine new capacity
-            auto current = self.cap
-            auto next = current * 2
+            auto new_cap = self.cap * 2
             
-            if next == 0 {
+            if new_cap == 0 {
                 // Initial allocation case
                 auto cap = 4 : usize
-                auto *new_buf# = unsafe alloc [4] T
+                auto *new_buf# = unsafe alloc [4]T
                 
                 // Fields
                 self#.*buf = *new_buf
                 self#.cap = cap
             } else {
                 // Growth case
-                auto *new_buf# = unsafe alloc [next] T
+                auto *new_buf# = unsafe alloc [new_cap]T
                 
                 // Copy elements manually
                 auto ctr# = Counter(val=0)
                 while ctr.val < self.len {
-                    (*new_buf)[ctr.val] = (*self.*buf)[ctr.val]
+                    new_buf#[ctr.val] = self.buf[ctr.val]
                     ctr.inc()
                 }
                 
                 // Free old buffer
                 if self.*buf != nullptr {
-                    unsafe free self.*buf
+                    unsafe free [self.cap]self#.*buf
                 }
                 
                 // Update fields
                 self#.*buf = *new_buf
-                self#.cap = next
+                self#.cap = new_cap
             }
         }
     }
