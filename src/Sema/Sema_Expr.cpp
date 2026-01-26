@@ -626,7 +626,10 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // now.
     if (shouldCollapse || (current && !current->isPointer())) {
       if (current) {
-        return current->withAttributes(ve->IsValueMutable, ve->IsValueNullable);
+        // [Fix] Additive Nullability: Do not strip existing nullability from
+        // the type just because usage doesn't have '?'.
+        bool effectiveNull = current->IsNullable || ve->IsValueNullable;
+        return current->withAttributes(ve->IsValueMutable, effectiveNull);
       }
     }
 
@@ -1542,7 +1545,17 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       }
     }
 
-    if (objTypeObj->IsNullable && !isNarrowed) {
+    // std::cerr << "DEBUG: checkMemberExpr Object=" << objTypeObj->toString()
+    //           << " IsNullable=" << objTypeObj->IsNullable
+    //           << " isNarrowed=" << isNarrowed << "\n";
+
+    // [Constitution] Strict Null Safety: No Flow-Sensitive Analysis
+    // We enforce explicit unwrap/check. "isNarrowed" suppression is removed.
+    if (objTypeObj->IsNullable) {
+      //      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
+      //                               objTypeObj->toString());
+      //      HasError = true;
+      // [Update] Reporting logic kept same
       DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
                                objTypeObj->toString());
       HasError = true;

@@ -13,8 +13,8 @@
 // limitations under the License.
 shape Data (v: i32)
 fn main() -> i32 {
-    auto ^?p = new Data(v = 42)
-    auto x = p.v // EXPECT: error[E0447]:
+    auto ^?p: Data = nullptr // new Data(v = 42)
+    auto x = p.v // EXPECT: error[E0447]: Accessing member of nullable type '^?Data' requires explicit 'is' check
     
     return 0
 }
