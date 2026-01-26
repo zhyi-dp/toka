@@ -16,7 +16,7 @@ shape Node<T>(
     // 递归：指向下一个同类型节点
     ^?next: Node<T> 
 )
-impl Node<T>@encap {
+impl<T> Node<T>@encap {
     pub buf
     fn drop(self#) {
         println("dropping Node")

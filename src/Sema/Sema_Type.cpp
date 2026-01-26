@@ -456,13 +456,15 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
   }
 
   // [NEW] Synchronous Impl Instantiation
-  // If this shape has generic impls, instantiate them now so that
+  // If this shape has generic impls, instantiate them all now so that
   // m_ShapeProps (HasDrop) and MethodMap are populated before sovereignty
   // checks.
   // [FIX] Moved here to ensure storedDecl->Members is populated first.
   if (GenericImplMap.count(templateName)) {
-    instantiateGenericImpl(GenericImplMap[templateName], mangledName,
-                           GenericShape->GenericArgs);
+    for (auto *ImplTemplate : GenericImplMap[templateName]) {
+      instantiateGenericImpl(ImplTemplate, mangledName,
+                             GenericShape->GenericArgs);
+    }
   }
 
   auto result = std::dynamic_pointer_cast<ShapeType>(instance->withAttributes(

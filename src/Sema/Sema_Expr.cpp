@@ -1299,8 +1299,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               genericArgs = PST->GenericArgs;
             }
           }
-          instantiateGenericImpl(GenericImplMap[BaseName], ConcreteTypeName,
-                                 genericArgs);
+          for (auto *ImplTemplate : GenericImplMap[BaseName]) {
+            instantiateGenericImpl(ImplTemplate, ConcreteTypeName, genericArgs);
+          }
         }
       }
     }
@@ -2867,8 +2868,9 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
             if (auto *ST = dynamic_cast<ShapeType *>(parsed.get())) {
               genericArgs = ST->GenericArgs;
             }
-            instantiateGenericImpl(GenericImplMap[BaseName], RawPrefix,
-                                   genericArgs);
+            for (auto *ImplTemplate : GenericImplMap[BaseName]) {
+              instantiateGenericImpl(ImplTemplate, RawPrefix, genericArgs);
+            }
             // Retry lookup
             if (MethodMap.count(ShapeName) &&
                 MethodMap[ShapeName].count(VariantName)) {

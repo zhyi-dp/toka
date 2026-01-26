@@ -365,11 +365,52 @@ void Sema::registerGlobals(Module &M) {
     }
 
     if (!Impl->GenericParams.empty() || typeIsGeneric) {
+      if (Impl->GenericParams.empty()) {
+        // [Check] Validate that we aren't using undefined types as generic args
+        // e.g. impl Vec<T> {} -> Error "T is undefined"
+        auto typeObj = toka::Type::fromString(Impl->TypeName);
+        if (auto st = std::dynamic_pointer_cast<ShapeType>(typeObj)) {
+          for (auto &Arg : st->GenericArgs) {
+            // Peel pointer/ref to get base name
+            std::string name = Arg->getSoulName();
+            // Check if known
+            bool known = false;
+            if (toka::Type::fromString(name)->typeKind == toka::Type::Primitive)
+              known = true;
+            else if (ShapeMap.count(name))
+              known = true;
+            else if (TypeAliasMap.count(name))
+              known = true;
+            else if (ExternMap.count(name))
+              known = true; // External?
+            else {
+              // Consult Sema lookup (CurrentScope)
+              // Since we are in registerGlobals, imports might be in scope or
+              // Extern declarations? But usually simple generic params are just
+              // T, U, etc.
+              SymbolInfo info;
+              if (CurrentScope && CurrentScope->lookup(name, info))
+                known = true;
+            }
+
+            if (!known) {
+              // Heuristic: If name is short (1-2 chars) or clearly looks like a
+              // placeholder
+              DiagnosticEngine::report(Impl->Loc, DiagID::ERR_UNDEFINED_TYPE,
+                                       name);
+              DiagnosticEngine::report(Impl->Loc,
+                                       DiagID::NOTE_GENERIC_IMPL_HINT, name);
+              HasError = true;
+            }
+          }
+        }
+      }
+
       std::string baseName = Impl->TypeName;
       size_t lt = baseName.find('<');
       if (lt != std::string::npos)
         baseName = baseName.substr(0, lt);
-      GenericImplMap[baseName] = Impl.get();
+      GenericImplMap[baseName].push_back(Impl.get());
       continue; // Skip standard registration for templates
     }
 

@@ -185,8 +185,8 @@ private:
 
   // Generic Impl Templates (Lazy Instantiation)
   // Key: TypeName (e.g. "Box")
-  // Value: Pointer to the Template ImplDecl (owned by Module)
-  std::map<std::string, ImplDecl *> GenericImplMap;
+  // Value: Vector of Pointers to the Template ImplDecls (owned by Module)
+  std::map<std::string, std::vector<ImplDecl *>> GenericImplMap;
 
   void analyzeShapes(Module &M);
   void checkShapeSovereignty();

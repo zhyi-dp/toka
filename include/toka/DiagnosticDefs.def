@@ -20,6 +20,8 @@ DIAG(ERR_UNDECLARED,         Error, "E0402", "Use of undeclared identifier '{}'"
 DIAG(ERR_MODULE_NOT_FOUND,   Error, "E0403", "Module '{}' not found")
 DIAG(ERR_SYMBOL_NOT_FOUND,   Error, "E0404", "Symbol '{}' not found in module '{}'")
 DIAG(ERR_PRIVATE_TYPE,       Error, "E0405", "Shape '{}' is private and cannot be accessed from module '{}'")
+DIAG(ERR_UNDEFINED_TYPE,     Error, "E0405", "Type '{}' is undefined")
+DIAG(NOTE_GENERIC_IMPL_HINT, Note,  "N0003", "If '{}' is intended to be a generic parameter, declare it in the impl: 'impl<{}> {} ...'")
 
 DIAG(ERR_GENERIC_SEMA,       Error, "E0406", "{}")
 DIAG(ERR_OPERAND_TYPE_MISMATCH, Error, "E0407", "Operand of '{}' must be {}, got '{}'")

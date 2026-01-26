@@ -15,6 +15,7 @@
 import core/types::{usize, Addr, ADDR0}
 import core/traits::{@encap}
 import core/libc::*
+import std/io::println
 
 // Helper for mutable iteration
 shape Counter(val: usize)
@@ -31,6 +32,20 @@ pub shape Vec<T> (
     len: usize,
     cap: usize
 )
+
+impl<T> Vec<T>@encap {
+    fn drop(self#) {
+        println("drop Vec<T>")
+        unsafe {
+            if self.*buf != nullptr {
+                unsafe free self.*buf
+                self#.*buf = nullptr // Explicit nullify
+                // self#.len = 0
+                // self#.cap = 0
+            }
+        }
+    }
+}
 
 impl<T> Vec<T> {
     // Getters for length and capacity
@@ -139,17 +154,6 @@ impl<T> Vec<T> {
                 // Update fields
                 self#.*buf = *new_buf
                 self#.cap = next
-            }
-        }
-    }
-    
-    fn drop(self#) {
-        unsafe {
-            if self.*buf != nullptr {
-                unsafe free self.*buf
-                self#.*buf = nullptr // Explicit nullify
-                // self#.len = 0
-                // self#.cap = 0
             }
         }
     }
