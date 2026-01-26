@@ -16,7 +16,9 @@ shape Point (x: i32)
 fn main() -> i32 {
     auto ^p = new Point(x = 10)
     auto &y = &p
-    auto z = ^p // Error: cannot move p while it is borrowed
-    // EXPECT: E0406
+
+    auto z = ^p // EXPECT: error[E0406]:
+    // EXPECT: error[E0451]:
+    
     return 0
 }

@@ -22,7 +22,7 @@ pub fn main() -> i32 {
     // The problematic assignment: reassigning head to its own next
     if head.^?next is head.^next {
         // println("reseating head to next (val {})", head.^next.val) // REMOVED DOUBLE MOVE
-        // EXPECT: E0439
+        // EXPECT: error[E0439]:
         ^#head = head.^next // This should drop 5 and make head point to 4
     }
 

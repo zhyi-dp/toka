@@ -12,4 +12,4 @@ fn main() -> i32 {
     // Use x to keep it alive
     return x
 }
-// EXPECT: E0440
+// EXPECT: error[E0440]:

@@ -47,8 +47,9 @@ std::string Sema::resolveType(const std::string &Type, bool force) {
         modSpec.ReferencedModule) {
       ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
       if (target->TypeAliases.count(TargetType)) {
-        if (force || !target->TypeAliases[TargetType].IsStrong) {
-          return resolveType(target->TypeAliases[TargetType].Target, force);
+        auto &aliasInfo = target->TypeAliases[TargetType];
+        if (!aliasInfo.IsStrong || force) {
+          return resolveType(aliasInfo.Target, force);
         }
       }
       return TargetType; // It's a base type or shape in that module or a strong
@@ -115,7 +116,7 @@ std::string Sema::resolveType(const std::string &Type, bool force) {
       }
 
       if (info.IsStrong && !force) {
-        return Type; // Return original "Name<Args>"
+        return Type;
       }
       return resolveType(result, force);
     }
@@ -195,22 +196,50 @@ std::shared_ptr<toka::Type> Sema::resolveType(std::shared_ptr<toka::Type> type,
           modSpec.ReferencedModule) {
         ModuleScope *target = (ModuleScope *)modSpec.ReferencedModule;
         if (target->TypeAliases.count(TargetType)) {
-          auto resolved =
-              toka::Type::fromString(target->TypeAliases[TargetType].Target);
-          return resolveType(
-              resolved->withAttributes(type->IsWritable, type->IsNullable),
-              force);
+          auto &aliasInfo = target->TypeAliases[TargetType];
+          if (!aliasInfo.IsStrong || force) {
+            auto resolved = toka::Type::fromString(aliasInfo.Target);
+            return resolveType(
+                resolved->withAttributes(type->IsWritable, type->IsNullable),
+                force);
+          }
         }
       }
     }
 
     if (TypeAliasMap.count(shape->Name)) {
-      if (force || !TypeAliasMap[shape->Name].IsStrong) {
-        auto resolved =
-            toka::Type::fromString(TypeAliasMap[shape->Name].Target);
+      const auto &aliasInfo = TypeAliasMap[shape->Name];
+      if (!aliasInfo.IsStrong) {
+        // [Weak Alias] Transparent Synonym
+        auto resolved = toka::Type::fromString(aliasInfo.Target);
+        if (auto resShape = std::dynamic_pointer_cast<ShapeType>(resolved)) {
+          if (!shape->GenericArgs.empty())
+            resShape->GenericArgs = shape->GenericArgs;
+        }
         return resolveType(
-            resolved->withAttributes(type->IsWritable, type->IsNullable),
-            force);
+            resolved->withAttributes(type->IsWritable, type->IsNullable), true);
+      } else {
+        // [Strong Alias] Isolated Identity with Cloned Structure
+        if (!force && !ShapeMap.count(shape->Name)) {
+          auto targetTy =
+              resolveType(toka::Type::fromString(aliasInfo.Target), true);
+          if (auto targetSh = std::dynamic_pointer_cast<ShapeType>(targetTy)) {
+            if (targetSh->Decl) {
+              auto cloned = new ShapeDecl(*targetSh->Decl);
+              cloned->Name = shape->Name;
+              ShapeMap[cloned->Name] = cloned;
+              SyntheticShapes.push_back(std::unique_ptr<ShapeDecl>(cloned));
+            }
+          }
+        }
+        if (!force) {
+          if (ShapeMap.count(shape->Name)) {
+            shape->resolve(ShapeMap[shape->Name]);
+            return shape;
+          }
+          return shape;
+        }
+        return resolveType(toka::Type::fromString(aliasInfo.Target), true);
       }
     }
 
@@ -221,9 +250,14 @@ std::shared_ptr<toka::Type> Sema::resolveType(std::shared_ptr<toka::Type> type,
 
   if (auto prim = std::dynamic_pointer_cast<toka::PrimitiveType>(type)) {
     if (TypeAliasMap.count(prim->Name)) {
-      auto resolved = toka::Type::fromString(TypeAliasMap[prim->Name].Target);
-      return resolveType(
-          resolved->withAttributes(type->IsWritable, type->IsNullable), force);
+      const auto &info = TypeAliasMap[prim->Name];
+      if (!info.IsStrong || force) {
+        auto resolved = toka::Type::fromString(info.Target);
+        return resolveType(
+            resolved->withAttributes(type->IsWritable, type->IsNullable),
+            force);
+      }
+      return prim;
     }
   }
 
@@ -300,10 +334,6 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
   auto NewShapeTy = std::make_shared<toka::ShapeType>(mangledName);
   NewShapeTy->Decl = storedDecl;
   GenericShapeCache[mangledName] = NewShapeTy; // Cache base version
-
-  auto ResultTy =
-      std::dynamic_pointer_cast<ShapeType>(NewShapeTy->withAttributes(
-          GenericShape->IsWritable, GenericShape->IsNullable));
 
   // Now resolve members with recursion enabled using substMap...
   // Wait, we need to return ResultTy but the members are in storedDecl.
@@ -531,10 +561,8 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
                              GenericShape->GenericArgs);
     }
   }
-
-  auto result = std::dynamic_pointer_cast<ShapeType>(instance->withAttributes(
+  return std::dynamic_pointer_cast<ShapeType>(NewShapeTy->withAttributes(
       GenericShape->IsWritable, GenericShape->IsNullable));
-  return result;
 }
 
 bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
@@ -542,50 +570,31 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   if (!Target || !Source)
     return false;
 
+  // [CORE] Strong Type Wall: Strict Name Identity
+  std::string tName = Target->getSoulName();
+  std::string sName = Source->getSoulName();
+
+  if (TypeAliasMap.count(tName) && TypeAliasMap[tName].IsStrong) {
+    if (tName != sName)
+      return false;
+  }
+  if (TypeAliasMap.count(sName) && TypeAliasMap[sName].IsStrong) {
+    if (tName != sName)
+      return false;
+  }
+
   // [NEW] Canonicalize types before comparison
-  Target = resolveType(Target);
-  Source = resolveType(Source);
+  auto T = resolveType(Target, false);
+  auto S = resolveType(Source, false);
 
-  // Unknown/Unresolved types are compatible with everything (Error
-  // Recovery)
-  if (Target->isUnknown() || Source->isUnknown())
-    return true;
-
-  // Identity
-  if (Target->equals(*Source))
-    return true;
-
-  // Strong Type Check (Pre-resolution)
-  // We need the Name if possible.
-  std::string targetName;
-  if (auto s = std::dynamic_pointer_cast<toka::ShapeType>(Target))
-    targetName = s->Name;
-  else if (auto p = std::dynamic_pointer_cast<toka::PrimitiveType>(Target))
-    targetName = p->Name;
-
-  std::string sourceName;
-  if (auto s = std::dynamic_pointer_cast<toka::ShapeType>(Source))
-    sourceName = s->Name;
-  else if (auto p = std::dynamic_pointer_cast<toka::PrimitiveType>(Source))
-    sourceName = p->Name;
-
-  if (!targetName.empty() && TypeAliasMap.count(targetName) &&
-      TypeAliasMap[targetName].IsStrong) {
-    if (!Target->equals(*Source))
-      return false;
-  }
-  if (!sourceName.empty() && TypeAliasMap.count(sourceName) &&
-      TypeAliasMap[sourceName].IsStrong) {
-    if (!Target->equals(*Source))
-      return false;
-  }
-
-  auto T = resolveType(Target);
-  auto S = resolveType(Source);
-
-  // Re-check identity after resolution
+  // Identity: For strong aliases, this is the final authority.
   if (T->equals(*S))
     return true;
+
+  // Check if one resolved to the other (Weak alias resolution check)
+  // If T is a weak alias, resolveType(T, true) will get its target.
+  // But wait, resolveType(Target, false) already resolves weak aliases.
+  // We only need additional structural checks for non-alias types.
 
   // Dynamic Trait Coercion (Unsizing)
   // Check if Target is "dyn @Trait"

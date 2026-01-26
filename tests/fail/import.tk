@@ -11,10 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import core/missing_module
-// EXPECT: Could not open file
-import std/io::{MissingSymbol}
-// EXPECT: Symbol 'MissingSymbol' not found in module 'std/io'
+import core/missing_module // EXPECT: error[E0403]: Could not open file
+import std/io::{MissingSymbol} // EXPECT: error[E0404]: Symbol 'MissingSymbol' not found
 
 fn main() {
 }

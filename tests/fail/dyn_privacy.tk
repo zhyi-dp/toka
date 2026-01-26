@@ -33,7 +33,7 @@ fn reveal_secret(obj: dyn @SecretIdentity) {
     // This calls get_secret on the interface.
     // If the interface method is private, this should fail compilation.
     println("Secret: {}", obj.get_secret())
-    // EXPECT: E0437
+    // EXPECT: error[E0437]:
 }
 
 fn main() -> i32 {

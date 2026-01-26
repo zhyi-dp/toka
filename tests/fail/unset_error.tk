@@ -1,6 +1,6 @@
 
 pub fn main() -> void {
     auto x#: i32 = unset;
-    // EXPECT: E0410
+    // EXPECT: error[E0410]:
     auto y = x; 
 }

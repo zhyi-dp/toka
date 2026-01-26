@@ -14,9 +14,7 @@
 shape Data (v: i32)
 fn main() -> i32 {
     auto ^?p = new Data(v = 42)
-    
-    // EXPECT: E0447
-    auto x = p.v // Error: p is nullable
+    auto x = p.v // EXPECT: error[E0447]:
     
     return 0
 }

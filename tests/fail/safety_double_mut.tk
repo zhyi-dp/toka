@@ -15,6 +15,6 @@ fn main() -> i32 {
     auto x# = 10
     auto &r1 = &x#
     auto &r2 = &x# // Error: already borrowed
-    // EXPECT: E0431
+    // EXPECT: error[E0431]:
     0
 }

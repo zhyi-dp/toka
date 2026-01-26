@@ -16,7 +16,7 @@ shape Data (v: i32)
 fn main() -> i32 {
     auto ^?p = new Data(v = 42)
     if p is Data { // Error: Data is not a variable
-        // EXPECT: E0406
+        // EXPECT: error[E0406]:
         assert(false,"")
         return 0
     }

@@ -1544,7 +1544,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     if (objTypeObj->IsNullable && !isNarrowed) {
       DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
-                               ObjTypeFull);
+                               objTypeObj->toString());
       HasError = true;
     }
 
@@ -1997,7 +1997,7 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
       if (Unary->Op == TokenType::Caret) {
         if (!m_InLHS &&
             (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0)) {
-          error(Unary, "cannot move '" + Var->Name + "' while it is borrowed");
+          error(Unary, DiagID::ERR_BORROW_MUT, Var->Name);
         }
         if (physType && physType->isUniquePtr()) {
           return physType->withAttributes(Unary->IsRebindable, Unary->HasNull);
@@ -2268,8 +2268,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {
         if (!isUnsetInit && InfoPtr) {
           if (InfoPtr->IsMutablyBorrowed || InfoPtr->ImmutableBorrowCount > 0) {
-            error(Bin,
-                  "cannot modify '" + Var->Name + "' while it is borrowed");
+            error(Bin, DiagID::ERR_BORROW_MUT, Var->Name);
           }
         }
 

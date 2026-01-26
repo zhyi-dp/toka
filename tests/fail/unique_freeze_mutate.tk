@@ -7,7 +7,10 @@ fn main() -> i32 {
     auto &x = &p
 
     // ERROR: Cannot modify 'p' while it is borrowed
-    p = new i32(20)
+    p = new i32(20) // EXPECT: error[E0406]:
+    // EXPECT: error[E0406]:
+    // EXPECT: error[E0443]:
+    
 
     // Use x
     return x

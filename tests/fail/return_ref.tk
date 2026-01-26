@@ -1,13 +1,13 @@
 import std/io::println
 fn get_ref(x:i32) -> &i32 {
-    return &x // EXPECT: E0454
+    return &x // EXPECT: error[E0454]:
 }
 
 fn bigger(x:i32, y:i32) -> &i32 <- x {
     if (x > y) {
         return &x
     }
-    return &y // EXPECT: E0454
+    return &y // EXPECT: error[E0454]:
 }
 
 shape RefInt <- val
@@ -29,7 +29,7 @@ fn main() -> i32 {
 
     {
         auto b = 12
-        ref_a.&#val = &b // EXPECT: E0456
+        ref_a.&#val = &b // EXPECT: error[E0456]:
         println("RefB: {}", ref_a.val)
     }
 

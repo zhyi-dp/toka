@@ -19,5 +19,5 @@ fn main() {
     // So it should be private and inaccessible here
     auto cap = s.cap
     auto len = s.len 
-    // EXPECT: E0418
+    // EXPECT: error[E0418]:
 }

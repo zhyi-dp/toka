@@ -9,7 +9,7 @@ fn main() -> i32 {
     auto ~head = new Node(~next = unset, val = 1)
     
     // ERROR: Missing '#' for rebind
-    // EXPECT: E0443
+    // EXPECT: error[E0443]:
     ~head = new Node(~next = unset, val = 2) // CHECK: error: Cannot assign to immutable entity
     
     return 0

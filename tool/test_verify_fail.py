@@ -3,6 +3,7 @@ import sys
 import os
 import subprocess
 import glob
+import re
 
 # Configuration
 TOKAC = "./build/src/tokac"
@@ -52,9 +53,12 @@ def main():
                 if '// EXPECT:' in line:
                     parts = line.split('// EXPECT:', 1)
                     if len(parts) > 1:
-                        msg = parts[1].strip().split()[0]
-                        if msg:
-                            expected_errors.append(msg)
+                        # Extract strict error format: error[E0403]:
+                        # Users might write: // EXPECT: error[E0403]: some message
+                        # We want to extract 'E0403' from that.
+                        found_codes = re.findall(r'error\[(E\d+)\]:', parts[1])
+                        for cod in found_codes:
+                            expected_errors.append(cod)
         
         # 2. Run Compiler
         try:
@@ -96,30 +100,50 @@ def main():
             continue
 
         # Case C: Check Expectations against FILTERED output
+        # Parse actual errors from output to extract codes
+        actual_errors_map = {} # Code -> Full Line
+        for line in error_lines:
+             # Extract error code like "error[E0123]:"
+             start = line.find("error[")
+             if start != -1:
+                 end = line.find("]", start)
+                 if end != -1:
+                     code = line[start+6:end]
+                     if code not in actual_errors_map:
+                         actual_errors_map[code] = []
+                     actual_errors_map[code].append(line)
+
         missing_expectations = []
+        matched_expectations = []
+        
         for expect in expected_errors:
-            # We check if the expected text is in the ERROR lines only
-            if expect not in filtered_output:
+            if expect in actual_errors_map:
+                matched_expectations.append((expect, actual_errors_map[expect][0])) # Keep first match for info
+            else:
                 missing_expectations.append(expect)
         
         if missing_expectations:
             print(f"Testing {FAIL_TEST_DIR}/{test_name:<35} {RED}FAIL (Missing Expected Errors){NC}")
-            print(f"  {YELLOW}Expected but not found in error lines:{NC}")
+            
+            if matched_expectations:
+                print(f"  {GREEN}Matched:{NC}")
+                for (code, line) in matched_expectations:
+                     print(f"    - '{code}': {line.strip()}")
+
+            print(f"  {YELLOW}Expected but not found:{NC}")
             for m in missing_expectations:
                 print(f"    - '{m}'")
             
-            print(f"  {YELLOW}Actual Error Output (Notes Hidden):{NC}")
+            print(f"  {YELLOW}All Actual Errors:{NC}")
             if error_lines:
                 for line in error_lines:
-                    print(f"    {line}")
+                    print(f"    {line.strip()}")
             else:
                 print(f"    (No lines containing 'error:' found)")
-                # Optionally print raw output if no errors were found but it failed
-                # print("\nRaw Output:\n" + raw_output) 
 
             total_failed += 1
         else:
-            #print(f"Testing {FAIL_TEST_DIR}/{test_name:<35} {GREEN}PASS (Verified){NC}")
+            # print(f"Testing {FAIL_TEST_DIR}/{test_name:<35} {GREEN}PASS (Verified){NC}")
             total_passed += 1
 
     print("---------------------------------------")

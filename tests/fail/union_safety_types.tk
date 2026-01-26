@@ -6,22 +6,22 @@ pub type StrictEnum = MyEnum
 
 
 shape FailBool (
-    // EXPECT: E0426
+    // EXPECT: error[E0426]: restricted type 'bool'
     as b: bool
 )
 
 shape FailBoolAlias (
-    // EXPECT: E0426
+    // EXPECT: error[E0426]: restricted type 'BoolAlias'
     as b: BoolAlias
 )
 
 shape FailEnum (
-    // EXPECT: restricted type 'MyEnum'
+    // EXPECT: error[E0426]: restricted type 'MyEnum'
     as e: MyEnum
 )
 
 shape FailEnumAlias (
-    // EXPECT: restricted type 'StrictEnum'
+    // EXPECT: error[E0426]: restricted type 'StrictEnum'
     as e: StrictEnum
 )
 

@@ -31,14 +31,14 @@ pub const POINT = Point(a = 1, b = 2, c = 3)
 pub const XYZ = (x = 1, y = 2, z = 3)
 
 fn main() -> i32 {
-    // EXPECT: E0406
-    println("{}", POINT.a)
-    // EXPECT: E0406
-    println("{}", XYZ.x)
+    
+    println("{}", POINT.a) // EXPECT: error[E0406]:
+    
+    println("{}", XYZ.x) // EXPECT: error[E0406]:
     auto point = Point(a = 1, b = 2, c = 3)
     auto xyz = (x = 1, y = 2, z = 3)
-    // EXPECT: E0406
-    println("{}", point.a)
+    
+    println("{}", point.a) // EXPECT: error[E0406]:
     println("{}", xyz.x)
     return 0
 }

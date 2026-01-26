@@ -15,7 +15,6 @@ import std/io::println
 
 fn main() -> i32 {
     // This should fail because 'io' namespace is not imported, only symbol 'printf' is.
-    io::println("This should fail compile")
-    // EXPECT: Module 'io' not found or not imported
+    io::println("This should fail compile") // EXPECT: error[E0406]: Module 'io' not found or not imported
     return 0
 }

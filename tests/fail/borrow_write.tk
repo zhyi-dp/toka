@@ -16,8 +16,9 @@ import std/io::println
 fn main() -> i32 {
     auto x# = 10
     auto &y = &x
-    x# = 20 // Error: x is borrowed by y (immutable borrow still blocks owner write)
-    // EXPECT: cannot modify 'x' while it is borrowed
+    
+    x# = 20 // EXPECT: error[E0441]: cannot modify 'x' while it is borrowed
+
     println("y is {}", y)
     return 0
 }

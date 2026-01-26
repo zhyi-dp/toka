@@ -16,8 +16,6 @@ shape Data (val: i32)
 
 
 fn main() -> i32 {
-    // EXPECT: Pointer morphology mismatch
-    // EXPECT: Cannot initialize variable of type '*Data' with value of type 'null'
-    auto *d: Data = null
+    auto *d: Data = null // EXPECT: error[E0448]:
     return 0
 }

@@ -19,5 +19,5 @@ fn main() {
     // It should be private to the module/file defining it.
     // This call should fail compilation.
     s.drop()
-    // EXPECT: E0437
+    // EXPECT: error[E0437]:
 }

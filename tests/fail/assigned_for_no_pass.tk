@@ -16,7 +16,7 @@ import std/io::println
 fn main() -> i32 {
     auto y = for auto x in [1] {
         1 + 1 // Error: y expects a value but none passed
-        // EXPECT: E0432
+        // EXPECT: error[E0432]:
     } or {
         pass -1
     }

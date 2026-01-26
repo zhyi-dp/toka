@@ -12,7 +12,7 @@ fn main() -> i32 {
 
 
     auto ^ptr = new i32(10);
-    // EXPECT: E0427
+    // EXPECT: error[E0427]:
     auto u = DangerousUnionResource<i32>(^val = ^ptr); 
     return 0;
 }

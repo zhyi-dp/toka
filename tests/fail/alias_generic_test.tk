@@ -22,8 +22,8 @@ fn main() -> i32 {
 
     auto s1# = StrongNode(val = 30)
     auto s2 = GenericNode<i32>(val = 40)
-    // EXCEPT: E0408 Cannot convert type
-    s1# = s2 
+    
+    s1# = s2 // EXPECT: error[E0408]: Cannot convert type
     println("Strong work, s1.val: {}, s2.val: {}", s1.val, s2.val)
     assert(s1.val == s2.val, "Strong work")
 

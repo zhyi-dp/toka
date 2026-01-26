@@ -2,7 +2,7 @@
 // No import of test_import_leak_a
 
 fn main() {
-    // EXPECT: Use of undeclared identifier 'leaked_func'
+    // EXPECT: error[E0402]: Use of undeclared identifier 'leaked_func'
     leaked_func()
     return
 }

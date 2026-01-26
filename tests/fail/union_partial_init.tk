@@ -3,7 +3,6 @@ shape BadUnion(as small: i8 | as large: i64)
 
 
 fn main() -> i32 {
-    // EXPECT: Partial initialization of Union 'BadUnion'
-    auto u = BadUnion(small = 1); // Should fail: variant size 1 < union size 8
+    auto u = BadUnion(small = 1); // EXPECT: error[E0425]: Partial initialization of Union 'BadUnion'
     return 0;
 }

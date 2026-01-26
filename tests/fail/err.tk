@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import std/io::printf
-// EXPECT: E0404
+// EXPECT: error[E0404]:
 
 shape Point (
     x: i32,
