@@ -163,6 +163,108 @@ std::shared_ptr<toka::Type> Sema::resolveType(std::shared_ptr<toka::Type> type,
 
   if (auto shape = std::dynamic_pointer_cast<toka::ShapeType>(type)) {
 
+    // [NEW] Local Scope Alias Lookup (for T -> i32)
+    if (CurrentScope) {
+      SymbolInfo Sym;
+      if (CurrentScope->lookup(shape->Name, Sym)) {
+        if (Sym.IsTypeAlias && Sym.TypeObj) {
+          // We found T -> i32 (TypeObj).
+          auto resolved = resolveType(Sym.TypeObj, force);
+          return resolved->withAttributes(type->IsWritable, type->IsNullable);
+        }
+      }
+    }
+
+    // [FIX] Check for Aliases (including Generic Aliases) BEFORE finding Shape
+    // Template
+    if (TypeAliasMap.count(shape->Name)) {
+      const auto &aliasInfo = TypeAliasMap[shape->Name];
+      if (!shape->GenericArgs.empty() && !aliasInfo.GenericParams.empty()) {
+        // It is a Generic Alias Instantiation (e.g. Vec<i32>)
+        // We must perform substitution similarly to string-based resolveType
+        std::string result =
+            aliasInfo.Target; // string template e.g. "GenericNode<T>"
+        // Map params to args
+        // Args are Type objects. toString() gives us representation.
+        // We should resolve args first?
+        // Or trust string substitution handles it?
+        // Let's resolve args first.
+        for (auto &Arg : shape->GenericArgs) {
+          Arg = resolveType(Arg, force);
+        }
+
+        std::vector<std::string> argStrings;
+        for (auto &Arg : shape->GenericArgs) {
+          argStrings.push_back(Arg->toString());
+        }
+
+        if (aliasInfo.GenericParams.size() == argStrings.size()) {
+          for (size_t i = 0; i < aliasInfo.GenericParams.size(); ++i) {
+            std::string param = aliasInfo.GenericParams[i].Name;
+            std::string val = argStrings[i];
+            size_t pos = 0;
+            while ((pos = result.find(param, pos)) != std::string::npos) {
+              bool startOk = (pos == 0) || !isalnum(result[pos - 1]) &&
+                                               result[pos - 1] != '_';
+              bool endOk = (pos + param.size() == result.size()) ||
+                           !isalnum(result[pos + param.size()]) &&
+                               result[pos + param.size()] != '_';
+              if (startOk && endOk) {
+                result.replace(pos, param.size(), val);
+                pos += val.size();
+              } else {
+                pos += param.size();
+              }
+            }
+          }
+
+          // Check Strong vs Weak
+          if (aliasInfo.IsStrong && !force) {
+            // Clone Shape logic for Generic Strong Alias (e.g.
+            // StrongNodeG<i32>) We must create a concrete ShapeDecl with a
+            // mangled name so CodeGen can find it.
+
+            // 1. Resolve Target (e.g. GenericNode<i32>)
+            auto targetTy = resolveType(toka::Type::fromString(result), true);
+            auto targetSh = std::dynamic_pointer_cast<ShapeType>(targetTy);
+
+            if (targetSh && targetSh->Decl) {
+              // 2. Mangle Name: AliasName_M_Args...
+              std::string mangledName = shape->Name + "_M";
+              for (auto argStr : argStrings) {
+                for (char &c : argStr)
+                  if (!isalnum(c) && c != '_')
+                    c = '_';
+                mangledName += "_" + argStr;
+              }
+
+              // 3. Clone and register if not exists
+              if (!ShapeMap.count(mangledName)) {
+                auto cloned = new ShapeDecl(*targetSh->Decl);
+                cloned->Name = mangledName;
+                cloned->GenericParams.clear(); // Concretized
+                ShapeMap[mangledName] = cloned;
+                SyntheticShapes.push_back(std::unique_ptr<ShapeDecl>(cloned));
+              }
+
+              // 4. Return new ShapeType pointing to clone
+              auto newShape = std::make_shared<ShapeType>(mangledName);
+              newShape->resolve(ShapeMap[mangledName]);
+              // We don't attach GenericArgs to the new shape to avoid
+              // re-triggering instantiation logic It behaves like a concrete
+              // shape now.
+
+              auto res = std::dynamic_pointer_cast<toka::Type>(newShape);
+              return res->withAttributes(type->IsWritable, type->IsNullable);
+            }
+
+            return shape;
+          }
+          return resolveType(toka::Type::fromString(result), force);
+        }
+      }
+    }
+
     // [NEW] Monomorphization Trigger
     if (!shape->GenericArgs.empty()) {
       // 1. Resolve arguments first
@@ -171,20 +273,6 @@ std::shared_ptr<toka::Type> Sema::resolveType(std::shared_ptr<toka::Type> type,
       }
       // 2. Instantiate
       return instantiateGenericShape(shape);
-    }
-
-    // [NEW] Local Scope Alias Lookup (for T -> i32)
-    if (CurrentScope) {
-      SymbolInfo Sym;
-      if (CurrentScope->lookup(shape->Name, Sym)) {
-        if (Sym.IsTypeAlias && Sym.TypeObj) {
-          // We found T -> i32 (TypeObj).
-          // We need to return TypeObj, but retain attributes (IsWritable, etc)
-          // of 'shape'.
-          auto resolved = resolveType(Sym.TypeObj, force);
-          return resolved->withAttributes(type->IsWritable, type->IsNullable);
-        }
-      }
     }
 
     size_t scopePos = shape->Name.find("::");
@@ -234,11 +322,16 @@ std::shared_ptr<toka::Type> Sema::resolveType(std::shared_ptr<toka::Type> type,
         }
         if (!force) {
           if (ShapeMap.count(shape->Name)) {
+            std::cerr << "Strong Alias Preserved: " << shape->Name << "\n";
             shape->resolve(ShapeMap[shape->Name]);
             return shape;
           }
+          std::cerr << "Strong Alias Preserved (No ShapeMap): " << shape->Name
+                    << "\n";
           return shape;
         }
+        std::cerr << "Strong Alias FORCED Resolve: " << shape->Name << " -> "
+                  << aliasInfo.Target << "\n";
         return resolveType(toka::Type::fromString(aliasInfo.Target), true);
       }
     }
@@ -349,8 +442,8 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
     ShapeMember newM = oldMember;
 
     // [Constitution] Hat Rule Normalization (The Double-Hat Fix)
-    // Rule: Slot wins. If slot has a hat, take argument's soul and apply slot's
-    // hat.
+    // Rule: Slot wins. If slot has a hat, take argument's soul and apply
+    // slot's hat.
     if (substMap.count(newM.Type)) {
       auto actualTy = substMap[newM.Type];
       if (newM.IsUnique || newM.IsShared || newM.IsReference ||
@@ -522,11 +615,12 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
       } else if (auto st =
                      std::dynamic_pointer_cast<toka::ShapeType>(underlying)) {
         // Check if this shape is known to have drop
-        // Since we are in Sema, we can access m_ShapeProps if it was computed.
-        // But m_ShapeProps is local to analyzeShapes pass? No, it's a member of
-        // Sema. We might need to ensure it's populated. If not found, be
-        // conservative? Or assume it's fine if not smart ptr? For now, let's
-        // check smart pointers (most common issue) and explicit String
+        // Since we are in Sema, we can access m_ShapeProps if it was
+        // computed. But m_ShapeProps is local to analyzeShapes pass? No, it's
+        // a member of Sema. We might need to ensure it's populated. If not
+        // found, be conservative? Or assume it's fine if not smart ptr? For
+        // now, let's check smart pointers (most common issue) and explicit
+        // String
         if (st->Name == "String" || st->Name == "std::string::String") {
           isResource = true;
         } else if (m_ShapeProps.count(st->Name) &&
@@ -570,17 +664,39 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   if (!Target || !Source)
     return false;
 
-  // [CORE] Strong Type Wall: Strict Name Identity
-  std::string tName = Target->getSoulName();
-  std::string sName = Source->getSoulName();
+  std::cerr << "checkCompat: " << Target->toString() << " vs "
+            << Source->toString() << "\n";
 
-  if (TypeAliasMap.count(tName) && TypeAliasMap[tName].IsStrong) {
-    if (tName != sName)
-      return false;
-  }
-  if (TypeAliasMap.count(sName) && TypeAliasMap[sName].IsStrong) {
-    if (tName != sName)
-      return false;
+  // [CORE] Strong Type Wall: Strict Name Identity (Shapes only)
+  bool isTShape =
+      Target->isShape() || (Target->isPointer() && Target->getPointeeType() &&
+                            Target->getPointeeType()->isShape());
+  bool isSShape =
+      Source->isShape() || (Source->isPointer() && Source->getPointeeType() &&
+                            Source->getPointeeType()->isShape());
+
+  if (isTShape && isSShape) {
+    std::string tName = toka::Type::stripMorphology(Target->getSoulName());
+    std::string sName = toka::Type::stripMorphology(Source->getSoulName());
+
+    std::cerr << "Shape Wall Check: " << tName << " vs " << sName << "\n";
+
+    if (TypeAliasMap.count(tName) && TypeAliasMap[tName].IsStrong) {
+      if (tName != sName) {
+        // std::cerr << "BLOCKED: Strong Wall: " << tName << " vs " << sName
+        // <<
+        // "\n";
+        return false;
+      }
+    }
+    if (TypeAliasMap.count(sName) && TypeAliasMap[sName].IsStrong) {
+      if (tName != sName) {
+        // std::cerr << "BLOCKED: Strong Wall: " << sName << " vs " << tName
+        // <<
+        // "\n";
+        return false;
+      }
+    }
   }
 
   // [NEW] Canonicalize types before comparison
@@ -744,7 +860,8 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   }
 
   // 6. Universal Null Compatibility
-  // nullptr (internally *?void) is compatible with any pointer or smart pointer
+  // nullptr (internally *?void) is compatible with any pointer or smart
+  // pointer
   auto sStr = S->toString();
   auto tStr = T->toString();
   if (sStr == "*?void" || sStr == "nullptr") {

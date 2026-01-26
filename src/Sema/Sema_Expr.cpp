@@ -2791,6 +2791,7 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
 std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
 
   std::string CallName = Call->Callee;
+  std::string OriginalName = CallName;
 
   // 1. Primitives (Constructors/Casts) e.g. i32(42)
   if (CallName == "i32" || CallName == "u32" || CallName == "i64" ||
@@ -3356,7 +3357,15 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         }
         argIdx++;
       }
-      return toka::Type::fromString(Sh->Name);
+      auto res = toka::Type::fromString(Sh->Name);
+
+      if (TypeAliasMap.count(OriginalName) &&
+          TypeAliasMap[OriginalName].IsStrong) {
+        res = toka::Type::fromString(OriginalName);
+      }
+      // std::cerr << "CTOR RETURN: " << OriginalName << " -> " <<
+      // res->toString() << "\n";
+      return res;
     } else if (Sh->Kind == ShapeKind::Union) {
 
       if (Call->Args.size() != 1) {
@@ -3646,14 +3655,15 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
   }
 }
 std::shared_ptr<toka::Type> Sema::checkShapeInit(InitStructExpr *Init) {
+  std::string OriginalName = Init->ShapeName; // [Fix] Capture original name
   std::map<std::string, uint64_t> memberMasks;
   std::string resolvedName = resolveType(Init->ShapeName, true);
 
   if (!ShapeMap.count(resolvedName)) {
-    // Initial lookup failed, or it's a template that needs inference
-    // [Actually, the original logic does lookup first, then inference if it's
-    // a template]
+    // ...
   }
+
+  // Helper lambda for inference (copied from original)
 
   // Helper lambda for inference (copied from original)
   auto performInference = [&](std::string &currentName, ShapeDecl *&SD) {
@@ -3750,11 +3760,24 @@ std::shared_ptr<toka::Type> Sema::checkShapeInit(InitStructExpr *Init) {
       return toka::Type::fromString("unknown");
     }
 
+    std::shared_ptr<toka::Type> ResultType;
     if (SD->Kind == ShapeKind::Union || SD->Kind == ShapeKind::Enum) {
-      return checkUnionInit(Init, SD, resolvedName, memberMasks);
+      ResultType = checkUnionInit(Init, SD, resolvedName, memberMasks);
     } else {
-      return checkStructInit(Init, SD, resolvedName, memberMasks);
+      ResultType = checkStructInit(Init, SD, resolvedName, memberMasks);
     }
+
+    // [Fix] Strong Alias Preservation
+    std::string BaseName = toka::Type::stripMorphology(OriginalName);
+    size_t lt = BaseName.find('<');
+    if (lt != std::string::npos) {
+      BaseName = BaseName.substr(0, lt);
+    }
+
+    if (TypeAliasMap.count(BaseName) && TypeAliasMap[BaseName].IsStrong) {
+      return toka::Type::fromString(OriginalName);
+    }
+    return ResultType;
   }
 
   DiagnosticEngine::report(getLoc(Init), DiagID::ERR_UNKNOWN_STRUCT,

@@ -108,6 +108,7 @@ void Sema::clearStmtBorrows() {
 void Sema::registerGlobals(Module &M) {
 
   // Initialize ModuleScope
+
   std::string fileName =
       DiagnosticEngine::SrcMgr->getFullSourceLoc(M.Loc).FileName;
   ModuleScope &ms = ModuleMap[fileName];
@@ -159,6 +160,8 @@ void Sema::registerGlobals(Module &M) {
                                    Alias->GenericParams};
     TypeAliasMap[Alias->Name] = {Alias->TargetType, Alias->IsStrong,
                                  Alias->GenericParams};
+    std::cerr << "Registered Alias: " << Alias->Name
+              << " Strong=" << Alias->IsStrong << "\n";
     // [NEW] Define locally in scope
     CurrentScope->define(Alias->Name, {toka::Type::fromString(Alias->Name)});
   }
