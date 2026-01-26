@@ -31,3 +31,4 @@
 | `shape Name(as T \| as name: T)` | **Union** | `as` 重解释 (Bare) 或 `.name` (Named) |
 | `alias Name = [T; N]` | **Array** | 通过 `[index]` 访问 |
 - toka 的函数传参行为为 捕获（隐式引用传递），不涉及对实参的复制或转移。foo(^p) 不会消耗掉^p
+- 当大哥说的话中有 等待指令 字样时，你不要修改编译器代码，只需中文回应，然后结束对话不要做其他动作

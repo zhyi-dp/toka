@@ -28,7 +28,7 @@ impl Counter {
 // Module-level factory functions removed. using static methods.
 
 pub shape Vec<T> (
-    *?buf#: T,
+    *!buf: T,
     len: usize,
     cap: usize
 )
@@ -39,7 +39,7 @@ impl<T> Vec<T>@encap {
         unsafe {
             if self.*buf != nullptr {
                 unsafe free [self.cap]self#.*buf
-                self#.*?buf = nullptr // Explicit nullify
+                self#.*!buf = nullptr // Explicit nullify
                 // self#.len = 0
                 // self#.cap = 0
             }
@@ -60,14 +60,14 @@ impl<T> Vec<T> {
     // Create empty vector (Static Method)
     pub fn new() -> Vec<T> {
         // Implicit conversation works for assignment/init of pointer variable
-        return Vec<T>(*?buf=nullptr, len=0, cap=0)
+        return Vec<T>(*!buf=nullptr, len=0, cap=0)
     }
 
     // Create vector with capacity (Static Method)
     pub fn with_capacity(capacity: usize) -> Vec<T> {
         unsafe {
             if capacity == 0 {
-                return Vec<T>(*?buf=nullptr, len=0, cap=0)
+                return Vec<T>(*!buf=nullptr, len=0, cap=0)
             }
             // alloc array syntax
             auto *new_buf# = unsafe alloc [capacity] T
@@ -126,7 +126,7 @@ impl<T> Vec<T> {
                 auto *new_buf# = unsafe alloc [4]T
                 
                 // Fields
-                self#.*buf = *new_buf
+                self#.*!buf = *new_buf
                 self#.cap = cap
             } else {
                 // Growth case
@@ -145,7 +145,7 @@ impl<T> Vec<T> {
                 }
                 
                 // Update fields
-                self#.*buf = *new_buf
+                self#.*!buf = *new_buf
                 self#.cap = new_cap
             }
         }
