@@ -204,6 +204,7 @@ private:
   struct AliasInfo {
     std::string Target;
     bool IsStrong;
+    std::vector<GenericParam> GenericParams; // [NEW]
   };
   std::map<std::string, AliasInfo> TypeAliasMap;
   // TypeName -> {MethodName -> ReturnType}

@@ -581,6 +581,21 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
     consume(TokenType::KwAlias, "Expected 'alias' or 'type'");
   }
   Token name = consume(TokenType::Identifier, "Expected type alias name");
+
+  // Parse Generic Parameters: <T, U>
+  std::vector<GenericParam> genericParams;
+  if (check(TokenType::GenericLT)) {
+    match(TokenType::GenericLT); // consume <
+    do {
+      GenericParam gp;
+      Token name =
+          consume(TokenType::Identifier, "Expected generic parameter name");
+      gp.Name = name.Text;
+      genericParams.push_back(gp);
+    } while (match(TokenType::Comma));
+    consume(TokenType::Greater, "Expected '>' after generic parameters");
+  }
+
   consume(TokenType::Equal, "Expected '='");
 
   std::string targetType = parseTypeString();
@@ -591,8 +606,8 @@ std::unique_ptr<TypeAliasDecl> Parser::parseTypeAliasDecl(bool isPub) {
     expectEndOfStatement();
   }
 
-  auto decl =
-      std::make_unique<TypeAliasDecl>(isPub, name.Text, targetType, isStrong);
+  auto decl = std::make_unique<TypeAliasDecl>(isPub, name.Text, targetType,
+                                              isStrong, genericParams);
   decl->setLocation(name, m_CurrentFile);
   return decl;
 }

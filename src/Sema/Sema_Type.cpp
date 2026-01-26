@@ -56,6 +56,71 @@ std::string Sema::resolveType(const std::string &Type, bool force) {
     }
   }
 
+  // [NEW] Check for Generic Type Alias Instantiation (e.g. AliasNodeG<i32>)
+  std::string baseName = Type;
+  std::vector<std::string> args;
+  size_t lt = Type.find('<');
+  if (lt != std::string::npos && Type.back() == '>') {
+    baseName = Type.substr(0, lt);
+    std::string argsStr = Type.substr(lt + 1, Type.size() - lt - 2);
+    // Split args by comma (respecting nested brackets)
+    int balance = 0;
+    std::string current;
+    for (char c : argsStr) {
+      if (c == '<' || c == '(' || c == '[')
+        balance++;
+      else if (c == '>' || c == ')' || c == ']')
+        balance--;
+
+      if (c == ',' && balance == 0) {
+        // trim
+        args.push_back(current);
+        current = "";
+      } else {
+        if (current.empty() && c == ' ')
+          continue; // skip leading space
+        current += c;
+      }
+    }
+    if (!current.empty())
+      args.push_back(current);
+  }
+
+  // Check Local Alias (Generic) with args?
+  // Check TypeAliasMap
+  if (TypeAliasMap.count(baseName)) {
+    auto &info = TypeAliasMap[baseName];
+    if (!info.GenericParams.empty()) {
+      // Substitute!
+      std::string result = info.Target;
+      for (size_t i = 0; i < info.GenericParams.size(); ++i) {
+        std::string param = info.GenericParams[i].Name;
+        std::string val = args[i];
+        size_t pos = 0;
+        while ((pos = result.find(param, pos)) != std::string::npos) {
+          // Check boundaries
+          bool startOk =
+              (pos == 0) || !isalnum(result[pos - 1]) && result[pos - 1] != '_';
+          bool endOk = (pos + param.size() == result.size()) ||
+                       !isalnum(result[pos + param.size()]) &&
+                           result[pos + param.size()] != '_';
+
+          if (startOk && endOk) {
+            result.replace(pos, param.size(), val);
+            pos += val.size();
+          } else {
+            pos += param.size();
+          }
+        }
+      }
+
+      if (info.IsStrong && !force) {
+        return Type; // Return original "Name<Args>"
+      }
+      return resolveType(result, force);
+    }
+  }
+
   // Fallback: use the object-based resolver which handles generics
   auto typeObj = toka::Type::fromString(Type);
   return resolveType(typeObj, force)->toString();

@@ -965,9 +965,12 @@ public:
   std::string Name;
   std::string TargetType;
   bool IsStrong = false;
+  std::vector<GenericParam> GenericParams; // [NEW]
+
   TypeAliasDecl(bool isPub, const std::string &name, const std::string &target,
-                bool isStrong = false)
-      : IsPub(isPub), Name(name), TargetType(target), IsStrong(isStrong) {}
+                bool isStrong = false, std::vector<GenericParam> generics = {})
+      : IsPub(isPub), Name(name), TargetType(target), IsStrong(isStrong),
+        GenericParams(std::move(generics)) {}
   std::string toString() const override {
     return std::string(IsPub ? "Pub" : "") + "TypeAlias(" + Name + " = " +
            TargetType + ")";

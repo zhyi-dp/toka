@@ -155,8 +155,10 @@ void Sema::registerGlobals(Module &M) {
     }
   }
   for (auto &Alias : M.TypeAliases) {
-    ms.TypeAliases[Alias->Name] = {Alias->TargetType, Alias->IsStrong};
-    TypeAliasMap[Alias->Name] = {Alias->TargetType, Alias->IsStrong};
+    ms.TypeAliases[Alias->Name] = {Alias->TargetType, Alias->IsStrong,
+                                   Alias->GenericParams};
+    TypeAliasMap[Alias->Name] = {Alias->TargetType, Alias->IsStrong,
+                                 Alias->GenericParams};
     // [NEW] Define locally in scope
     CurrentScope->define(Alias->Name, {toka::Type::fromString(Alias->Name)});
   }
