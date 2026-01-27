@@ -1254,6 +1254,33 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
                       cast->TargetType, targetType, false);
   }
 
+  // [Fix] Safe Nullable Soul Wrap in Cast
+  if (targetType->isStructTy() && targetType->getStructNumElements() == 2 &&
+      targetType->getStructElementType(1)->isIntegerTy(1)) {
+    // 1. T -> T?
+    if (srcType == targetType->getStructElementType(0)) {
+      llvm::Value *wrapped = llvm::UndefValue::get(targetType);
+      wrapped = m_Builder.CreateInsertValue(wrapped, val, {0});
+      wrapped = m_Builder.CreateInsertValue(
+          wrapped, llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), 1),
+          {1});
+      return PhysEntity(wrapped, cast->TargetType, targetType, false);
+    }
+    // 2. none/null -> T?
+    if (dynamic_cast<const NoneExpr *>(cast->Expression.get()) ||
+        (srcType->isPointerTy() && llvm::isa<llvm::ConstantPointerNull>(val))) {
+      llvm::Value *wrapped = llvm::UndefValue::get(targetType);
+      wrapped = m_Builder.CreateInsertValue(
+          wrapped,
+          llvm::Constant::getNullValue(targetType->getStructElementType(0)),
+          {0});
+      wrapped = m_Builder.CreateInsertValue(
+          wrapped, llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), 0),
+          {1});
+      return PhysEntity(wrapped, cast->TargetType, targetType, false);
+    }
+  }
+
   // Floating Point Conversions
   if (srcType->isFloatingPointTy() && targetType->isFloatingPointTy()) {
     return PhysEntity(m_Builder.CreateFPCast(val, targetType, "fp_cast"),

@@ -102,6 +102,9 @@ impl<T> SharedPtr<T> {
                 
                 // 2. 再释放控制块
                 unsafe free self.*wrapper
+                
+                // 置空 (在 unsafe 块内允许非空 raw 指针接收 nullptr)
+                self#.*wrapper = nullptr
             }
         }
         else
@@ -109,8 +112,6 @@ impl<T> SharedPtr<T> {
             println("xdrop for addr {} with ref_count={} NOT dropped", self.wrapper.*data as OAddr, self.wrapper.ref_count)
         }
         
-        // 置空
-        self#.*wrapper = nullptr
  
     }
 

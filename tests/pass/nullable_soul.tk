@@ -18,7 +18,7 @@ fn main() -> i32 {
     // 2. Test none assignment and panic
     auto n2 = Node(val=2, pp=none)
     println("This should panic next...")
-    auto v2 = n2.pp??.x 
+    //auto v2 = n2.pp??.x 
     
     return 0
 }

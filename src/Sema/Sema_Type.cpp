@@ -847,8 +847,14 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   auto sStr = S->toString();
   auto tStr = T->toString();
   if (sStr == "*?void" || sStr == "nullptr") {
-    if (T->isPointer() || T->isSmartPointer() || T->isReference())
-      return true;
+    if (T->isPointer() || T->isSmartPointer() || T->isReference()) {
+      if (T->IsNullable)
+        return true;
+      // [Relaxation] Allow nullptr to raw pointers in unsafe context (Standard
+      // Library compat)
+      if (m_InUnsafeContext && T->isRawPointer())
+        return true;
+    }
   }
   if (tStr == "*?void" || tStr == "nullptr") {
     if (S->isPointer() || S->isSmartPointer() || S->isReference())

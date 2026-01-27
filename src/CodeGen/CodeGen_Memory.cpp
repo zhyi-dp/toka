@@ -989,7 +989,29 @@ llvm::Value *CodeGen::emitEntityAddr(const Expr *expr) {
   if (auto *var = dynamic_cast<const VariableExpr *>(expr)) {
     return getEntityAddr(var->Name);
   }
-  return genAddr(expr);
+
+  // Try to get address directly (LValue)
+  llvm::Value *addr = genAddr(expr);
+  if (addr)
+    return addr;
+
+  // RValue Spill Fallback (Ch 6.2 Extension)
+  // If we can't get an address (e.g. n.??point or pp??), we must evaluate
+  // and spill to a temporary alloca if it's a value.
+  PhysEntity pe = genExpr(expr);
+  if (pe.isAddress)
+    return pe.value;
+
+  // Spill to temporary alloca
+  if (!pe.value)
+    return nullptr;
+  llvm::Type *ty = pe.irType;
+  if (!ty)
+    ty = pe.value->getType();
+
+  llvm::Value *spill = m_Builder.CreateAlloca(ty, nullptr, "rval.spill");
+  m_Builder.CreateStore(pe.value, spill);
+  return spill;
 }
 
 llvm::Value *CodeGen::emitHandleAddr(const Expr *expr) {

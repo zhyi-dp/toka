@@ -27,9 +27,12 @@ fn main() -> i32 {
     
     /* Path 2: Panic path
     // The next line MUST trigger a runtime panic (trap) because next is nullptr
-    auto n_null = Node(val=1, ^point=nullptr)
-    println("This should panic next...")
-    auto v2 = n_null.??point.x
+    auto n_null = Node(val=1, ^point=nullptr, pp=none)
+    println("This should panic next...access pointer is nullptr")
+    auto v3 = n_null.??point.x
+
+    println("This should panic next...access soul is none")
+    auto v4 = n_null.pp??.x
     */
     
     return 0

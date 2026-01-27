@@ -98,7 +98,7 @@ fn main() -> i32 {
 
     // 6. 空值检查 (Null Check)
     // 根据 7: *ptr == null 属于 SAFE
-    auto *empty:Hero = nullptr
+    auto *?empty:Hero = nullptr
     if nullptr == *empty {
         println("Null pointer confirmed")
         assert(true, "Null pointer check passed")
