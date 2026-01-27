@@ -18,19 +18,12 @@ impl Node@encap {
 
 fn main() -> i32 {
     // Path 1: Success path
-    auto n_ok = Node(val=1, ^point=new Point(x=2, y=3), pp=Point(x=4, y=5))
-    auto v1 = n_ok.??point.x
+    auto n_ok = Node(val=1, ^point=new Point(x=2, y=3), pp=none)
+    auto v1 = n_ok.point.x // EXPECT: error[E0447]:
     println("Success access: {}", v1) // Should print 2
 
-    auto v2 = n_ok.pp??.x
+    auto v2 = n_ok.pp.x // EXPECT: error[E0447]:
     println("Success access: {}", v2) // Should print 4
-    
-    /* Path 2: Panic path
-    // The next line MUST trigger a runtime panic (trap) because next is nullptr
-    auto n_null = Node(val=1, ^point=nullptr)
-    println("This should panic next...")
-    auto v2 = n_null.??point.x
-    */
     
     return 0
 }

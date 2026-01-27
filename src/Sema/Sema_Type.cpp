@@ -855,6 +855,12 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
       return true;
   }
 
+  // [Chapter 6 Extension] Nullable Soul Compatibility (none -> T?)
+  if (sStr == "void" && Target->IsNullable && !Target->isPointer() &&
+      !Target->isSmartPointer() && !Target->isReference()) {
+    return true;
+  }
+
   // Weak Tuple Check (Legacy Coexistence)
   // Since Type::fromString parses tuples as ShapeType("..."), we check the
   // name.

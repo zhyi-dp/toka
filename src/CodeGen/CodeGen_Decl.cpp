@@ -1916,6 +1916,18 @@ llvm::Type *CodeGen::getLLVMType(std::shared_ptr<Type> type) {
     return llvm::Type::getVoidTy(m_Context);
   }
 
+  // [Chapter 6 Extension] Nullable Soul Wrapper: { T, i1 }
+  // Only for non-pointers. Pointers are natively nullable in LLVM.
+  if (type->IsNullable && !type->isPointer() && !type->isSmartPointer() &&
+      !type->isReference() && !type->isVoid()) {
+    // Get raw type without nullable attribute to avoid infinite recursion
+    auto baseTyObj =
+        type->withAttributes(type->IsWritable, false, type->IsBlocked);
+    llvm::Type *baseTy = getLLVMType(baseTyObj);
+    return llvm::StructType::get(m_Context,
+                                 {baseTy, llvm::Type::getInt1Ty(m_Context)});
+  }
+
   // Handle Primitives
   if (type->typeKind == Type::Primitive) {
     auto prim = std::static_pointer_cast<PrimitiveType>(type);

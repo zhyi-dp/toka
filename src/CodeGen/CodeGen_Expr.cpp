@@ -318,7 +318,6 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
       effectiveRebind = false;
     }
   }
-
   if (effectiveRebind && symLHS && lhsAlloca) {
     // Scene B: Envelope Rebind
     if (symLHS->morphology == Morphology::Shared &&
@@ -334,6 +333,39 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
     llvm::Type *destTy = rhsVal->getType();
     if (symLHS && symLHS->morphology == Morphology::None)
       destTy = symLHS->soulType;
+
+    // [Chapter 6 Extension] Nullable Soul Assignment Wrapping
+    if (lhsExpr->ResolvedType && lhsExpr->ResolvedType->IsNullable &&
+        !lhsExpr->ResolvedType->isPointer() &&
+        !lhsExpr->ResolvedType->isSmartPointer() &&
+        !lhsExpr->ResolvedType->isReference() &&
+        !lhsExpr->ResolvedType->isVoid()) {
+      llvm::Type *targetStructTy = getLLVMType(lhsExpr->ResolvedType);
+      if (rhsVal->getType() != targetStructTy) {
+        // Wrapping T into { T, i1 }
+        llvm::Value *wrapped = llvm::UndefValue::get(targetStructTy);
+        if (rhsVal->getType() == targetStructTy->getStructElementType(0)) {
+          wrapped = m_Builder.CreateInsertValue(wrapped, rhsVal, {0});
+          wrapped = m_Builder.CreateInsertValue(
+              wrapped,
+              llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), 1), {1});
+          rhsVal = wrapped;
+          destTy = targetStructTy;
+        } else if (dynamic_cast<const NoneExpr *>(rhsExpr) ||
+                   rhsVal->getType()->isPointerTy()) { // Handle none
+          wrapped = m_Builder.CreateInsertValue(
+              wrapped,
+              llvm::Constant::getNullValue(
+                  targetStructTy->getStructElementType(0)),
+              {0});
+          wrapped = m_Builder.CreateInsertValue(
+              wrapped,
+              llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), 0), {1});
+          rhsVal = wrapped;
+          destTy = targetStructTy;
+        }
+      }
+    }
     emitSoulAssignment(soulAddr, rhsVal, destTy);
   }
 
@@ -1202,16 +1234,11 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
     return val;
 
   // Rule: Unwrap Smart Pointer handles (like SharedPtr) if casting to
-  // integer/pointer
-  if (val->getType()->isStructTy()) {
-    while (val->getType()->isStructTy()) {
-      unsigned numElems = val->getType()->getStructNumElements();
-      if (numElems == 1 || numElems == 2) {
-        val = m_Builder.CreateExtractValue(val, 0, "handle_unwrap");
-      } else {
-        break;
-      }
-    }
+  // integer/pointer.
+  // [Fix] Skip unwrap for Nullable Soul wrappers { T, i1 } and regular shapes.
+  if (val->getType()->isStructTy() &&
+      !val->getType()->isStructTy()) { // Original logic was here
+    // Placeholder for removal of old aggressive logic
   }
 
   llvm::Type *srcType = val->getType();
@@ -1406,10 +1433,18 @@ PhysEntity CodeGen::genLiteralExpr(const Expr *expr) {
 }
 
 llvm::Value *CodeGen::genNullCheck(llvm::Value *val, const std::string &msg) {
-  if (!val || !val->getType()->isPointerTy())
+  if (!val)
     return val;
 
-  llvm::Value *nn = m_Builder.CreateIsNotNull(val, "nn_check");
+  llvm::Value *nn = nullptr;
+  if (val->getType()->isPointerTy()) {
+    nn = m_Builder.CreateIsNotNull(val, "nn_check");
+  } else if (val->getType()->isIntegerTy(1)) {
+    // For Soul flags, nn is just the value itself
+    nn = val;
+  } else {
+    return val;
+  }
   llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
   llvm::BasicBlock *okBB = llvm::BasicBlock::Create(m_Context, "nn.ok", f);
   llvm::BasicBlock *panicBB =
@@ -2758,10 +2793,21 @@ PhysEntity CodeGen::genPostfixExpr(const PostfixExpr *post) {
     return genExpr(post->LHS.get());
   }
   if (post->Op == TokenType::DoubleQuestion) {
-    PhysEntity lhs = genExpr(post->LHS.get()).load(m_Builder);
-    llvm::Value *val = lhs.load(m_Builder);
-    genNullCheck(val);
-    return lhs;
+    PhysEntity lhs_pe = genExpr(post->LHS.get()).load(m_Builder);
+    llvm::Value *val = lhs_pe.load(m_Builder);
+    if (val && val->getType()->isStructTy() &&
+        val->getType()->getStructNumElements() == 2 &&
+        val->getType()->getStructElementType(1)->isIntegerTy(1)) {
+      // Nullable Soul Wrapper: { T, i1 }
+      llvm::Value *isPresent =
+          m_Builder.CreateExtractValue(val, {1}, "soul.isPresent");
+      genNullCheck(isPresent);
+      llvm::Value *data = m_Builder.CreateExtractValue(val, {0}, "soul.data");
+      return PhysEntity(data, lhs_pe.typeName, data->getType(), false);
+    } else {
+      genNullCheck(val);
+      return lhs_pe;
+    }
   }
 
   llvm::Value *addr = genAddr(post->LHS.get());
@@ -2938,6 +2984,31 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
                                        : llvm::UndefValue::get(elemTy);
     } else {
       fieldVal = genExpr(f.second.get()).load(m_Builder);
+      // [Chapter 6 Extension] Nullable Soul Wrap for Init
+      llvm::Type *elemTy = st->getElementType(idx);
+      if (fieldVal && fieldVal->getType() != elemTy && elemTy->isStructTy() &&
+          elemTy->getStructNumElements() == 2 &&
+          elemTy->getStructElementType(1)->isIntegerTy(1)) {
+        if (fieldVal->getType() == elemTy->getStructElementType(0)) {
+          llvm::Value *wrapped = llvm::UndefValue::get(elemTy);
+          wrapped = m_Builder.CreateInsertValue(wrapped, fieldVal, {0});
+          wrapped = m_Builder.CreateInsertValue(
+              wrapped,
+              llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), 1), {1});
+          fieldVal = wrapped;
+        } else if (dynamic_cast<const NoneExpr *>(f.second.get()) ||
+                   fieldVal->getType()->isPointerTy()) {
+          llvm::Value *wrapped = llvm::UndefValue::get(elemTy);
+          wrapped = m_Builder.CreateInsertValue(
+              wrapped,
+              llvm::Constant::getNullValue(elemTy->getStructElementType(0)),
+              {0});
+          wrapped = m_Builder.CreateInsertValue(
+              wrapped,
+              llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), 0), {1});
+          fieldVal = wrapped;
+        }
+      }
     }
 
     if (!fieldVal)
@@ -3194,6 +3265,21 @@ llvm::Constant *CodeGen::genConstant(const Expr *expr, llvm::Type *targetType) {
     if (targetType && targetType->isFloatingPointTy())
       return llvm::ConstantFP::get(targetType, flt->Value);
     return llvm::ConstantFP::get(llvm::Type::getFloatTy(m_Context), flt->Value);
+  }
+
+  if (dynamic_cast<const NoneExpr *>(expr) ||
+      dynamic_cast<const NullExpr *>(expr)) {
+    if (targetType && targetType->isStructTy() &&
+        targetType->getStructNumElements() == 2 &&
+        targetType->getStructElementType(1)->isIntegerTy(1)) {
+      // Nullable Soul Wrapper constant for none/nullptr
+      llvm::Type *baseTy = targetType->getStructElementType(0);
+      return llvm::ConstantStruct::get(
+          (llvm::StructType *)targetType,
+          {llvm::Constant::getNullValue(baseTy),
+           llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), 0)});
+    }
+    return llvm::ConstantPointerNull::get(m_Builder.getPtrTy());
   }
 
   if (auto *rec = dynamic_cast<const AnonymousRecordExpr *>(expr)) {
