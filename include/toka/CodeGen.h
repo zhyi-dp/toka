@@ -239,6 +239,8 @@ private:
   llvm::Value *genUnsafeStmt(const UnsafeStmt *stmt);
   llvm::Value *genExprStmt(const ExprStmt *stmt);
   llvm::Value *genUnreachableStmt(const UnreachableStmt *stmt);
+  llvm::Value *genNullCheck(llvm::Value *val,
+                            const std::string &msg = "panic: null access");
 };
 
 } // namespace toka

@@ -182,9 +182,18 @@ Sema::MorphKind Sema::getSyntacticMorphology(Expr *E) {
     return MorphKind::None;
   }
 
+  if (auto *Post = dynamic_cast<PostfixExpr *>(E)) {
+    if (Post->Op == TokenType::DoubleQuestion)
+      return MorphKind::None;
+    return getSyntacticMorphology(Post->LHS.get());
+  }
+
   // Member Access: Check if Member string carries pointer sigil (e.g. .*name)
   if (auto *M = dynamic_cast<MemberExpr *>(E)) {
     if (!M->Member.empty()) {
+      if (M->Member.size() >= 2 && M->Member.substr(0, 2) == "??") {
+        return MorphKind::Valid; // Assertion bypasses strict checking
+      }
       char c = M->Member[0];
       if (c == '*')
         return MorphKind::Raw;
@@ -1414,6 +1423,11 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     } else if (Post->Op == TokenType::TokenNull) {
       if (!lhsInfo.empty() && lhsInfo.back() != '?' && lhsInfo.back() != '!')
         lhsInfo += "?";
+    } else if (Post->Op == TokenType::DoubleQuestion) {
+      // [Ch 6.1] Soul Assertion (Postfix ??)
+      // If already non-nullable, it's redundant but valid. Result is
+      // non-nullable.
+      return lhsObj->withAttributes(lhsObj->IsWritable, false);
     }
     return toka::Type::fromString(lhsInfo);
   } else if (auto *Arr = dynamic_cast<ArrayIndexExpr *>(E)) {
@@ -1744,17 +1758,23 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
     std::string requestedPrefix = "";
     if (!requestedMember.empty() &&
         (requestedMember[0] == '*' || requestedMember[0] == '^' ||
-         requestedMember[0] == '~' || requestedMember[0] == '&')) {
+         requestedMember[0] == '~' || requestedMember[0] == '&' ||
+         (requestedMember.size() >= 2 &&
+          requestedMember.substr(0, 2) == "??"))) {
       size_t prefixEnd = 0;
-      while (prefixEnd < requestedMember.size() &&
-             (requestedMember[prefixEnd] == '*' ||
-              requestedMember[prefixEnd] == '^' ||
-              requestedMember[prefixEnd] == '~' ||
-              requestedMember[prefixEnd] == '&' ||
-              requestedMember[prefixEnd] == '?' ||
-              requestedMember[prefixEnd] == '#' ||
-              requestedMember[prefixEnd] == '!')) {
-        prefixEnd++;
+      if (requestedMember.substr(0, 2) == "??") {
+        prefixEnd = 2;
+      } else {
+        while (prefixEnd < requestedMember.size() &&
+               (requestedMember[prefixEnd] == '*' ||
+                requestedMember[prefixEnd] == '^' ||
+                requestedMember[prefixEnd] == '~' ||
+                requestedMember[prefixEnd] == '&' ||
+                requestedMember[prefixEnd] == '?' ||
+                requestedMember[prefixEnd] == '#' ||
+                requestedMember[prefixEnd] == '!')) {
+          prefixEnd++;
+        }
       }
       requestedPrefix = requestedMember.substr(0, prefixEnd);
       requestedMember = requestedMember.substr(prefixEnd);
@@ -1864,7 +1884,17 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
             else if (requestedPrefix == "*" && fieldType->isRawPointer())
               matches = true;
 
-            if (!matches) {
+            if (requestedPrefix == "??") {
+              // Identity Assertion (Ch 6.1)
+              // 1. Ensure it's a pointer type
+              if (!fieldType->isPointer() && !fieldType->isSmartPointer()) {
+                error(Memb, "Identity assertion '??' can only be applied to "
+                            "pointers, got '" +
+                                fieldType->toString() + "'");
+              }
+              // 2. Result is the non-nullable pointer (Identity)
+              result = fieldType->withAttributes(fieldType->IsWritable, false);
+            } else if (!matches) {
               if (requestedPrefix == "&") {
                 result = std::make_shared<ReferenceType>(fieldType);
               } else if (requestedPrefix == "^") {

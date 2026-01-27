@@ -452,6 +452,8 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   }
 
   std::string memberName = mem->Member;
+  if (memberName.substr(0, 2) == "??")
+    memberName = memberName.substr(2);
   while (!memberName.empty() && (memberName[0] == '^' || memberName[0] == '*' ||
                                  memberName[0] == '&' || memberName[0] == '#' ||
                                  memberName[0] == '~' || memberName[0] == '!'))
@@ -624,6 +626,13 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   llvm::Type *finalIrTy = irTy;
   if (mem->ResolvedType) {
     finalIrTy = getLLVMType(mem->ResolvedType);
+  }
+
+  if (mem->Member.size() >= 2 && mem->Member.substr(0, 2) == "??") {
+    // Identity Assertion (Ch 6.1)
+    llvm::Value *ptrVal = m_Builder.CreateLoad(finalIrTy, finalAddr, "nn.load");
+    genNullCheck(ptrVal);
+    return PhysEntity(ptrVal, memberTypeName, finalIrTy, false); // R-Value
   }
 
   return PhysEntity(finalAddr, memberTypeName, finalIrTy, true);

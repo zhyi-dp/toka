@@ -1405,6 +1405,28 @@ PhysEntity CodeGen::genLiteralExpr(const Expr *expr) {
   return nullptr;
 }
 
+llvm::Value *CodeGen::genNullCheck(llvm::Value *val, const std::string &msg) {
+  if (!val || !val->getType()->isPointerTy())
+    return val;
+
+  llvm::Value *nn = m_Builder.CreateIsNotNull(val, "nn_check");
+  llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock *okBB = llvm::BasicBlock::Create(m_Context, "nn.ok", f);
+  llvm::BasicBlock *panicBB =
+      llvm::BasicBlock::Create(m_Context, "nn.panic", f);
+  m_Builder.CreateCondBr(nn, okBB, panicBB);
+
+  m_Builder.SetInsertPoint(panicBB);
+  // [TODO] Call __toka_panic properly. For now, trap or abort.
+  llvm::Function *trap =
+      llvm::Intrinsic::getDeclaration(m_Module.get(), llvm::Intrinsic::trap);
+  m_Builder.CreateCall(trap);
+  m_Builder.CreateUnreachable();
+
+  m_Builder.SetInsertPoint(okBB);
+  return val;
+}
+
 PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
   PhysEntity targetVal_ent = genExpr(expr->Target.get()).load(m_Builder);
   llvm::Value *targetVal = targetVal_ent.load(m_Builder);
@@ -2734,6 +2756,12 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
 PhysEntity CodeGen::genPostfixExpr(const PostfixExpr *post) {
   if (post->Op == TokenType::TokenWrite) {
     return genExpr(post->LHS.get());
+  }
+  if (post->Op == TokenType::DoubleQuestion) {
+    PhysEntity lhs = genExpr(post->LHS.get()).load(m_Builder);
+    llvm::Value *val = lhs.load(m_Builder);
+    genNullCheck(val);
+    return lhs;
   }
 
   llvm::Value *addr = genAddr(post->LHS.get());
