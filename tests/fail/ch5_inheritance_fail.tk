@@ -1,0 +1,167 @@
+// tests/fail/ch5_inheritance_fail.tk
+// Comprehensive test for Chapter 5: Member Access & Permission Inheritance
+// Status: FINAL CORRECT (No Redundant Syntax)
+// Focus: The Valid Matrix (5 Hats * 4 Valid Suffixes)
+// Note: Suffix `$` is syntactically FORBIDDEN on pointers (Redundant).
+
+shape Soul (
+    v: i32
+)
+
+shape Exhaustive (
+    // =========================================================
+    // 1. Soul Members (Direct Fields)
+    // =========================================================
+    // Here `$` is REQUIRED to block parent's #.
+    s_inherited: i32,  // Default
+    s_mutable#: i32,   // Privilege (#)
+    s_readonly$: i32,  // Restriction ($) - VALID here
+    s_nullable?: i32,  // Nullable (?)
+    s_chaos!: i32,     // Chaos (! = ? + #)
+
+    // =========================================================
+    // 2. Pointer Members
+    // Dimension A (Hat): *, *$, *#, *?, *!
+    // Dimension B (Suffix): (none), #, ?, !  <-- NO `$` suffix allowed!
+    // =========================================================
+
+    // --- Group I: Standard Identity (*) ---
+    *p_i_default: Soul,    // Soul: Insulated ($)
+    *p_i_mutable#: Soul,   // Soul: Privileged (#)
+    *p_i_nullable?: Soul,  // Soul: Nullable Type, ReadOnly ($)
+    *p_i_chaos!: Soul,     // Soul: Nullable Type, Privileged (#)
+
+    // --- Group R: Rigid Identity (*$) ---
+    // Identity is Fixed ($), but Suffix still controls Soul permissions
+    *$p_r_default: Soul,
+    *$p_r_mutable#: Soul,
+    *$p_r_nullable?: Soul,
+    *$p_r_chaos!: Soul,
+
+    // --- Group M: Mutable Identity (*#) ---
+    // Identity is Mutable (#)
+    *#p_m_default: Soul,
+    *#p_m_mutable#: Soul,
+    *#p_m_nullable?: Soul,
+    *#p_m_chaos!: Soul,
+
+    // --- Group N: Nullable Identity (*?) ---
+    // Identity is Nullable (?) but ReadOnly (No reseat priv)
+    *?p_n_default: Soul,
+    *?p_n_mutable#: Soul,
+    *?p_n_nullable?: Soul,
+    *?p_n_chaos!: Soul,
+
+    // --- Group B: Chaos Identity (*!) ---
+    // Identity is Nullable (?) and Mutable (#)
+    *!p_b_default: Soul,
+    *!p_b_mutable#: Soul,
+    *!p_b_nullable?: Soul,
+    *!p_b_chaos!: Soul
+)
+
+fn main() -> i32 {
+    // === Setup ===
+    auto soul = Soul(v=0)
+    auto msoul# = Soul(v=0)
+    
+    // === Initialization with Sigil Exemption ===
+    // Hat Matching in Init: *name = *value
+    auto ex = Exhaustive(
+        s_inherited=0, s_mutable=0, s_readonly=0, s_nullable=0, s_chaos=0,
+        
+        // Group I (*)
+        *p_i_default=*soul, *p_i_mutable=*msoul, *p_i_nullable=*soul, *p_i_chaos=*msoul,
+        
+        // Group R (*$)
+        *p_r_default=*soul, *p_r_mutable=*msoul, *p_r_nullable=*soul, *p_r_chaos=*msoul,
+        
+        // Group M (*#)
+        *p_m_default=*soul, *p_m_mutable=*msoul, *p_m_nullable=*soul, *p_m_chaos=*msoul,
+        
+        // Group N (*?)
+        *p_n_default=nullptr, *p_n_mutable=nullptr, *p_n_nullable=nullptr, *p_n_chaos=nullptr,
+        
+        // Group B (*!)
+        *p_b_default=nullptr, *p_b_mutable=nullptr, *p_b_nullable=nullptr, *p_b_chaos=nullptr
+    ) 
+    
+    auto ex_mut# = ex
+
+    // ==================================================
+    // TEST AREA 1: IDENTITY PERMISSIONS (The 5 Hats)
+    // ==================================================
+    // Rule: Identity Reseat (*#ptr = *val) requires Hat Matching.
+    
+    // 1. [FAIL] Group I (*): Blocked by Scope($)
+    ex.*#p_i_default = *soul // EXPECT error:[E0xxx] PermissionDenied... (Hat Matches, Permission Fails)
+
+    // 2. [FAIL] Group R (*$): Blocked by Hat($)
+    ex_mut.*#p_r_default = *soul // EXPECT error:[E0xxx] PermissionDenied...
+
+    // 3. [PASS] Group M (*#): Privileged Identity
+    // Hat Matching: *#target = *source
+    ex.*#p_m_default = *soul // OK
+
+    // 4. [FAIL] Group N (*?): Type is Nullable, but Identity is ReadOnly
+    ex.*#p_n_default = nullptr // EXPECT error:[E0xxx] PermissionDenied... (nullptr is special, implies *nullptr identity)
+
+    // 5. [PASS] Group B (*!): Chaos Identity (Reseatable)
+    ex.*#p_b_default = *soul // OK
+
+    // ==================================================
+    // TEST AREA 2: SOUL PERMISSIONS (The 4 Valid Suffixes)
+    // ==================================================
+    // Rule: Soul Modification (name# = val) or Replacement (name# = none)
+    // No Hat on LHS means we are operating on Soul/Value.
+    
+    // --- Variant 1: Default (none) ---
+    // [FAIL] Insulation blocks write.
+    ex_mut.p_i_default.v# = 1 // EXPECT error:[E0xxx] PermissionDenied...
+    
+    ex_mut.??p_n_mutable.v# = 1 // OK
+
+    // --- Variant 2: Mutable (#) ---
+    // [PASS] Suffix # overrides Insulation.
+    ex.p_i_mutable.v# = 1 // OK
+
+    // --- Variant 3: Nullable (?) ---
+    // Suffix ? implies Type=Nullable, Permission=ReadOnly.
+    // [FAIL] Insulation blocks write.
+    ex_mut.p_i_nullable.v# = 1 // EXPECT error:[E0xxx] PermissionDenied...
+    
+    // [FAIL] Cannot assign 'none' without # permission
+    // LHS is Soul (no hat), RHS is Value (none).
+    ex_mut.p_i_nullable# = none // EXPECT error:[E0xxx] PermissionDenied...
+    ex_mut.p_i_nullable = none // EXPECT error:[E0xxx] PermissionDenied...
+
+    // --- Variant 4: Chaos (!) ---
+    // Suffix ! implies Type=Nullable, Permission=Mutable.
+    // [PASS] Suffix ! overrides Insulation.
+    ex.p_i_chaos.v# = 1 // OK
+    
+    // [PASS] Assigning none
+    // LHS is Soul (no hat), RHS is Value (none).
+    ex.p_i_chaos# = none // OK
+
+    // ==================================================
+    // TEST AREA 3: CROSS INTERACTION (Hat vs Suffix)
+    // ==================================================
+
+    // 1. Hat Rigid (*$) vs Suffix Mutable (#)
+    // Reseat (Hat)? NO. Write Soul (Suffix)? YES.
+    ex_mut.*#p_r_mutable = *soul // EXPECT error:[E0xxx] PermissionDenied... (Hat mismatch permission)
+    ex.p_r_mutable.v# = 1        // OK
+
+    // 2. Hat Chaos (*!) vs Suffix Default
+    // Reseat (Hat)? YES. Write Soul (Suffix)? NO.
+    ex.*#p_b_default = *soul  // OK (Hat Matching)
+    ex.p_b_default.v# = 1     // EXPECT error:[E0xxx] PermissionDenied...
+
+    // 3. Hat Nullable (*?) vs Suffix Chaos (!)
+    // Reseat (Hat)? NO. Write Soul (Suffix)? YES.
+    ex.*#p_n_chaos = nullptr  // EXPECT error:[E0xxx] PermissionDenied...
+    ex.p_n_chaos# = none       // OK
+
+    return 0
+}

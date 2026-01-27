@@ -1,0 +1,4 @@
+fn main() -> i32 {
+    auto *p: i32 = nullptr // EXPECT: error[E0409]:
+    return 0
+}
