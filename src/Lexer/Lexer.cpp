@@ -197,9 +197,10 @@ Token Lexer::identifier() {
       kind == TokenType::KwUpperSelf) {
     if (match('#'))
       t.HasWrite = true;
-    else if (match('?'))
+    else if (peek() == '?' && peekNext() != '?') {
+      advance();
       t.HasNull = true;
-    else if (match('!')) {
+    } else if (match('!')) {
       t.HasWrite = true;
       t.HasNull = true;
     } else if (match('$')) {

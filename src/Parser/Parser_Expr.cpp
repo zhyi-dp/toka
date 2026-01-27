@@ -680,6 +680,8 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         prefix = previous().Text;
       else if (match(TokenType::Ampersand))
         prefix = previous().Text;
+      else if (match(TokenType::DoubleQuestion))
+        prefix = previous().Text;
 
       if (match(TokenType::Identifier) || match(TokenType::KwUnset) ||
           match(TokenType::KwNull) || match(TokenType::KwSelf)) {
@@ -750,6 +752,18 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     } else if (match(TokenType::MinusMinus)) {
       expr =
           std::make_unique<PostfixExpr>(TokenType::MinusMinus, std::move(expr));
+    } else if (match(TokenType::DoubleQuestion)) {
+      expr = std::make_unique<PostfixExpr>(TokenType::DoubleQuestion,
+                                           std::move(expr));
+    } else if (match(TokenType::TokenWrite)) {
+      expr =
+          std::make_unique<PostfixExpr>(TokenType::TokenWrite, std::move(expr));
+    } else if (match(TokenType::TokenNull)) {
+      expr =
+          std::make_unique<PostfixExpr>(TokenType::TokenNull, std::move(expr));
+    } else if (match(TokenType::TokenNone)) {
+      expr =
+          std::make_unique<PostfixExpr>(TokenType::TokenNone, std::move(expr));
     } else {
       break;
     }
