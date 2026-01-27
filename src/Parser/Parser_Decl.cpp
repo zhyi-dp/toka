@@ -102,11 +102,26 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
         m.IsValueNullable = nameTok.HasNull;
         m.IsValueBlocked = nameTok.IsBlocked;
         consume(TokenType::Colon, "Expected ':'");
-        m.Type = parseTypeString();
       } else {
         m.Name = std::to_string(idx);
-        m.Type = parseTypeString();
       }
+
+      std::string prefixType = "";
+      if (match(TokenType::Star)) {
+        m.HasPointer = true;
+        prefixType = "*";
+      } else if (match(TokenType::Caret)) {
+        m.IsUnique = true;
+        prefixType = "^";
+      } else if (match(TokenType::Tilde)) {
+        m.IsShared = true;
+        prefixType = "~";
+      } else if (match(TokenType::Ampersand)) {
+        m.IsReference = true;
+        prefixType = "&";
+      }
+
+      m.Type = prefixType + parseTypeString();
       idx++;
       members.push_back(std::move(m));
     }
@@ -147,11 +162,26 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           v.IsValueNullable = nameTok.HasNull;
           v.IsValueBlocked = nameTok.IsBlocked;
           consume(TokenType::Colon, "Expected ':'");
-          v.Type = parseTypeString();
         } else {
           v.Name = std::to_string(idx);
-          v.Type = parseTypeString();
         }
+
+        std::string prefixType = "";
+        if (match(TokenType::Star)) {
+          v.HasPointer = true;
+          prefixType = "*";
+        } else if (match(TokenType::Caret)) {
+          v.IsUnique = true;
+          prefixType = "^";
+        } else if (match(TokenType::Tilde)) {
+          v.IsShared = true;
+          prefixType = "~";
+        } else if (match(TokenType::Ampersand)) {
+          v.IsReference = true;
+          prefixType = "&";
+        }
+
+        v.Type = prefixType + parseTypeString();
         idx++;
         members.push_back(std::move(v));
         if (!check(TokenType::RParen))

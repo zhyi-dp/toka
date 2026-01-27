@@ -608,37 +608,19 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
         HasError = true;
       }
 
-      // 2. Check for Resource Types (Limit HasDrop)
-      bool isResource = false;
-      if (memb.IsUnique || memb.IsShared) {
-        isResource = true;
-      } else if (auto st =
-                     std::dynamic_pointer_cast<toka::ShapeType>(underlying)) {
-        // Check if this shape is known to have drop
-        // Since we are in Sema, we can access m_ShapeProps if it was
-        // computed. But m_ShapeProps is local to analyzeShapes pass? No, it's
-        // a member of Sema. We might need to ensure it's populated. If not
-        // found, be conservative? Or assume it's fine if not smart ptr? For
-        // now, let's check smart pointers (most common issue) and explicit
-        // String
-        if (st->Name == "String" || st->Name == "std::string::String") {
-          isResource = true;
-        } else if (m_ShapeProps.count(st->Name) &&
-                   m_ShapeProps[st->Name].HasDrop) {
-          isResource = true;
-        }
-      } else if (auto ptr =
-                     std::dynamic_pointer_cast<toka::PointerType>(underlying)) {
-        if (ptr->isUniquePtr() || ptr->isSharedPtr())
-          isResource = true;
+      // 2. Check for Pointer Morphology (&^~*)
+      bool isPointer = false;
+      if (memb.IsUnique || memb.IsShared || memb.HasPointer ||
+          memb.IsReference || memb.ResolvedType->isPointer()) {
+        isPointer = true;
       }
 
-      if (isResource) {
+      if (isPointer) {
         DiagnosticEngine::report(getLoc(storedDecl),
                                  DiagID::ERR_UNION_RESOURCE_TYPE, memb.Name,
                                  memb.Type);
         DiagnosticEngine::report(getLoc(storedDecl),
-                                 DiagID::NOTE_UNION_RESOURCE_TIP);
+                                 DiagID::NOTE_UNION_RESOURCE_TIP, memb.Type);
         HasError = true;
       }
     }

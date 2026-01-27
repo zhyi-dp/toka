@@ -819,42 +819,16 @@ void Sema::analyzeShapes(Module &M) {
     if (S->Kind == ShapeKind::Union) {
       for (auto &memb : S->Members) {
         bool isResource = false;
-        // 1. Smart Pointers
-        if (memb.IsUnique || memb.IsShared) {
+        // 1. Check for ANY pointer morphology (&^~*) on the member itself
+        // (Rule: union 的 as 成员中不允许出现任何的指针形态)
+        if (memb.IsUnique || memb.IsShared || memb.HasPointer ||
+            memb.IsReference) {
           isResource = true;
         }
-        // 2. Value types that have Drop
-        //    (Recursive structures, or types with Drop impl)
-        //    We can check the computed props of the member's type if it is a
-        //    Shape
-        else if (!memb.HasPointer && !memb.IsReference) {
-          std::string baseType = toka::Type::stripMorphology(memb.Type);
-          // Unwrap arrays first?
-          // Actually computeShapeProperties handles recursion if we called it
-          // on baseType. But wait, computeShapeProperties is called on
-          // Shapes. If 'memb.Type' is [T; 2], baseType might be [T; 2] or we
-          // need to handle it. Let's use the resolved type if possible, or
-          // simple recursion. 'memb.ResolvedType' should be available now.
 
-          if (memb.ResolvedType) {
-            std::shared_ptr<toka::Type> T = memb.ResolvedType;
-            // Unwrap Arrays
-            while (T->isArray()) {
-              T = std::static_pointer_cast<toka::ArrayType>(T)->ElementType;
-            }
-
-            if (T->isSmartPointer()) {
-              isResource = true;
-            } else if (T->isShape()) {
-              std::string shapeName =
-                  std::static_pointer_cast<toka::ShapeType>(T)->Name;
-              if (m_ShapeProps.count(shapeName) &&
-                  m_ShapeProps[shapeName].HasDrop) {
-                isResource = true;
-              }
-            }
-          }
-        }
+        // [Rule Update] "但不限制成员的成员包含了什么"
+        // We no longer perform recursive check for resource types / drop impls
+        // within value-type members of a Bare Union.
 
         if (isResource) {
           DiagnosticEngine::report(getLoc(S.get()),
