@@ -1001,8 +1001,10 @@ struct ShapeMember {
   bool IsReference = false;
   bool IsValueMutable = false;
   bool IsValueNullable = false;
-  bool IsRebindBlocked = false; // "$" pointer attribute
-  bool IsValueBlocked = false;  // "$" identifier attribute
+  bool IsRebindable = false;      // "#" handle attribute
+  bool IsPointerNullable = false; // "?" handle attribute
+  bool IsRebindBlocked = false;   // "$" pointer attribute
+  bool IsValueBlocked = false;    // "$" identifier attribute
 
   // For Bare Union (as ...)
   std::vector<ShapeMember> SubMembers;

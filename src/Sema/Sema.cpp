@@ -707,9 +707,9 @@ void Sema::analyzeShapes(Module &M) {
       if (member.ResolvedType)
         continue; // Already resolved?
 
-      // Use member.Type directly as it already contains morphology sigils from
-      // the parser
-      std::string fullTypeStr = member.Type;
+      // Use synthesized type string to ensure morphology and permission flags
+      // are included
+      std::string fullTypeStr = Sema::synthesizePhysicalType(member);
 
       // 3. Resolve to Canonical Name (handles imports, aliases)
       std::string resolvedName = resolveType(fullTypeStr);

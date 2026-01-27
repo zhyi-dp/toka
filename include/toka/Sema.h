@@ -399,6 +399,10 @@ private:
     else if (Arg.HasPointer)
       Signature += "*";
 
+    if (Arg.IsPointerNullable)
+      Signature += "?";
+    if (Arg.IsRebindable)
+      Signature += "#";
     if (Arg.IsRebindBlocked)
       Signature += "$";
 

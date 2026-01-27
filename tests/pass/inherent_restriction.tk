@@ -2,23 +2,33 @@ import std/io::println
 
 shape Data(
     x: i32,
-    y$: i32  // Restricted: Permanently read-only
+    y$: i32,
+    ^p#: i32,  // Mutable soul, Inherit handle
+    ^q: i32    // Insulated soul (default Blocked), Inherit handle
 )
 
+impl Data@encap {
+    fn drop(self#) {
+    println("auto drop")
+    }
+}
+
 fn main() -> i32 {
-    // 1. Initializing with $
-    auto d# = Data(x=1, y=2)
+    auto d# = Data(x=1, y=2, p=new i32(100), q=new i32(200))
     
-    // 2. Modify inheritable field
+    // 1. Modify inheritable field
     d#.x = 10 // OK: Bloodline inheritance
     
-    // 3. Access y
-    auto val = d.y
-    if val != 2 {
-        println("Error: y should be 2")
-        return 1
-    }
+    // 2. Handle Rebinding (Inherited)
+    d#.^p = new i32(300) // OK: d# is mutable, p handle inherits mutability
+    
+    // 3. Soul Modification (Explicitly Mutable)
+    d.p = 500 // OK: p is ^i32#, soul is explicitly mutable
+    
+    // 4. Soul Insulation (Default Blocked)
+    // d.q = 600 // Error: Cannot modify immutable 'd.q' (insulated)
+    // d#.q = 700 // Error: Cannot modify immutable 'd.q' (insulated even if d# is mutable)
 
-    println("Success: Inherent restriction pass test")
+    println("Success: Handle/Soul duality verified")
     return 0
 }

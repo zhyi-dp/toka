@@ -202,6 +202,8 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           std::string prefixType = "";
           if (match(TokenType::Star)) {
             m.HasPointer = true;
+            m.IsRebindable = previous().IsSwappablePtr;
+            m.IsPointerNullable = previous().HasNull;
             m.IsRebindBlocked = previous().IsBlocked;
             prefixType = "*";
             if (previous().HasNull)
@@ -210,6 +212,8 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
               prefixType += "!";
           } else if (match(TokenType::Caret)) {
             m.IsUnique = true;
+            m.IsRebindable = previous().IsSwappablePtr;
+            m.IsPointerNullable = previous().HasNull;
             m.IsRebindBlocked = previous().IsBlocked;
             prefixType = "^";
             if (previous().HasNull)
@@ -218,6 +222,8 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
               prefixType += "!";
           } else if (match(TokenType::Tilde)) {
             m.IsShared = true;
+            m.IsRebindable = previous().IsSwappablePtr;
+            m.IsPointerNullable = previous().HasNull;
             m.IsRebindBlocked = previous().IsBlocked;
             prefixType = "~";
             if (previous().HasNull)
@@ -226,6 +232,8 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
               prefixType += "!";
           } else if (match(TokenType::Ampersand)) {
             m.IsReference = true;
+            m.IsRebindable = previous().IsSwappablePtr;
+            m.IsPointerNullable = previous().HasNull;
             m.IsRebindBlocked = previous().IsBlocked;
             prefixType = "&";
             if (previous().HasNull)

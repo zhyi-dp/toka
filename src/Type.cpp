@@ -52,7 +52,7 @@ std::shared_ptr<Type> cloneWithAttrs(const T *original, bool w, bool n,
   clone->IsBlocked = b || original->IsBlocked;
   if (clone->IsBlocked) {
     clone->IsWritable = false;
-    clone->IsNullable = false;
+    clone->IsNullable = n; // Keep original/requested nullability
   } else {
     clone->IsWritable = w;
     clone->IsNullable = n;
@@ -151,7 +151,8 @@ bool RawPointerType::isCompatibleWith(const Type &target) const {
     return false;
   // Raw pointers are unsafe; we relax soul mutability checks to allow
   // easier interfacing with memory management (e.g. malloc/realloc).
-  return PointeeType->isCompatibleWith(*otherPtr->PointeeType);
+  return Type::isCompatibleWith(target) &&
+         PointeeType->isCompatibleWith(*otherPtr->PointeeType);
 }
 
 std::shared_ptr<Type> RawPointerType::withAttributes(bool w, bool n,

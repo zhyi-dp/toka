@@ -1819,28 +1819,28 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
         std::shared_ptr<toka::Type> fieldType =
             toka::Type::fromString(fullType);
 
-        // Determine if the field's soul should be writable based on
-        // inheritance
-        bool isFieldMarked = Field.IsValueMutable;
+        bool isSoulInsulated = fieldType->isPointer() ||
+                               fieldType->isSmartPointer() ||
+                               fieldType->isReference();
 
-        if (isFieldMarked) {
-          // [Fix] If member is marked mutable, it means the SOUL is mutable.
-          // For pointers/refs, this means the Pointee must be writable.
-          if (fieldType->isPointer() || fieldType->isReference() ||
-              fieldType->isSmartPointer()) {
-            if (auto pt = fieldType->getPointeeType()) {
-              pt->IsWritable = true;
-            }
-          } else {
-            fieldType->IsWritable = true;
-          }
+        // 1. Determine Soul Writability
+        bool finalSoulWritable = false;
+        if (Field.IsValueMutable) {
+          finalSoulWritable = true;
+        } else if (Field.IsValueBlocked) {
+          finalSoulWritable = false;
+        } else {
+          // Inherit from object SOUL only if NOT insulated
+          finalSoulWritable = isSoulInsulated ? false : objTypeObj->IsWritable;
         }
 
-        bool finalSoulWritable = objTypeObj->IsWritable;
-        if (isFieldMarked)
-          finalSoulWritable = true;
-        else if (Field.IsValueBlocked)
-          finalSoulWritable = false;
+        // Apply soul writing to the fieldType itself if it's a pointer
+        if (finalSoulWritable) {
+          if (auto pt = fieldType->getPointeeType())
+            pt->IsWritable = true;
+          else
+            fieldType->IsWritable = true;
+        }
 
         if (requestedPrefix.empty() && !m_DisableSoulCollapse) {
           // obj.field (Hat-Off) -> Soul Collapse.
@@ -1877,14 +1877,20 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
             }
           }
 
-          // [Toka 1.3] Inheritance for Handles:
-          // If field is NOT marked (#?!), it inherits handle writability from
-          // object.
-          bool finalHandleWritable = objTypeObj->IsWritable;
-          if (isFieldMarked)
-            finalHandleWritable = result->IsWritable;
-          else if (Field.IsRebindBlocked)
+          // 2. Determine Handle Writability
+          bool finalHandleWritable = false;
+          if (Field.IsRebindBlocked) {
             finalHandleWritable = false;
+          } else if (Field.IsRebindable /* # sigil */ ||
+                     (Field.IsPointerNullable &&
+                      fieldType->isPointer()) /* ?/! implied */) {
+            // Wait, IsPointerNullable is for ? and !.
+            // Actually, IsBlocked or IsRebindable already covers the tag.
+            finalHandleWritable = result->IsWritable;
+          } else {
+            // Default: Inherit Handle Writability from Object Soul
+            finalHandleWritable = objTypeObj->IsWritable;
+          }
 
           // Apply attributes to the resulting handle
           return result->withAttributes(finalHandleWritable,
