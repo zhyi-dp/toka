@@ -532,16 +532,51 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
     return nullptr;
   }
 
+  // Resolve Metadata & IR Type safely
+  std::string memberTypeName = "";
+  llvm::Type *irTy = nullptr;
+  bool isUnion = false;
+
+  if (mem->Object->ResolvedType) {
+    auto soul = mem->Object->ResolvedType;
+    while (soul && (soul->isPointer() || soul->isReference() ||
+                    soul->isSmartPointer())) {
+      soul = soul->getPointeeType();
+    }
+    if (soul && soul->isShape()) {
+      auto stType = std::dynamic_pointer_cast<ShapeType>(soul);
+      if (stType->Decl && stType->Decl->Kind == ShapeKind::Union) {
+        isUnion = true;
+      }
+    }
+  }
+
+  if (!isUnion && !stName.empty() && m_Shapes.count(stName)) {
+    isUnion = (m_Shapes[stName]->Kind == ShapeKind::Union);
+  }
+
   llvm::Value *fieldAddr = nullptr;
-  if (stName.empty() || !m_Shapes.count(stName) ||
-      m_Shapes[stName]->Kind != ShapeKind::Union) {
+  if (!isUnion) {
     fieldAddr = m_Builder.CreateStructGEP(st, objAddr, idx, memberName);
   } else {
     // Union: bitcast base address to the desired member's type.
     // The physical struct 'st' has only one element: [maxSize x i8].
     llvm::Type *destTy = nullptr;
-    const ShapeDecl *sh = m_Shapes[stName];
-    if (idx >= 0 && idx < (int)sh->Members.size()) {
+    const ShapeDecl *sh = nullptr;
+    if (!stName.empty() && m_Shapes.count(stName)) {
+      sh = m_Shapes[stName];
+    } else if (mem->Object->ResolvedType) {
+      auto soul = mem->Object->ResolvedType;
+      while (soul && (soul->isPointer() || soul->isReference() ||
+                      soul->isSmartPointer())) {
+        soul = soul->getPointeeType();
+      }
+      if (soul && soul->isShape()) {
+        sh = std::dynamic_pointer_cast<ShapeType>(soul)->Decl;
+      }
+    }
+
+    if (sh && idx >= 0 && idx < (int)sh->Members.size()) {
       if (sh->Members[idx].ResolvedType) {
         destTy = getLLVMType(sh->Members[idx].ResolvedType);
       } else {
@@ -557,30 +592,33 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
 
   llvm::Value *finalAddr = fieldAddr;
 
-  // Resolve Metadata & IR Type safely
-  std::string memberTypeName = "";
-  llvm::Type *irTy = nullptr;
-  bool isUnion = (!stName.empty() && m_Shapes.count(stName) &&
-                  m_Shapes[stName]->Kind == ShapeKind::Union);
-
   if (!stName.empty() && m_Shapes.count(stName)) {
     const ShapeDecl *sh = m_Shapes[stName];
     if (idx >= 0 && idx < (int)sh->Members.size()) {
       memberTypeName = sh->Members[idx].Type;
-      // [Fix] Always resolve member IR type from ResolvedType or resolveType
       if (sh->Members[idx].ResolvedType)
         irTy = getLLVMType(sh->Members[idx].ResolvedType);
       else
         irTy = resolveType(memberTypeName, false);
     }
+  } else if (mem->Object->ResolvedType) {
+    auto soul = mem->Object->ResolvedType;
+    while (soul && (soul->isPointer() || soul->isReference() ||
+                    soul->isSmartPointer())) {
+      soul = soul->getPointeeType();
+    }
+    if (soul && soul->isShape()) {
+      auto sh = std::dynamic_pointer_cast<ShapeType>(soul)->Decl;
+      if (sh && idx >= 0 && idx < (int)sh->Members.size()) {
+        memberTypeName = sh->Members[idx].Type;
+        if (sh->Members[idx].ResolvedType)
+          irTy = getLLVMType(sh->Members[idx].ResolvedType);
+      }
+    }
   }
 
-  // Fallback / Struct Type
   if (!irTy) {
-    // Safe for Struct/Tuple, UNSAFE for Union with idx > 0
     if (isUnion && idx > 0) {
-      // Should have been handled above or is invalid state (Union LLVM struct
-      // has only 1 element) Default to i8 if something failed
       irTy = llvm::Type::getInt8Ty(m_Context);
     } else {
       irTy = st->getElementType(idx);

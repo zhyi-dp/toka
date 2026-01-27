@@ -348,6 +348,11 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
       if (m_Shapes.count(typeName)) {
         const ShapeDecl *S = m_Shapes[typeName];
+        if (S->Kind == ShapeKind::Union) {
+          // Bare Union: No recursive drop for individual members (reinterpreted
+          // memory)
+          return f;
+        }
         std::cerr << "FOUND SHAPE: " << typeName
                   << " members: " << S->Members.size() << std::endl;
         // Iterate reverse
@@ -841,49 +846,57 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   // Redundant IncRef removed because genExpr (via genVariableExpr) now
   // handle ownership transfer (Acquire) for RValues.
 
-  if (initVal) {
-    if (initVal->getType() != type) {
-      if (initVal->getType()->isPointerTy() && type->isPointerTy()) {
-        initVal = m_Builder.CreateBitCast(initVal, type);
-      } else if (initVal->getType()->isPointerTy() && !type->isPointerTy()) {
-        initVal = m_Builder.CreateLoad(type, initVal);
-      } else if (initVal->getType()->isIntegerTy() && type->isIntegerTy()) {
-        initVal = m_Builder.CreateIntCast(initVal, type, true);
-      } else {
-        if (initVal->getType() != type) {
-          std::string s1 = "Unknown", s2 = "Unknown";
-          if (type) {
-            llvm::raw_string_ostream os1(s1);
-            type->print(os1);
-          }
-          if (initVal) {
-            llvm::raw_string_ostream os2(s2);
-            initVal->getType()->print(os2);
-          }
-          error(var, "Internal Error: Type mismatch in VariableDecl despite "
-                     "Sema: Expected " +
-                         s1 + ", Got " + s2);
-          return nullptr;
-        }
-      }
-
-      if (initVal->getType() != type) {
-        std::string s1 = "Unknown", s2 = "Unknown";
-        if (type) {
-          llvm::raw_string_ostream os1(s1);
-          type->print(os1);
-        }
-        if (initVal) {
-          llvm::raw_string_ostream os2(s2);
-          initVal->getType()->print(os2);
-        }
-
-        error(var, "Internal Error: Type mismatch in VariableDecl despite "
-                   "Sema: Expected " +
-                       s1 + ", Got " + s2);
-        return nullptr;
-      }
+  // [Chapter 6 Extension] Nullable Soul Wrapper for VariableDecl
+  if (initVal && initVal->getType() != type && type->isStructTy() &&
+      type->getStructNumElements() == 2 &&
+      type->getStructElementType(1)->isIntegerTy(1)) {
+    if (initVal->getType() == type->getStructElementType(0)) {
+      llvm::Value *wrapped = llvm::UndefValue::get(type);
+      wrapped = m_Builder.CreateInsertValue(wrapped, initVal, {0});
+      wrapped = m_Builder.CreateInsertValue(
+          wrapped, llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), 1),
+          {1});
+      initVal = wrapped;
+    } else if (dynamic_cast<const NoneExpr *>(var->Init.get()) ||
+               (initVal->getType()->isPointerTy() &&
+                llvm::isa<llvm::ConstantPointerNull>(initVal))) {
+      llvm::Value *wrapped = llvm::UndefValue::get(type);
+      wrapped = m_Builder.CreateInsertValue(
+          wrapped, llvm::Constant::getNullValue(type->getStructElementType(0)),
+          {0});
+      wrapped = m_Builder.CreateInsertValue(
+          wrapped, llvm::ConstantInt::get(llvm::Type::getInt1Ty(m_Context), 0),
+          {1});
+      initVal = wrapped;
     }
+  }
+
+  // Refined implicit casts
+  if (initVal && initVal->getType() != type) {
+    if (initVal->getType()->isPointerTy() && type->isPointerTy()) {
+      initVal = m_Builder.CreateBitCast(initVal, type);
+    } else if (initVal->getType()->isPointerTy() && !type->isPointerTy()) {
+      initVal = m_Builder.CreateLoad(type, initVal);
+    } else if (initVal->getType()->isIntegerTy() && type->isIntegerTy()) {
+      initVal = m_Builder.CreateIntCast(initVal, type, true);
+    }
+  }
+
+  if (initVal && initVal->getType() != type) {
+    std::string s1 = "Unknown", s2 = "Unknown";
+    if (type) {
+      llvm::raw_string_ostream os1(s1);
+      type->print(os1);
+    }
+    if (initVal) {
+      llvm::raw_string_ostream os2(s2);
+      initVal->getType()->print(os2);
+    }
+
+    error(var, "Internal Error: Type mismatch in VariableDecl despite "
+               "Sema: Expected " +
+                   s1 + ", Got " + s2);
+    return nullptr;
   }
 
   if (initVal) {
@@ -1005,7 +1018,14 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
 
     const auto &v = dest->Variables[i];
     std::string vName = Type::stripMorphology(v.Name);
-    llvm::Type *memberTy = st->getElementType(i);
+
+    // [Fix] Union safety for destructuring
+    llvm::Type *memberTy = nullptr;
+    if (st->isOpaque() || st->getNumElements() <= i) {
+      memberTy = llvm::Type::getInt8Ty(m_Context);
+    } else {
+      memberTy = st->getElementType(i);
+    }
 
     llvm::Value *finalVal = nullptr;
     if (v.IsReference) {

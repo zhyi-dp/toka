@@ -2978,14 +2978,35 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
     }
 
     llvm::Value *fieldVal = nullptr;
+
+    // [Fix] ShapeKind Aware Type Lookup
+    llvm::Type *elemTy = nullptr;
+    auto kind = ShapeKind::Struct;
+    if (m_Shapes.count(shapeName)) {
+      kind = m_Shapes[shapeName]->Kind;
+      if (kind == ShapeKind::Union) {
+        auto sh = m_Shapes[shapeName];
+        if (idx >= 0 && idx < (int)sh->Members.size()) {
+          if (sh->Members[idx].ResolvedType)
+            elemTy = getLLVMType(sh->Members[idx].ResolvedType);
+          else
+            elemTy = resolveType(sh->Members[idx].Type, false);
+        }
+      } else {
+        elemTy = st->getElementType(idx);
+      }
+    } else {
+      elemTy = st->getElementType(idx);
+    }
+    if (!elemTy)
+      elemTy = llvm::Type::getInt8Ty(m_Context);
+
     if (dynamic_cast<const UnsetExpr *>(f.second.get())) {
-      llvm::Type *elemTy = st->getElementType(idx);
       fieldVal = elemTy->isPointerTy() ? llvm::Constant::getNullValue(elemTy)
                                        : llvm::UndefValue::get(elemTy);
     } else {
       fieldVal = genExpr(f.second.get()).load(m_Builder);
       // [Chapter 6 Extension] Nullable Soul Wrap for Init
-      llvm::Type *elemTy = st->getElementType(idx);
       if (fieldVal && fieldVal->getType() != elemTy && elemTy->isStructTy() &&
           elemTy->getStructNumElements() == 2 &&
           elemTy->getStructElementType(1)->isIntegerTy(1)) {
