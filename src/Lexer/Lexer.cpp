@@ -455,6 +455,10 @@ Token Lexer::punctuation() {
   case '#':
     return Token{TokenType::TokenWrite, "#", line, col};
   case '?':
+    if (peek() == '?') {
+      advance();
+      return Token{TokenType::DoubleQuestion, "??", line, col};
+    }
     return Token{TokenType::TokenNull, "?", line, col};
   case '$':
     return Token{TokenType::TokenNone, "$", line, col};
