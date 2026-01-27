@@ -279,6 +279,14 @@ void Sema::checkStmt(Stmt *S) {
     m_ControlFlowStack.pop_back();
     clearStmtBorrows();
   } else if (auto *Var = dynamic_cast<VariableDecl *>(S)) {
+    // [Constitutional 1.3] Adversarial Principle: $ is only for contesting
+    // inheritance.
+    if (Var->IsValueBlocked || Var->IsRebindBlocked) {
+      DiagnosticEngine::report(getLoc(Var), DiagID::ERR_REDUNDANT_BLOCK,
+                               Var->Name);
+      HasError = true;
+    }
+
     std::string InitType = "";
     std::shared_ptr<toka::Type> InitTypeObj = nullptr;
     if (Var->Init) {

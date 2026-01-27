@@ -540,6 +540,11 @@ void Sema::checkFunction(FunctionDecl *Fn) {
 
   // Register arguments
   for (auto &Arg : Fn->Args) {
+    if (Arg.IsValueBlocked || Arg.IsRebindBlocked) {
+      DiagnosticEngine::report(getLoc(Fn), DiagID::ERR_REDUNDANT_BLOCK,
+                               Arg.Name);
+      HasError = true;
+    }
     SymbolInfo Info;
     std::string fullType = "";
     // 1. Morphology Sigil (Constitutional 1.3 - Leading)

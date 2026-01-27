@@ -163,6 +163,7 @@ public:
   bool IsShared = false;
   bool IsValueMutable = false;
   bool IsValueNullable = false;
+  bool IsValueBlocked = false; // "$" identifier attribute
   bool HasConstantValue = false;
   uint64_t ConstantValue = 0;
 
@@ -178,6 +179,7 @@ public:
     n->IsShared = IsShared;
     n->IsValueMutable = IsValueMutable;
     n->IsValueNullable = IsValueNullable;
+    n->IsValueBlocked = IsValueBlocked;
     n->HasConstantValue = HasConstantValue;
     n->ConstantValue = ConstantValue;
     n->Loc = Loc;
@@ -242,6 +244,8 @@ public:
   bool IsValueMutable =
       false; // For identifier# (unlikely in Unary op token but consistent)
   bool IsValueNullable = false; // For identifier?
+  bool IsRebindBlocked = false; // For ^$ or *$
+  bool IsValueBlocked = false;  // For identifier$
   // Actually UnaryExpr covers ^, *, ~, etc.
 
   UnaryExpr(TokenType op, std::unique_ptr<Expr> rhs)
@@ -256,6 +260,8 @@ public:
     n->IsRebindable = IsRebindable;
     n->IsValueMutable = IsValueMutable;
     n->IsValueNullable = IsValueNullable;
+    n->IsRebindBlocked = IsRebindBlocked;
+    n->IsValueBlocked = IsValueBlocked;
     n->Loc = Loc;
     n->ResolvedType = ResolvedType;
     return n;
@@ -623,6 +629,7 @@ public:
     uint64_t LiteralVal = 0; // For Literal
     bool IsReference = false;
     bool IsValueMutable = false;
+    bool IsValueBlocked = false;
     std::vector<std::unique_ptr<Pattern>> SubPatterns; // For Decons
 
     Pattern(Kind k) : PatternKind(k) {}
@@ -892,6 +899,7 @@ struct DestructuredVar {
   std::string Name;
   bool IsValueMutable = false;
   bool IsValueNullable = false;
+  bool IsValueBlocked = false;
   bool IsReference = false;
 };
 
@@ -931,6 +939,8 @@ public:
   bool IsValueMutable = false;    // Identifier Attribute # (p#)
   bool IsPointerNullable = false; // Pointer Attribute ? (^?p)
   bool IsValueNullable = false;   // Identifier Attribute ? (p?)
+  bool IsRebindBlocked = false;   // Pointer Attribute $ (^$p)
+  bool IsValueBlocked = false;    // Identifier Attribute $ (p$)
 
   VariableDecl(const std::string &name, std::unique_ptr<Expr> init)
       : Name(name), Init(std::move(init)) {}
@@ -947,8 +957,10 @@ public:
     n->IsConst = IsConst;
     n->IsRebindable = IsRebindable;
     n->IsValueMutable = IsValueMutable; // VariableDecl has this field
+    n->IsValueBlocked = IsValueBlocked;
     n->IsPointerNullable = IsPointerNullable;
     n->IsValueNullable = IsValueNullable;
+    n->IsRebindBlocked = IsRebindBlocked;
     n->Loc = Loc;
     n->ResolvedType = ResolvedType;
     return n;
@@ -989,6 +1001,8 @@ struct ShapeMember {
   bool IsReference = false;
   bool IsValueMutable = false;
   bool IsValueNullable = false;
+  bool IsRebindBlocked = false; // "$" pointer attribute
+  bool IsValueBlocked = false;  // "$" identifier attribute
 
   // For Bare Union (as ...)
   std::vector<ShapeMember> SubMembers;
@@ -1095,6 +1109,8 @@ public:
     bool IsValueMutable = false;
     bool IsPointerNullable = false;
     bool IsValueNullable = false;
+    bool IsRebindBlocked = false; // "$" pointer attribute
+    bool IsValueBlocked = false;  // "$" identifier attribute
 
     std::shared_ptr<toka::Type> ResolvedType;
   };
@@ -1161,6 +1177,8 @@ public:
     bool IsValueMutable = false;
     bool IsPointerNullable = false;
     bool IsValueNullable = false;
+    bool IsRebindBlocked = false;
+    bool IsValueBlocked = false;
   };
   std::string Name;
   std::vector<Arg> Args;

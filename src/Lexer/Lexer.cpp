@@ -202,7 +202,8 @@ Token Lexer::identifier() {
     else if (match('!')) {
       t.HasWrite = true;
       t.HasNull = true;
-    } else if (match('$')) { /* Default */
+    } else if (match('$')) {
+      t.IsBlocked = true;
     }
 
     // Update text to include suffix for debugging?
@@ -277,6 +278,9 @@ Token Lexer::punctuation() {
       t.IsSwappablePtr = true;
       t.HasNull = true;
       t.Text += "!";
+    } else if (match('$')) {
+      t.IsBlocked = true;
+      t.Text += "$";
     }
     return t;
   }
@@ -317,6 +321,9 @@ Token Lexer::punctuation() {
         t.IsSwappablePtr = true;
         t.HasNull = true;
         t.Text += "!";
+      } else if (match('$')) {
+        t.IsBlocked = true;
+        t.Text += "$";
       }
       return t;
     }
@@ -332,6 +339,9 @@ Token Lexer::punctuation() {
       t.IsSwappablePtr = true;
       t.HasNull = true;
       t.Text += "!";
+    } else if (match('$')) {
+      t.IsBlocked = true;
+      t.Text += "$";
     }
     return t;
   }
@@ -384,6 +394,9 @@ Token Lexer::punctuation() {
         t.IsSwappablePtr = true;
         t.HasNull = true;
         t.Text += "!";
+      } else if (match('$')) {
+        t.IsBlocked = true;
+        t.Text += "$";
       }
       return t;
     }

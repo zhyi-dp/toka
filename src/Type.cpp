@@ -26,6 +26,8 @@ bool Type::equals(const toka::Type &other) const {
     return false;
   if (IsNullable != other.IsNullable)
     return false;
+  if (IsBlocked != other.IsBlocked)
+    return false;
   return true;
 }
 
@@ -44,21 +46,30 @@ bool Type::isCompatibleWith(const Type &target) const {
 
 // --- Attribute Helpers ---
 template <typename T>
-std::shared_ptr<Type> cloneWithAttrs(const T *original, bool w, bool n) {
+std::shared_ptr<Type> cloneWithAttrs(const T *original, bool w, bool n,
+                                     bool b = false) {
   auto clone = std::make_shared<T>(*original);
-  clone->IsWritable = w;
-  clone->IsNullable = n;
+  clone->IsBlocked = b || original->IsBlocked;
+  if (clone->IsBlocked) {
+    clone->IsWritable = false;
+    clone->IsNullable = false;
+  } else {
+    clone->IsWritable = w;
+    clone->IsNullable = n;
+  }
   return clone;
 }
 
 // --- Implementations ---
 
-std::shared_ptr<Type> VoidType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> VoidType::withAttributes(bool w, bool n, bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
 std::string PrimitiveType::toString() const {
   std::string s = Name;
+  if (IsBlocked)
+    s += "$";
   if (IsWritable && IsNullable)
     s += "!";
   else {
@@ -77,8 +88,9 @@ bool PrimitiveType::equals(const Type &other) const {
   return otherPrim && Name == otherPrim->Name;
 }
 
-std::shared_ptr<Type> PrimitiveType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> PrimitiveType::withAttributes(bool w, bool n,
+                                                    bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
 bool PrimitiveType::isCompatibleWith(const Type &target) const {
@@ -127,6 +139,8 @@ std::string RawPointerType::toString() const {
       s += "?";
     if (IsWritable)
       s += "#";
+    if (IsBlocked)
+      s += "$";
   }
   return s + PointeeType->toString();
 }
@@ -140,8 +154,9 @@ bool RawPointerType::isCompatibleWith(const Type &target) const {
   return PointeeType->isCompatibleWith(*otherPtr->PointeeType);
 }
 
-std::shared_ptr<Type> RawPointerType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> RawPointerType::withAttributes(bool w, bool n,
+                                                     bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
 std::string UniquePointerType::toString() const {
@@ -153,6 +168,8 @@ std::string UniquePointerType::toString() const {
       s += "?";
     if (IsWritable)
       s += "#";
+    if (IsBlocked)
+      s += "$";
   }
   return s + PointeeType->toString();
 }
@@ -168,8 +185,9 @@ bool UniquePointerType::isCompatibleWith(const Type &target) const {
   return false;
 }
 
-std::shared_ptr<Type> UniquePointerType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> UniquePointerType::withAttributes(bool w, bool n,
+                                                        bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
 std::string SharedPointerType::toString() const {
@@ -181,6 +199,8 @@ std::string SharedPointerType::toString() const {
       s += "?";
     if (IsWritable)
       s += "#";
+    if (IsBlocked)
+      s += "$";
   }
   return s + PointeeType->toString();
 }
@@ -199,8 +219,9 @@ bool SharedPointerType::isCompatibleWith(const Type &target) const {
   return false;
 }
 
-std::shared_ptr<Type> SharedPointerType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> SharedPointerType::withAttributes(bool w, bool n,
+                                                        bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
 std::string ReferenceType::toString() const {
@@ -212,6 +233,8 @@ std::string ReferenceType::toString() const {
       s += "?";
     if (IsWritable)
       s += "#";
+    if (IsBlocked)
+      s += "$";
   }
   return s + PointeeType->toString();
 }
@@ -227,8 +250,9 @@ bool ReferenceType::isCompatibleWith(const Type &target) const {
   return false;
 }
 
-std::shared_ptr<Type> ReferenceType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> ReferenceType::withAttributes(bool w, bool n,
+                                                    bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
 // --- Composite ---
@@ -250,6 +274,8 @@ std::string ArrayType::toString() const {
       s += "#";
     if (IsNullable)
       s += "?";
+    if (IsBlocked)
+      s += "$";
   }
   return s;
 }
@@ -270,8 +296,8 @@ bool ArrayType::isCompatibleWith(const Type &target) const {
          ElementType->isCompatibleWith(*otherArr->ElementType);
 }
 
-std::shared_ptr<Type> ArrayType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> ArrayType::withAttributes(bool w, bool n, bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
 std::string ShapeType::toString() const {
@@ -292,6 +318,8 @@ std::string ShapeType::toString() const {
       s += "#";
     if (IsNullable)
       s += "?";
+    if (IsBlocked)
+      s += "$";
   }
   return s;
 }
@@ -315,8 +343,8 @@ bool ShapeType::isCompatibleWith(const Type &target) const {
   return false;
 }
 
-std::shared_ptr<Type> ShapeType::withAttributes(bool w, bool n) const {
-  auto clone = cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> ShapeType::withAttributes(bool w, bool n, bool b) const {
+  auto clone = cloneWithAttrs(this, w, n, b);
   if (Decl)
     std::dynamic_pointer_cast<ShapeType>(clone)->resolve(Decl);
   return clone;
@@ -344,6 +372,8 @@ std::string TupleType::toString() const {
       s += "#";
     if (IsNullable)
       s += "?";
+    if (IsBlocked)
+      s += "$";
   }
   return s;
 }
@@ -374,8 +404,8 @@ bool TupleType::isCompatibleWith(const Type &target) const {
   return true;
 }
 
-std::shared_ptr<Type> TupleType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> TupleType::withAttributes(bool w, bool n, bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
 std::string FunctionType::toString() const {
@@ -418,12 +448,14 @@ bool FunctionType::isCompatibleWith(const Type &target) const {
   return true;
 }
 
-std::shared_ptr<Type> FunctionType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> FunctionType::withAttributes(bool w, bool n,
+                                                   bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
-std::shared_ptr<Type> UnresolvedType::withAttributes(bool w, bool n) const {
-  return cloneWithAttrs(this, w, n);
+std::shared_ptr<Type> UnresolvedType::withAttributes(bool w, bool n,
+                                                     bool b) const {
+  return cloneWithAttrs(this, w, n, b);
 }
 
 // --- Static Factory (The Parser) ---
@@ -491,6 +523,7 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
   // Parse Suffixes (applies to the OUTERMOST type being constructed)
   bool isWritable = false;
   bool isNullable = false;
+  bool isBlocked = false;
   while (!s.empty()) {
     char back = s.back();
     if (back == '#') {
@@ -501,6 +534,9 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
       s.pop_back();
     } else if (back == '!') {
       isWritable = isNullable = true;
+      s.pop_back();
+    } else if (back == '$') {
+      isBlocked = true;
       s.pop_back();
     } else if (back == ' ') {
       s.pop_back();
@@ -516,6 +552,7 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     size_t offset = 1;
     bool ptrNullable = false;
     bool ptrWritable = false;
+    bool ptrBlocked = false;
     while (offset < s.size()) {
       if (s[offset] == '?') {
         ptrNullable = true;
@@ -526,13 +563,16 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
       } else if (s[offset] == '!') {
         ptrNullable = ptrWritable = true;
         offset++;
+      } else if (s[offset] == '$') {
+        ptrBlocked = true;
+        offset++;
       } else
         break;
     }
     auto pointee = Type::fromString(s.substr(offset));
     // Duality: the outer suffixes stripped earlier belong to the soul
-    if (isWritable || isNullable) {
-      pointee = pointee->withAttributes(isWritable, isNullable);
+    if (isWritable || isNullable || isBlocked) {
+      pointee = pointee->withAttributes(isWritable, isNullable, isBlocked);
     }
 
     std::shared_ptr<PointerType> ptr;
@@ -548,6 +588,7 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     // Identity: the attributes following the sigil belong to the handle
     ptr->IsNullable = ptrNullable;
     ptr->IsWritable = ptrWritable;
+    ptr->IsBlocked = ptrBlocked;
     return ptr;
   }
 
@@ -567,6 +608,7 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
       auto arr = std::make_shared<ArrayType>(elem, size, symSize);
       arr->IsWritable = isWritable;
       arr->IsNullable = isNullable;
+      arr->IsBlocked = isBlocked;
       return arr;
     }
   }
@@ -579,6 +621,7 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     auto prim = std::make_shared<PrimitiveType>(s);
     prim->IsWritable = isWritable;
     prim->IsNullable = isNullable;
+    prim->IsBlocked = isBlocked;
     return prim;
   }
 
@@ -625,6 +668,7 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     auto tup = std::make_shared<TupleType>(std::move(elements));
     tup->IsWritable = isWritable;
     tup->IsNullable = isNullable;
+    tup->IsBlocked = isBlocked;
     return tup;
   }
 
@@ -660,6 +704,7 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
   auto shape = std::make_shared<ShapeType>(baseName, genericArgs);
   shape->IsWritable = isWritable;
   shape->IsNullable = isNullable;
+  shape->IsBlocked = isBlocked;
   return shape;
 }
 

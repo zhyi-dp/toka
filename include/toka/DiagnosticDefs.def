@@ -87,6 +87,7 @@ DIAG(ERR_LIFETIME_UNION_REQUIRED, Error, "E0454", "Returning reference to parame
 DIAG(ERR_ESCAPE_LOCAL,           Error, "E0455", "Returning reference to local variable '{}' is unsafe")
 DIAG(ERR_BORROW_LIFETIME,        Error, "E0456", "Object '{}' (lived longer) cannot depend on '{}' (lived shorter)")
 DIAG(ERR_LIFETIME_UNION_VIOLATION, Error, "E0457", "Lifetime union violation: '{}' does not live long enough")
+DIAG(ERR_REDUNDANT_BLOCK,        Error, "E0460", "Redundant inherent restriction '$' on '{}'; it is already immutable by default")
 
 // --- Sema: Memory Safety ---
 DIAG(ERR_UNSAFE_ALLOC_CTX,   Error, "E0501", "Operation 'alloc' is only allowed in unsafe context")

@@ -370,6 +370,8 @@ private:
       Signature += "?";
     if (Arg.IsRebindable)
       Signature += "#";
+    if (Arg.IsRebindBlocked)
+      Signature += "$";
 
     // 3. Soul Type (Base Name)
     Signature += toka::Type::stripPrefixes(getTypeName(Arg));
@@ -379,6 +381,8 @@ private:
       Signature += "?";
     if (Arg.IsValueMutable)
       Signature += "#";
+    if (Arg.IsValueBlocked)
+      Signature += "$";
 
     return Signature;
   }
@@ -395,6 +399,9 @@ private:
     else if (Arg.HasPointer)
       Signature += "*";
 
+    if (Arg.IsRebindBlocked)
+      Signature += "$";
+
     Signature += toka::Type::stripPrefixes(Arg.Type);
 
     // Soul/Object Attributes (Suffix Zone)
@@ -402,6 +409,8 @@ private:
       Signature += "?";
     if (Arg.IsValueMutable)
       Signature += "#";
+    if (Arg.IsValueBlocked)
+      Signature += "$";
 
     return Signature;
   }

@@ -98,6 +98,7 @@ std::unique_ptr<MatchArm::Pattern> Parser::parsePattern() {
     p->Name = name;
     p->IsReference = isRef;
     p->IsValueMutable = nameTok.HasWrite;
+    p->IsValueBlocked = nameTok.IsBlocked;
     return p;
   }
 
@@ -229,6 +230,8 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     node->IsRebindable = tok.IsSwappablePtr;
     node->IsValueMutable = tok.HasWrite;
     node->IsValueNullable = tok.HasNull;
+    node->IsRebindBlocked = tok.IsBlocked;
+    node->IsValueBlocked = tok.IsBlocked;
     node->setLocation(tok, m_CurrentFile);
     return node;
   }
@@ -302,6 +305,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     auto node = std::make_unique<VariableExpr>("self");
     node->IsValueMutable = tok.HasWrite;
     node->IsValueNullable = tok.HasNull;
+    node->IsValueBlocked = tok.IsBlocked;
     node->setLocation(tok, m_CurrentFile);
     expr = std::move(node);
   } else if (match(TokenType::KwUnsafe)) {
@@ -654,6 +658,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       // var->IsNullable = name.HasNull; // Deprecated
       var->IsValueMutable = name.HasWrite;
       var->IsValueNullable = name.HasNull;
+      var->IsValueBlocked = name.IsBlocked;
       expr = std::move(var);
     }
   } else {

@@ -100,6 +100,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
         m.Name = nameTok.Text;
         m.IsValueMutable = nameTok.HasWrite;
         m.IsValueNullable = nameTok.HasNull;
+        m.IsValueBlocked = nameTok.IsBlocked;
         consume(TokenType::Colon, "Expected ':'");
         m.Type = parseTypeString();
       } else {
@@ -144,6 +145,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           v.Name = nameTok.Text;
           v.IsValueMutable = nameTok.HasWrite;
           v.IsValueNullable = nameTok.HasNull;
+          v.IsValueBlocked = nameTok.IsBlocked;
           consume(TokenType::Colon, "Expected ':'");
           v.Type = parseTypeString();
         } else {
@@ -200,6 +202,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           std::string prefixType = "";
           if (match(TokenType::Star)) {
             m.HasPointer = true;
+            m.IsRebindBlocked = previous().IsBlocked;
             prefixType = "*";
             if (previous().HasNull)
               prefixType += "?";
@@ -207,6 +210,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
               prefixType += "!";
           } else if (match(TokenType::Caret)) {
             m.IsUnique = true;
+            m.IsRebindBlocked = previous().IsBlocked;
             prefixType = "^";
             if (previous().HasNull)
               prefixType += "?";
@@ -214,6 +218,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
               prefixType += "!";
           } else if (match(TokenType::Tilde)) {
             m.IsShared = true;
+            m.IsRebindBlocked = previous().IsBlocked;
             prefixType = "~";
             if (previous().HasNull)
               prefixType += "?";
@@ -221,6 +226,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
               prefixType += "!";
           } else if (match(TokenType::Ampersand)) {
             m.IsReference = true;
+            m.IsRebindBlocked = previous().IsBlocked;
             prefixType = "&";
             if (previous().HasNull)
               prefixType += "?";
@@ -232,6 +238,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           m.Name = nameTok.Text;
           m.IsValueMutable = nameTok.HasWrite;
           m.IsValueNullable = nameTok.HasNull;
+          m.IsValueBlocked = nameTok.IsBlocked;
           consume(TokenType::Colon, "Expected ':'");
 
           m.Type = prefixType; // Start with prefix
@@ -323,6 +330,9 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
           // arg.IsMutable = true; // Deprecated
           arg.IsValueMutable = true;
         }
+        if (previous().IsBlocked) {
+          arg.IsValueBlocked = true;
+        }
 
         // [Fix] Allow explicit type annotation: self: Type
         if (match(TokenType::Colon)) {
@@ -342,17 +352,20 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
 
       bool isRebindable = false;
       bool isPtrNullable = false;
+      bool isRebindBlocked = false;
 
       if (match(TokenType::Caret)) {
         isUnique = true;
         Token t = previous();
         isRebindable = t.IsSwappablePtr;
         isPtrNullable = t.HasNull;
+        isRebindBlocked = t.IsBlocked;
       } else if (check(TokenType::Star)) {
         Token t = advance();
         hasPointer = true;
         isRebindable = t.IsSwappablePtr;
         isPtrNullable = t.HasNull;
+        isRebindBlocked = t.IsBlocked;
         if (t.IsSwappablePtr)
           isRef = true; // Legacy support? *# implies rebindable pointer,
                         // usually by reference
@@ -361,6 +374,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
         Token t = previous();
         isRebindable = t.IsSwappablePtr;
         isPtrNullable = t.HasNull;
+        isRebindBlocked = t.IsBlocked;
       }
       Token argName;
       if (check(TokenType::Identifier) || check(TokenType::KwSelf) ||
@@ -387,8 +401,10 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
       arg.IsShared = isShared;
       arg.IsRebindable = isRebindable; // Captured from token
       arg.IsPointerNullable = isPtrNullable;
+      arg.IsRebindBlocked = isRebindBlocked;
       arg.IsValueMutable = argName.HasWrite;
       arg.IsValueNullable = argName.HasNull;
+      arg.IsValueBlocked = argName.IsBlocked;
 
       args.push_back(std::move(arg));
     } while (match(TokenType::Comma));

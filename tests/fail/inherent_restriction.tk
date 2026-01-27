@@ -1,0 +1,16 @@
+shape Data(
+    x: i32,
+    y$: i32
+)
+
+fn foo(a$: i32) { // Error: Redundant inherent restriction '$' on 'a'
+}
+
+fn main() -> i32 {
+    auto d# = Data(x=1, y=2)
+    d#.y = 20 // Error: Cannot modify immutable entity 'd.y'
+    
+    auto z$ = 10 // Error: Redundant inherent restriction '$' on 'z'
+    
+    return 0
+}

@@ -35,29 +35,34 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
   bool hasPointer = false;
   bool isUnique = false;
   bool isShared = false;
-  bool isRebindable = false;
   bool isPtrNullable = false;
+  bool isRebindable = false;
+  bool isRebindBlocked = false;
 
   if (match(TokenType::Ampersand)) {
     isRef = true;
     Token tok = previous();
     isRebindable = tok.IsSwappablePtr;
     isPtrNullable = tok.HasNull;
+    isRebindBlocked = tok.IsBlocked;
   } else if (match(TokenType::Caret)) {
     isUnique = true;
     Token tok = previous();
     isRebindable = tok.IsSwappablePtr;
     isPtrNullable = tok.HasNull;
+    isRebindBlocked = tok.IsBlocked;
   } else if (match(TokenType::Star)) {
     hasPointer = true;
     Token tok = previous();
     isRebindable = tok.IsSwappablePtr;
     isPtrNullable = tok.HasNull;
+    isRebindBlocked = tok.IsBlocked;
   } else if (match(TokenType::Tilde)) {
     isShared = true;
     Token tok = previous();
     isRebindable = tok.IsSwappablePtr;
     isPtrNullable = tok.HasNull;
+    isRebindBlocked = tok.IsBlocked;
   }
 
   // Check for positional destructuring: let Type(v1, v2) = ... or let (v1, v2)
@@ -73,7 +78,8 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
     while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
       bool isRef = match(TokenType::Ampersand);
       Token varName = consume(TokenType::Identifier, "Expected variable name");
-      vars.push_back({varName.Text, varName.HasWrite, varName.HasNull, isRef});
+      vars.push_back({varName.Text, varName.HasWrite, varName.HasNull,
+                      varName.IsBlocked, isRef});
       if (!match(TokenType::Comma))
         break;
     }
@@ -114,8 +120,10 @@ std::unique_ptr<Stmt> Parser::parseVariableDecl(bool isPub) {
   // Explicit properties mapping
   node->IsValueMutable = name.HasWrite;
   node->IsValueNullable = name.HasNull;
+  node->IsValueBlocked = name.IsBlocked;
   node->IsRebindable = isRebindable;
   node->IsPointerNullable = isPtrNullable;
+  node->IsRebindBlocked = isRebindBlocked;
   node->TypeName = typeName;
 
   expectEndOfStatement();

@@ -1836,7 +1836,11 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
           }
         }
 
-        bool finalSoulWritable = isFieldMarked ? true : objTypeObj->IsWritable;
+        bool finalSoulWritable = objTypeObj->IsWritable;
+        if (isFieldMarked)
+          finalSoulWritable = true;
+        else if (Field.IsValueBlocked)
+          finalSoulWritable = false;
 
         if (requestedPrefix.empty() && !m_DisableSoulCollapse) {
           // obj.field (Hat-Off) -> Soul Collapse.
@@ -1876,8 +1880,11 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
           // [Toka 1.3] Inheritance for Handles:
           // If field is NOT marked (#?!), it inherits handle writability from
           // object.
-          bool finalHandleWritable =
-              isFieldMarked ? result->IsWritable : objTypeObj->IsWritable;
+          bool finalHandleWritable = objTypeObj->IsWritable;
+          if (isFieldMarked)
+            finalHandleWritable = result->IsWritable;
+          else if (Field.IsRebindBlocked)
+            finalHandleWritable = false;
 
           // Apply attributes to the resulting handle
           return result->withAttributes(finalHandleWritable,

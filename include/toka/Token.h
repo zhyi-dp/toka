@@ -168,6 +168,7 @@ struct Token {
   bool HasWrite = false;
   bool HasNull = false;
   bool IsSwappablePtr = false;   // "swappable" property for pointers
+  bool IsBlocked = false;        // "$" attribute for inherent restriction
   bool HasNewlineBefore = false; // Support optional semicolons
 
   std::string toString() const {

@@ -1,0 +1,24 @@
+import std/io::println
+
+shape Data(
+    x: i32,
+    y$: i32  // Restricted: Permanently read-only
+)
+
+fn main() -> i32 {
+    // 1. Initializing with $
+    auto d# = Data(x=1, y=2)
+    
+    // 2. Modify inheritable field
+    d#.x = 10 // OK: Bloodline inheritance
+    
+    // 3. Access y
+    auto val = d.y
+    if val != 2 {
+        println("Error: y should be 2")
+        return 1
+    }
+
+    println("Success: Inherent restriction pass test")
+    return 0
+}

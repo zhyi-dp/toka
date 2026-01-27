@@ -53,6 +53,7 @@ public:
   Kind typeKind;
   bool IsWritable = false; // '#' (Content mutation)
   bool IsNullable = false; // '?' (Content nullability)
+  bool IsBlocked = false;  // '$' (Inherent restriction)
 
   Type(Kind k) : typeKind(k) {}
   virtual ~Type() = default;
@@ -91,8 +92,8 @@ public:
   virtual std::shared_ptr<Type> getArrayElementType() const { return nullptr; }
 
   // Clone with new attributes
-  virtual std::shared_ptr<Type> withAttributes(bool writable,
-                                               bool nullable) const = 0;
+  virtual std::shared_ptr<Type> withAttributes(bool writable, bool nullable,
+                                               bool blocked = false) const = 0;
 
   // Static Factory for String Parsing (The Bridge)
   static std::shared_ptr<Type> fromString(const std::string &typeStr);
@@ -119,7 +120,8 @@ class VoidType : public Type {
 public:
   VoidType() : Type(Void) {}
   std::string toString() const override { return "void"; }
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
 };
 
 class PrimitiveType : public Type {
@@ -128,7 +130,8 @@ public:
   PrimitiveType(const std::string &name) : Type(Primitive), Name(name) {}
   std::string toString() const override;
   bool equals(const Type &other) const override;
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
   bool isCompatibleWith(const Type &target) const override;
 
   bool isBoolean() const override { return Name == "bool"; }
@@ -170,7 +173,8 @@ public:
   RawPointerType(std::shared_ptr<Type> pointee)
       : PointerType(RawPtr, pointee) {}
   std::string toString() const override;
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
   bool isCompatibleWith(const Type &target) const override;
   Morphology getMorphology() const override { return Morphology::Raw; }
 };
@@ -180,7 +184,8 @@ public:
   UniquePointerType(std::shared_ptr<Type> pointee)
       : PointerType(UniquePtr, pointee) {}
   std::string toString() const override;
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
   bool isCompatibleWith(const Type &target) const override;
   Morphology getMorphology() const override { return Morphology::Unique; }
 };
@@ -190,7 +195,8 @@ public:
   SharedPointerType(std::shared_ptr<Type> pointee)
       : PointerType(SharedPtr, pointee) {}
   std::string toString() const override;
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
   bool isCompatibleWith(const Type &target) const override;
   Morphology getMorphology() const override { return Morphology::Shared; }
 };
@@ -200,7 +206,8 @@ public:
   ReferenceType(std::shared_ptr<Type> pointee)
       : PointerType(Reference, pointee) {}
   std::string toString() const override;
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
   bool isCompatibleWith(const Type &target) const override;
 };
 
@@ -217,7 +224,8 @@ public:
         SymbolicSize(std::move(sym)) {}
   std::string toString() const override;
   bool equals(const Type &other) const override;
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
   bool isCompatibleWith(const Type &target) const override;
   std::shared_ptr<Type> getArrayElementType() const override {
     return ElementType;
@@ -236,7 +244,8 @@ public:
   bool isResolved() const { return Decl != nullptr; }
   std::string toString() const override;
   bool equals(const Type &other) const override;
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
   bool isCompatibleWith(const Type &target) const override;
   std::string getSoulName() const override { return Name; }
 };
@@ -249,7 +258,8 @@ public:
       : Type(Tuple), Elements(std::move(elems)) {}
   std::string toString() const override;
   bool equals(const Type &other) const override;
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
   bool isCompatibleWith(const Type &target) const override;
 };
 
@@ -266,7 +276,8 @@ public:
 
   std::string toString() const override;
   bool equals(const Type &other) const override;
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
   bool isCompatibleWith(const Type &target) const override;
 };
 
@@ -281,7 +292,8 @@ public:
   bool equals(const Type &other) const override {
     return false;
   } // Should resolve first
-  std::shared_ptr<Type> withAttributes(bool w, bool n) const override;
+  std::shared_ptr<Type> withAttributes(bool w, bool n,
+                                       bool b = false) const override;
 };
 
 } // namespace toka
