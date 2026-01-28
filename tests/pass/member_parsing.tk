@@ -4,7 +4,7 @@ import core/traits::{@encap}
 import std/debug::assert
 
 shape Point(
-    x: i32,
+    x: i32 = 0,
     y: i32
 )
 shape Node(

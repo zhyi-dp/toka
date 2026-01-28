@@ -1,0 +1,39 @@
+import std/io::println
+
+shape Point(
+    x: i32 = 10,
+    y: i32 = 20
+)
+
+fn main() -> i32 {
+    // 1. All default values
+    auto p1 = Point()
+    if p1.x != 10 || p1.y != 20 {
+        println("Fail 1: p1.x={}, p1.y={}", p1.x, p1.y)
+        return 1
+    }
+    
+    // 2. Override x
+    auto p2 = Point(x = 100)
+    if p2.x != 100 || p2.y != 20 {
+        println("Fail 2: p2.x={}, p2.y={}", p2.x, p2.y)
+        return 2
+    }
+    
+    // 3. Override y
+    auto p3 = Point(y = 200)
+    if p3.x != 10 || p3.y != 200 {
+        println("Fail 3: p3.x={}, p3.y={}", p3.x, p3.y)
+        return 3
+    }
+    
+    // 4. Positional arguments with default
+    auto p4 = Point(0)
+    if p4.x != 0 || p4.y != 20 {
+        println("Fail 4: p4.x={}, p4.y={}", p4.x, p4.y)
+        return 4
+    }
+
+    println("Shape default values test passed!")
+    return 0
+}

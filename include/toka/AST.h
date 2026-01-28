@@ -1038,6 +1038,62 @@ struct ShapeMember {
 
   // Resolution Cache from Sema
   std::shared_ptr<toka::Type> ResolvedType = nullptr;
+  std::unique_ptr<Expr> DefaultValue = nullptr;
+
+  ShapeMember() = default;
+  ShapeMember(ShapeMember &&) = default;
+  ShapeMember &operator=(ShapeMember &&) = default;
+
+  ShapeMember(const ShapeMember &other) {
+    Name = other.Name;
+    Type = other.Type;
+    TagValue = other.TagValue;
+    HasPointer = other.HasPointer;
+    IsUnique = other.IsUnique;
+    IsShared = other.IsShared;
+    IsReference = other.IsReference;
+    IsValueMutable = other.IsValueMutable;
+    IsValueNullable = other.IsValueNullable;
+    IsRebindable = other.IsRebindable;
+    IsPointerNullable = other.IsPointerNullable;
+    IsRebindBlocked = other.IsRebindBlocked;
+    IsValueBlocked = other.IsValueBlocked;
+    SubMembers = other.SubMembers;
+    SubKind = other.SubKind;
+    ResolvedType = other.ResolvedType;
+    if (other.DefaultValue) {
+      DefaultValue = std::unique_ptr<Expr>(
+          static_cast<Expr *>(other.DefaultValue->clone().release()));
+    }
+  }
+
+  ShapeMember &operator=(const ShapeMember &other) {
+    if (this == &other)
+      return *this;
+    Name = other.Name;
+    Type = other.Type;
+    TagValue = other.TagValue;
+    HasPointer = other.HasPointer;
+    IsUnique = other.IsUnique;
+    IsShared = other.IsShared;
+    IsReference = other.IsReference;
+    IsValueMutable = other.IsValueMutable;
+    IsValueNullable = other.IsValueNullable;
+    IsRebindable = other.IsRebindable;
+    IsPointerNullable = other.IsPointerNullable;
+    IsRebindBlocked = other.IsRebindBlocked;
+    IsValueBlocked = other.IsValueBlocked;
+    SubMembers = other.SubMembers;
+    SubKind = other.SubKind;
+    ResolvedType = other.ResolvedType;
+    if (other.DefaultValue) {
+      DefaultValue = std::unique_ptr<Expr>(
+          static_cast<Expr *>(other.DefaultValue->clone().release()));
+    } else {
+      DefaultValue = nullptr;
+    }
+    return *this;
+  }
 };
 
 class ShapeDecl : public ASTNode {

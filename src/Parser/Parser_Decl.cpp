@@ -138,7 +138,15 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           isUnion = true;
           break;
         }
-        if (t == TokenType::Pipe || t == TokenType::Equal) {
+        if (t == TokenType::Pipe) {
+          isEnum = true;
+          break;
+        }
+        if (t == TokenType::Colon) {
+          isEnum = false;
+          break;
+        }
+        if (t == TokenType::Equal) {
           isEnum = true;
           break;
         }
@@ -290,6 +298,9 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           m.Type = "";
         }
         m.Type += parseTypeString();
+        if (match(TokenType::Equal)) {
+          m.DefaultValue = parseExpr();
+        }
         members.push_back(std::move(m));
         if (!check(TokenType::RParen))
           match(TokenType::Comma);

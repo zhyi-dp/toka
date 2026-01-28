@@ -3416,6 +3416,47 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         }
         argIdx++;
       }
+
+      // Inject missing defaults for CallExpr constructor
+      for (const auto &M : Sh->Members) {
+        if (!providedFields.count(M.Name)) {
+          if (M.DefaultValue) {
+            auto cloned = std::unique_ptr<Expr>(
+                static_cast<Expr *>(M.DefaultValue->clone().release()));
+            auto expectedType = M.ResolvedType ? M.ResolvedType
+                                               : toka::Type::fromString(M.Type);
+            auto valType = checkExpr(cloned.get(), expectedType);
+
+            if (isTypeCompatible(expectedType, valType) &&
+                !expectedType->equals(*valType)) {
+              auto origLoc = cloned->Loc;
+              cloned = std::make_unique<CastExpr>(std::move(cloned),
+                                                  expectedType->toString());
+              cloned->Loc = origLoc;
+              cloned->ResolvedType = expectedType;
+              valType = expectedType;
+            }
+
+            if (!isTypeCompatible(expectedType, valType)) {
+              error(Call, "Type mismatch for injected default field '" +
+                              M.Name + "': expected " +
+                              expectedType->toString() + ", got " +
+                              valType->toString());
+            }
+
+            // Wrap in BinaryExpr(=) to make it a named arg for CodeGen
+            auto nameVar = std::make_unique<VariableExpr>(M.Name);
+            auto bin = std::make_unique<BinaryExpr>("=", std::move(nameVar),
+                                                    std::move(cloned));
+            Call->Args.push_back(std::move(bin));
+            providedFields.insert(M.Name);
+          } else {
+            error(Call, "Missing field '" + M.Name + "' in constructor for '" +
+                            Sh->Name + "'");
+          }
+        }
+      }
+
       auto res = toka::Type::fromString(Sh->Name);
 
       if (TypeAliasMap.count(OriginalName) &&
@@ -3981,7 +4022,39 @@ Sema::checkStructInit(InitStructExpr *Init, ShapeDecl *SD,
         !providedFields.count("~" + defField.Name) &&
         !providedFields.count("&" + defField.Name) &&
         !providedFields.count("^?" + defField.Name)) {
-      error(Init, DiagID::ERR_MISSING_MEMBER, defField.Name, Init->ShapeName);
+      if (defField.DefaultValue) {
+        // Inject default value
+        auto cloned = std::unique_ptr<Expr>(
+            static_cast<Expr *>(defField.DefaultValue->clone().release()));
+
+        auto memberTypeObj = defField.ResolvedType;
+        if (!memberTypeObj)
+          memberTypeObj = toka::Type::fromString(defField.Type);
+
+        std::shared_ptr<toka::Type> exprTypeObj =
+            checkExpr(cloned.get(), memberTypeObj);
+        memberMasks[defField.Name] = m_LastInitMask;
+
+        if (isTypeCompatible(memberTypeObj, exprTypeObj) &&
+            !memberTypeObj->equals(*exprTypeObj)) {
+          auto origLoc = cloned->Loc;
+          cloned = std::make_unique<CastExpr>(std::move(cloned),
+                                              memberTypeObj->toString());
+          cloned->Loc = origLoc;
+          cloned->ResolvedType = memberTypeObj;
+          exprTypeObj = memberTypeObj;
+        }
+
+        if (!isTypeCompatible(memberTypeObj, exprTypeObj)) {
+          error(Init, DiagID::ERR_MEMBER_TYPE_MISMATCH, defField.Name,
+                memberTypeObj->toString(), exprTypeObj->toString());
+        }
+
+        providedFields.insert(defField.Name);
+        Init->Members.push_back({defField.Name, std::move(cloned)});
+      } else {
+        error(Init, DiagID::ERR_MISSING_MEMBER, defField.Name, Init->ShapeName);
+      }
     }
   }
 
