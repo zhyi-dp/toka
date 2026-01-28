@@ -806,13 +806,43 @@ void Sema::analyzeShapes(Module &M) {
       HasError = true;
     }
 
-    /*
-        if (props.HasManualDrop && !hasExplicitDrop) {
-          DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RESOURCE,
-                                   S->Name);
-          HasError = true;
-        }
-    */
+    if (props.HasDrop && !hasExplicitDrop) {
+      // Synthesize an implicit drop implementation at AST level
+      // so CodeGen will naturally pick it up and generate recursive member
+      // drops.
+
+      // 1. Create Arg: self#
+      FunctionDecl::Arg selfArg;
+      selfArg.Name = "self#";
+      selfArg.Type = S->Name + "#";
+      // We don't necessarily need to resolve it here as genFunction will
+      // resolve it
+
+      // 2. Create BlockStmt: {}
+      auto body = std::make_unique<BlockStmt>();
+
+      // 3. Create FunctionDecl: drop(self#) {}
+      std::vector<FunctionDecl::Arg> args;
+      args.push_back(std::move(selfArg));
+
+      auto func = std::make_unique<FunctionDecl>(true, "drop", std::move(args),
+                                                 std::move(body), "void");
+      func->Loc = S->Loc; // Use Shape's location
+
+      // 4. Create ImplDecl: impl @encap for Shape { ... }
+      std::vector<std::unique_ptr<FunctionDecl>> methods;
+      methods.push_back(std::move(func));
+
+      auto impl =
+          std::make_unique<ImplDecl>(S->Name, std::move(methods), "encap");
+      impl->Loc = S->Loc;
+
+      // 5. Register Mangled Name
+      S->MangledDestructorName = "encap_" + S->Name + "_drop";
+
+      // 6. Push to Module
+      M.Impls.push_back(std::move(impl));
+    }
 
     // [Rule] Union Safety: No Resource Types (HasDrop)
     if (S->Kind == ShapeKind::Union) {
@@ -843,12 +873,14 @@ void Sema::analyzeShapes(Module &M) {
 }
 
 void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
+  if (m_ShapeProps.count(shapeName)) {
+    auto &p = m_ShapeProps[shapeName];
+    if (p.Status == ShapeAnalysisStatus::Analyzed)
+      return;
+  }
   auto &props = m_ShapeProps[shapeName];
   if (props.Status == ShapeAnalysisStatus::Visiting)
     return; // Cycle
-  if (props.Status == ShapeAnalysisStatus::Analyzed)
-    return;
-
   props.Status = ShapeAnalysisStatus::Visiting;
 
   // Find Shape Decl
@@ -900,13 +932,9 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
           if (inner.rfind("^", 0) == 0 || inner.rfind("~", 0) == 0) {
             props.HasDrop = true;
           } else {
-            if (ShapeMap.count(inner)) {
-              computeShapeProperties(inner, M);
-              // if (m_ShapeProps[inner].HasDrop)
-              //   props.HasDrop = true;
-              // if (m_ShapeProps[inner].HasRawPtr)
-              //   props.HasRawPtr = true;
-            }
+            computeShapeProperties(inner, M);
+            if (m_ShapeProps[inner].HasDrop)
+              props.HasDrop = true;
             // Check explicit drop on inner type (e.g. valid struct inside
             // array)
             bool innerHasDrop = false;
@@ -932,12 +960,10 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
         if (ShapeMap.count(baseType)) {
           computeShapeProperties(baseType, M);
           auto &subProps = m_ShapeProps[baseType];
-          // if (subProps.HasRawPtr)
-          //   props.HasRawPtr = true;
           if (subProps.HasDrop)
             props.HasDrop = true;
-          // if (subProps.HasManualDrop)
-          //   props.HasManualDrop = true;
+          if (subProps.HasManualDrop)
+            props.HasManualDrop = true;
         }
 
         // Also check if type T has 'drop' method itself (encap)

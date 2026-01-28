@@ -42,7 +42,7 @@ impl Resource@encap {
         println("Dropping Resource {}", self.id)
     }
 }
-*/
+//*/
 
 fn main() -> i32 {
     println("Start")
