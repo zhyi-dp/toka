@@ -20,8 +20,7 @@
 // the corresponding symbols in the linked C standard library.
 // =============================================================================
 
-import core/types::{usize}
-import std/io::println
+import core/types::{Addr, usize}
 import core/libc::*
 
 // export Magic Hooks
@@ -58,8 +57,20 @@ pub fn __toka_time() -> i64 {
     }
 }
 
+/*
 pub fn __toka_panic(message: str, file_name: str) {
     println("Panic: {}, {}", message, file_name)
+    unsafe {
+        libc_abort()
+    }
+}
+*/
+
+pub fn __toka_panic(message: str, file_name: str, line: i32) {
+    libc_printf("\n****************************************\n")
+    libc_printf("Panic: %s\n", message)
+    libc_printf("  at %s:%d\n", file_name, line)
+    libc_printf("****************************************\n\n")
     unsafe {
         libc_abort()
     }

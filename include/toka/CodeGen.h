@@ -239,7 +239,7 @@ private:
   llvm::Value *genUnsafeStmt(const UnsafeStmt *stmt);
   llvm::Value *genExprStmt(const ExprStmt *stmt);
   llvm::Value *genUnreachableStmt(const UnreachableStmt *stmt);
-  llvm::Value *genNullCheck(llvm::Value *val,
+  llvm::Value *genNullCheck(llvm::Value *val, const ASTNode *node,
                             const std::string &msg = "panic: null access");
 };
 

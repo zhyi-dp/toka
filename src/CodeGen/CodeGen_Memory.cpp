@@ -669,7 +669,7 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   if (mem->Member.size() >= 2 && mem->Member.substr(0, 2) == "??") {
     // Identity Assertion (Ch 6.1)
     llvm::Value *ptrVal = m_Builder.CreateLoad(finalIrTy, finalAddr, "nn.load");
-    genNullCheck(ptrVal);
+    genNullCheck(ptrVal, mem);
     return PhysEntity(ptrVal, memberTypeName, finalIrTy, false); // R-Value
   }
 

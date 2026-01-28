@@ -16,6 +16,7 @@
 
 import std/io::println
 import std/debug::assert
+import std/memory
 import core/types::LIMITS
 import std/string::String
 

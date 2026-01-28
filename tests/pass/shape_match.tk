@@ -13,6 +13,7 @@
 // limitations under the License.
 // --- Physical Shape Definitions ---
 import std/io::println
+import std/memory
 import std/debug::assert
 shape RawBytes [u8; 4]
 shape Point (u8, u8, u8, u8)

@@ -2,6 +2,6 @@ import std/memory::__toka_panic
 // TODO: __FILE__ and __LINE__
 pub fn assert(condition: bool, message: str) {
     if !condition {
-        __toka_panic(message,"")
+        __toka_panic(message,"",-1)
     }
 }

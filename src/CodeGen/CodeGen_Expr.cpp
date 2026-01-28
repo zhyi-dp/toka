@@ -13,6 +13,8 @@
 // limitations under the License.
 #include "toka/AST.h"
 #include "toka/CodeGen.h"
+#include "toka/DiagnosticEngine.h"
+#include "toka/SourceManager.h"
 #include "toka/Type.h"
 #include <cctype>
 #include <iostream>
@@ -1459,7 +1461,8 @@ PhysEntity CodeGen::genLiteralExpr(const Expr *expr) {
   return nullptr;
 }
 
-llvm::Value *CodeGen::genNullCheck(llvm::Value *val, const std::string &msg) {
+llvm::Value *CodeGen::genNullCheck(llvm::Value *val, const ASTNode *node,
+                                   const std::string &msg) {
   if (!val)
     return val;
 
@@ -1479,7 +1482,40 @@ llvm::Value *CodeGen::genNullCheck(llvm::Value *val, const std::string &msg) {
   m_Builder.CreateCondBr(nn, okBB, panicBB);
 
   m_Builder.SetInsertPoint(panicBB);
-  // [TODO] Call __toka_panic properly. For now, trap or abort.
+
+  // Precision Panic: call __toka_panic(message, file, line)
+  llvm::Function *panicFunc = m_Module->getFunction("__toka_panic");
+  if (!panicFunc) {
+    // Declare if not found (happens during early codegen stages or if not
+    // imported)
+    std::vector<llvm::Type *> panicArgs = {
+        m_Builder.getPtrTy(), m_Builder.getPtrTy(), m_Builder.getInt32Ty()};
+    llvm::FunctionType *panicFT =
+        llvm::FunctionType::get(m_Builder.getVoidTy(), panicArgs, false);
+    panicFunc = llvm::Function::Create(panicFT, llvm::Function::ExternalLinkage,
+                                       "__toka_panic", m_Module.get());
+  }
+
+  // Extract location info
+  std::string fileName = "";
+  int line = -1;
+  if (node) {
+    auto fullLoc = DiagnosticEngine::SrcMgr->getFullSourceLoc(node->Loc);
+    if (fullLoc.isValid()) {
+      fileName = fullLoc.FileName;
+      line = (int)fullLoc.Line;
+    }
+  }
+
+  std::vector<llvm::Value *> args;
+  args.push_back(m_Builder.CreateGlobalStringPtr(msg, "panic_msg"));
+  args.push_back(m_Builder.CreateGlobalStringPtr(fileName, "panic_file"));
+  args.push_back(m_Builder.getInt32(line));
+
+  m_Builder.CreateCall(panicFunc, args);
+
+  // Ensure execution terminates even if __toka_panic somehow returns (it
+  // shouldn't)
   llvm::Function *trap =
       llvm::Intrinsic::getDeclaration(m_Module.get(), llvm::Intrinsic::trap);
   m_Builder.CreateCall(trap);
@@ -1492,9 +1528,6 @@ llvm::Value *CodeGen::genNullCheck(llvm::Value *val, const std::string &msg) {
 PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
   PhysEntity targetVal_ent = genExpr(expr->Target.get()).load(m_Builder);
   llvm::Value *targetVal = targetVal_ent.load(m_Builder);
-  if (!targetVal)
-    return nullptr;
-
   llvm::Type *targetType = targetVal->getType();
   std::string shapeName;
   if (targetType->isStructTy() && m_TypeToName.count(targetType)) {
@@ -2828,11 +2861,11 @@ PhysEntity CodeGen::genPostfixExpr(const PostfixExpr *post) {
       // Nullable Soul Wrapper: { T, i1 }
       llvm::Value *isPresent =
           m_Builder.CreateExtractValue(val, {1}, "soul.isPresent");
-      genNullCheck(isPresent);
+      genNullCheck(isPresent, post);
       llvm::Value *data = m_Builder.CreateExtractValue(val, {0}, "soul.data");
       return PhysEntity(data, lhs_pe.typeName, data->getType(), false);
     } else {
-      genNullCheck(val);
+      genNullCheck(val, post);
       return lhs_pe;
     }
   }

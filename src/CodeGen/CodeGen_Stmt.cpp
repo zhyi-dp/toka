@@ -110,10 +110,22 @@ llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
     }
   }
 
+  llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
   cleanupScopes(0);
-  if (retVal)
+  if (retVal) {
+    if (retVal->getType() != f->getReturnType()) {
+      if (f->getReturnType()->isVoidTy())
+        return m_Builder.CreateRetVoid();
+      retVal = m_Builder.CreateBitCast(retVal, f->getReturnType());
+    }
     return m_Builder.CreateRet(retVal);
-  return m_Builder.CreateRetVoid();
+  }
+
+  if (f->getReturnType()->isVoidTy())
+    return m_Builder.CreateRetVoid();
+
+  // Fallback: return default value if none provided but expected
+  return m_Builder.CreateRet(llvm::Constant::getNullValue(f->getReturnType()));
 }
 
 llvm::Value *CodeGen::genBlockStmt(const BlockStmt *bs) {
