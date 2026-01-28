@@ -658,18 +658,14 @@ void Sema::checkShapeSovereignty() {
 
       // Check if Shape manages resources
       for (auto &memb : decl->Members) {
-        // 1. Raw Pointers (*T) - DO NOT force drop (views/unsafe aliases)
-        // if (memb.HasPointer) { ... }
-        // 2. Unique Pointers (^T)
-        if (memb.IsUnique) {
+        // 1. Raw Pointers (*T) - Force drop for safety
+        if (memb.HasPointer) {
           needsDrop = true;
           break;
         }
-        // 3. Members that need drop (Recursive check)
-        if (m_ShapeProps.count(memb.Type) && m_ShapeProps[memb.Type].HasDrop) {
-          needsDrop = true;
-          break;
-        }
+        // [New Rule] Unique/Shared pointers and members with drop are handled
+        // automatically by CodeGen, so they don't force parent to implement
+        // 'drop'.
       }
 
       if (needsDrop) {
@@ -775,6 +771,8 @@ void Sema::analyzeShapes(Module &M) {
 
   // First pass: Compute properties for all shapes
   for (auto &S : M.Shapes) {
+    if (!S->GenericParams.empty())
+      continue;
     if (m_ShapeProps[S->Name].Status != ShapeAnalysisStatus::Analyzed) {
       computeShapeProperties(S->Name, M);
     }
@@ -782,6 +780,8 @@ void Sema::analyzeShapes(Module &M) {
 
   // Second pass: Enforce Rules
   for (auto &S : M.Shapes) {
+    if (!S->GenericParams.empty())
+      continue;
     auto &props = m_ShapeProps[S->Name];
 
     // Check if Shape has explicit drop
@@ -800,20 +800,19 @@ void Sema::analyzeShapes(Module &M) {
         break;
     }
 
-    // Relaxed: Raw pointers don't force 'drop' (views/unsafe aliases)
-    /*
     if (props.HasRawPtr && !hasExplicitDrop) {
       DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RAW_PTR,
                                S->Name);
       HasError = true;
     }
-    */
 
-    if (props.HasManualDrop && !hasExplicitDrop) {
-      DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RESOURCE,
-                               S->Name);
-      HasError = true;
-    }
+    /*
+        if (props.HasManualDrop && !hasExplicitDrop) {
+          DiagnosticEngine::report(getLoc(S.get()), DiagID::ERR_UNSAFE_RESOURCE,
+                                   S->Name);
+          HasError = true;
+        }
+    */
 
     // [Rule] Union Safety: No Resource Types (HasDrop)
     if (S->Kind == ShapeKind::Union) {
@@ -903,10 +902,10 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
           } else {
             if (ShapeMap.count(inner)) {
               computeShapeProperties(inner, M);
-              if (m_ShapeProps[inner].HasDrop)
-                props.HasDrop = true;
-              if (m_ShapeProps[inner].HasRawPtr)
-                props.HasRawPtr = true;
+              // if (m_ShapeProps[inner].HasDrop)
+              //   props.HasDrop = true;
+              // if (m_ShapeProps[inner].HasRawPtr)
+              //   props.HasRawPtr = true;
             }
             // Check explicit drop on inner type (e.g. valid struct inside
             // array)
@@ -933,12 +932,12 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
         if (ShapeMap.count(baseType)) {
           computeShapeProperties(baseType, M);
           auto &subProps = m_ShapeProps[baseType];
-          if (subProps.HasRawPtr)
-            props.HasRawPtr = true;
+          // if (subProps.HasRawPtr)
+          //   props.HasRawPtr = true;
           if (subProps.HasDrop)
             props.HasDrop = true;
-          if (subProps.HasManualDrop)
-            props.HasManualDrop = true;
+          // if (subProps.HasManualDrop)
+          //   props.HasManualDrop = true;
         }
 
         // Also check if type T has 'drop' method itself (encap)

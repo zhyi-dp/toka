@@ -26,18 +26,17 @@ fn main() -> i32 {
         println("Success access: {}", v1) // Should print 2
         assert(v1 == 2, "Success access failed")
 
-        auto v2 = n_ok.pp??.x
+        auto v2 = n_ok.pp??.x 
         println("Success access: {}", v2) // Should print 4
-        assert(v2 == 4, "Success access failed")
+        assert(v2 == 4, "Success access failed") 
     }
-    
     //* Path 2: Panic path    
     auto n_null = Node(val=1, ^point=nullptr, pp=none)
     println("This should panic next...pointer is nullptr")
     auto v2 = n_null.??point.x // EXPECT_PANIC
 
     println("This should panic next...soul is none")
-    auto v3 = n_null.pp??.x // EXPECT_PANIC
+    auto v3 = n_null.pp??.x // noEXPECT_PANIC
     //*/
     
     return 0

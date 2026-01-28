@@ -23,6 +23,13 @@ pub shape File (
     opened: bool
 )
 
+impl File@encap {
+    pub *
+    fn drop(self#) {
+        // Observer only, no resource to free
+    }
+}
+
 impl File {
     pub fn open(path: String, mode: String) -> File {
         unsafe {

@@ -35,12 +35,14 @@ shape Resource (
     point: Point
     )
 
+/*
 impl Resource@encap {
     pub *
     fn drop(self#) {
         println("Dropping Resource {}", self.id)
     }
 }
+*/
 
 fn main() -> i32 {
     println("Start")

@@ -42,6 +42,12 @@ pub shape DateTime (
     *zone: char
 )
 
+impl DateTime@encap {
+    fn drop(self#) {
+        // Observer only, no resource to free
+    }
+}
+
 pub fn now() -> Time {
     unsafe {
         return Time(seconds = libc_time(nullptr))
