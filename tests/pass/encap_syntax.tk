@@ -43,7 +43,7 @@ impl Device@encap {
     // but shown here for syntax verification.
     // pub * ! secret_key, id
     fn drop(self#) {
-        println("Dropping Device, id={}", self#.id)
+        println("Dropping Device, id={}", self.id)
     }
 }
 
@@ -51,8 +51,8 @@ impl Device@encap {
 impl Device {
     pub fn reset(self#) {
         // Same file: can access everything
-        self#.internal_state = 0
-        self#.secret_key[0] = 0
+        self.internal_state# = 0
+        self.secret_key#[0] = 0
     }
 }
 

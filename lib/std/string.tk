@@ -37,8 +37,8 @@ impl String@encap {
         unsafe {
             if self.*buf != nullptr {
                 // libc_free(self.*buf as *void)
-                self#.*buf = nullptr 
-                self#.len = 0
+                self.*#buf = nullptr 
+                self.len# = 0
                 // self#.cap = 0
             }
         }
@@ -87,9 +87,9 @@ impl SplitIterator {
              
              // Update iterator state
              if found {
-                 self#.current_pos = end + 1
+                 self.current_pos# = end + 1
              } else {
-                 self#.current_pos = self.source_len + 1 // Done
+                 self.current_pos# = self.source_len + 1 // Done
              }
              
              // Extract substring
@@ -235,13 +235,13 @@ impl String {
                 auto new_cap = (self.cap * 2) + (slen as i32) + 1
                 auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *char
                 if *tmp == (0 as *char) { return 0 }
-                self#.*buf = *tmp
-                self#.cap = new_cap
+                self.*#buf = *tmp
+                self.cap# = new_cap
             }
             
             auto *dst# = (self.*buf as usize + self.len as usize) as *char
             libc_memcpy(*dst as *void, *s as *void, slen)
-            self#.len = needed
+            self.len# = needed
             dst#[slen] = 0 as char
         }
         return 1
@@ -255,14 +255,14 @@ impl String {
                 auto new_cap = (self.cap * 2) + 2
                 auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *char
                 if *tmp == (0 as *char) { return 0 }
-                self#.*buf = *tmp
-                self#.cap = new_cap
+                self.*#buf = *tmp
+                self.cap# = new_cap
             }
             
             auto *dst# = (self.*buf as usize + self.len as usize) as *char
             dst#[0] = c
             dst#[1] = 0 as char
-            self#.len = needed
+            self.len# = needed
         }
         return 1
     }

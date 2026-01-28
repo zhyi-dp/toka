@@ -49,8 +49,8 @@ impl File {
         unsafe {
             if self.opened {
                 libc_fclose(self.*handle)
-                self#.opened = false
-                self#.*handle = ADDR0 as *void
+                self.opened# = false
+                self.*#handle = ADDR0 as *void
             }
         }
     }

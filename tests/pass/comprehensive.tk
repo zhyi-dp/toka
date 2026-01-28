@@ -64,8 +64,8 @@ shape Entity (
 impl Point {
     // Method with mutable self (in-place capture)
     pub fn add(self#, other: Point) {
-        self#.x = self.x + other.x
-        self#.y = self.y + other.y
+        self.x# = self.x + other.x
+        self.y# = self.y + other.y
     }
 }
 

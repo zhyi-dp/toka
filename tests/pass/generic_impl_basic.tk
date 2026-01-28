@@ -20,7 +20,7 @@ impl<T> Box<T> {
 
     // Explicit generic type usage
     pub fn set(self#, v: T) {
-        self#.val = v
+        self.val# = v
     }
 
     // Namespace test within Generic context

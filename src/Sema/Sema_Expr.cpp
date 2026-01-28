@@ -398,6 +398,18 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
   } else if (auto *Str = dynamic_cast<StringExpr *>(E)) {
     return toka::Type::fromString("str");
   } else if (auto *ve = dynamic_cast<VariableExpr *>(E)) {
+    // [Ch 5] Single Hat Principle: Intermediate paths MUST NOT have morphology
+    // or permissions Check flags because Lexer splits them from the identifier
+    // name.
+    if (m_InIntermediatePath) {
+      if (ve->HasPointer || ve->IsUnique || ve->IsShared ||
+          ve->IsValueMutable || ve->IsValueBlocked) {
+        error(ve, "Pointer morphology and permission symbols are only allowed "
+                  "at the terminal of an access chain, got '" +
+                      ve->toString() + "'");
+      }
+    }
+
     SymbolInfo Info;
     if (!CurrentScope->lookup(ve->Name, Info)) {
       // [NEW] Surgical Plan: Try resolving as a type (handles Option<i32>)
@@ -1804,60 +1816,85 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
           // Use fieldType directly as the base (preserving its morphologies)
           std::shared_ptr<toka::Type> result = fieldType;
 
-          // If requested prefix exists, wrap it
-          if (!requestedPrefix.empty()) {
-            // Check if field already has this morphology
-            bool matches = false;
-            if (requestedPrefix == "&" && fieldType->isReference())
-              matches = true;
-            else if (requestedPrefix == "^" && fieldType->isUniquePtr())
-              matches = true;
-            else if (requestedPrefix == "~" && fieldType->isSharedPtr())
-              matches = true;
-            else if (requestedPrefix == "*" && fieldType->isRawPointer())
-              matches = true;
+          // Parse intent from requestedPrefix
+          bool intentWritable =
+              requestedPrefix.find('#') != std::string::npos ||
+              requestedPrefix.find('!') != std::string::npos;
+          bool intentNullable =
+              requestedPrefix.find('?') != std::string::npos ||
+              requestedPrefix.find('!') != std::string::npos;
 
-            if (requestedPrefix == "??") {
-              // Identity Assertion (Ch 6.1)
-              // 1. Ensure it's a pointer type
-              if (!fieldType->isPointer() && !fieldType->isSmartPointer()) {
-                error(Memb, "Identity assertion '??' can only be applied to "
-                            "pointers, got '" +
-                                fieldType->toString() + "'");
-              }
-              // 2. Result is the non-nullable pointer (Identity)
-              result = fieldType->withAttributes(fieldType->IsWritable, false);
-            } else if (!matches) {
-              if (requestedPrefix == "&") {
-                result = std::make_shared<ReferenceType>(fieldType);
-              } else if (requestedPrefix == "^") {
-                result = std::make_shared<UniquePointerType>(fieldType);
-              } else if (requestedPrefix == "~") {
-                result = std::make_shared<SharedPointerType>(fieldType);
-              } else if (requestedPrefix == "*") {
-                result = std::make_shared<RawPointerType>(fieldType);
+          // If requested prefix exists, ensure morphology matches or wrap it
+          if (!requestedPrefix.empty() && requestedPrefix != "??") {
+            std::string baseMorph =
+                toka::Type::stripMorphology(requestedPrefix);
+            // If requestedPrefix was just attributes (like '??' or '#'),
+            // baseMorph is empty. But here requestedPrefix is like '*#' or '^'.
+            // Actually, stripMorphology(requestedPrefix) where requestedPrefix
+            // is '*#' returns empty string? Let's check Type.cpp
+            // stripMorphology. It strips all @$#!?*^~&. Wait, if
+            // requestedPrefix is '*#', stripMorphology returns "". That's not
+            // helpful. I need the base sigil.
+
+            char sigil = 0;
+            for (char c : requestedPrefix) {
+              if (c == '*' || c == '^' || c == '~' || c == '&') {
+                sigil = c;
+                break;
               }
             }
+
+            if (sigil != 0) {
+              bool matches = false;
+              if (sigil == '&' && fieldType->isReference())
+                matches = true;
+              else if (sigil == '^' && fieldType->isUniquePtr())
+                matches = true;
+              else if (sigil == '~' && fieldType->isSharedPtr())
+                matches = true;
+              else if (sigil == '*' && fieldType->isRawPointer())
+                matches = true;
+
+              if (!matches) {
+                // Shield/Wrap the type with the requested morphology
+                if (sigil == '&')
+                  result = std::make_shared<ReferenceType>(fieldType);
+                else if (sigil == '^')
+                  result = std::make_shared<UniquePointerType>(fieldType);
+                else if (sigil == '~')
+                  result = std::make_shared<SharedPointerType>(fieldType);
+                else if (sigil == '*')
+                  result = std::make_shared<RawPointerType>(fieldType);
+              }
+            }
+          }
+
+          if (requestedPrefix == "??") {
+            // Identity Assertion (Ch 6.1)
+            if (!fieldType->isPointer() && !fieldType->isSmartPointer()) {
+              error(Memb, "Identity assertion '??' can only be applied to "
+                          "pointers, got '" +
+                              fieldType->toString() + "'");
+            }
+            result = fieldType->withAttributes(fieldType->IsWritable, false);
           }
 
           // 2. Determine Handle Writability
           bool finalHandleWritable = false;
           if (Field.IsRebindBlocked) {
             finalHandleWritable = false;
-          } else if (Field.IsRebindable /* # sigil */ ||
-                     (Field.IsPointerNullable &&
-                      fieldType->isPointer()) /* ?/! implied */) {
-            // Wait, IsPointerNullable is for ? and !.
-            // Actually, IsBlocked or IsRebindable already covers the tag.
+          } else if (intentWritable) {
+            // Explicitly requested #/! -> check authorization
+            finalHandleWritable = objTypeObj->IsWritable;
+          } else if (Field.IsRebindable) {
             finalHandleWritable = result->IsWritable;
           } else {
-            // Default: Inherit Handle Writability from Object Soul
+            // Default: Inherit Handle Writability from Object Soul (Bloodline)
             finalHandleWritable = objTypeObj->IsWritable;
           }
 
-          // Apply attributes to the resulting handle
-          return result->withAttributes(finalHandleWritable,
-                                        result->IsNullable);
+          return result->withAttributes(
+              finalHandleWritable, intentNullable ? true : result->IsNullable);
         }
       }
     }
@@ -1909,6 +1946,16 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
         m_OuterPointerSigil = TokenType::TokenNone; // Reset
         return res;
       }
+    }
+  }
+
+  // [Ch 5] Single Hat Principle: Intermediate paths MUST NOT have morphology
+  // sigils
+  if (m_InIntermediatePath) {
+    if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
+        Unary->Op == TokenType::Tilde || Unary->Op == TokenType::Ampersand) {
+      error(Unary, "Pointer morphology symbols are only allowed at the "
+                   "terminal of an access chain");
     }
   }
 

@@ -21,7 +21,7 @@ import std/io::println
 shape Counter(val: usize)
 impl Counter {
     fn inc(self#) {
-        self#.val += 1
+        self.val# += 1
     }
 }
 
@@ -38,10 +38,9 @@ impl<T> Vec<T>@encap {
         println("drop Vec<T>")
         unsafe {
             if self.*buf != nullptr {
-                unsafe free [self.cap]self#.*buf
-                self#.*!buf = nullptr // Explicit nullify
-                // self#.len = 0
-                // self#.cap = 0
+                unsafe free [self.cap]self.*#buf
+                self.*#buf = nullptr // Explicit nullify
+              
             }
         }
     }
@@ -84,8 +83,8 @@ impl<T> Vec<T> {
             
             // Pointer indexing handles
             // *self.buf provides the handle.
-            self#.buf[self.len] = val
-            self#.len += 1
+            self.buf#[self.len] = val
+            self.len# += 1
         }
     }
     
@@ -97,8 +96,8 @@ impl<T> Vec<T> {
                 libc_exit(1)
             }
             
-            self#.len -= 1
-            return self.buf[self.len]
+            self.len# -= 1
+            return self.buf#[self.len]
         }
     }
     
@@ -126,8 +125,8 @@ impl<T> Vec<T> {
                 auto *new_buf# = unsafe alloc [4]T
                 
                 // Fields
-                self#.*!buf = *new_buf
-                self#.cap = cap
+                self.*#buf = *new_buf
+                self.cap# = cap
             } else {
                 // Growth case
                 auto *new_buf# = unsafe alloc [new_cap]T
@@ -141,12 +140,12 @@ impl<T> Vec<T> {
                 
                 // Free old buffer
                 if self.*buf != nullptr {
-                    unsafe free [self.cap]self#.*buf
+                    unsafe free [self.cap]self.*#buf
                 }
                 
                 // Update fields
-                self#.*!buf = *new_buf
-                self#.cap = new_cap
+                self.*#buf = *new_buf
+                self.cap# = new_cap
             }
         }
     }

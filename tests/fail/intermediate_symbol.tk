@@ -1,0 +1,9 @@
+shape Foo(x: i32)
+impl Foo {
+    fn set(self#, val: i32) {
+        // [ILLEGAL] self# is intermediate path, should NOT have # symbol.
+        // Should be: self.x = val (bloodline) or self.x# = val (explicit)
+        self#.x = val 
+    }
+}
+fn main() -> i32 { return 0 }

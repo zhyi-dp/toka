@@ -1,0 +1,7 @@
+shape Foo(x: i32)
+fn test(^p: Foo) {
+    // [ILLEGAL] ^ is morphology sigil in intermediate path.
+    // Should be p.x (bare) or p.x^ (terminal)
+    auto v = (^p).x 
+}
+fn main() -> i32 { return 0 }
