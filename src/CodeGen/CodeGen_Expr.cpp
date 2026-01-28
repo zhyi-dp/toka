@@ -2853,20 +2853,53 @@ PhysEntity CodeGen::genPostfixExpr(const PostfixExpr *post) {
     return genExpr(post->LHS.get());
   }
   if (post->Op == TokenType::DoubleQuestion) {
-    PhysEntity lhs_pe = genExpr(post->LHS.get()).load(m_Builder);
-    llvm::Value *val = lhs_pe.load(m_Builder);
-    if (val && val->getType()->isStructTy() &&
-        val->getType()->getStructNumElements() == 2 &&
-        val->getType()->getStructElementType(1)->isIntegerTy(1)) {
-      // Nullable Soul Wrapper: { T, i1 }
-      llvm::Value *isPresent =
-          m_Builder.CreateExtractValue(val, {1}, "soul.isPresent");
-      genNullCheck(isPresent, post);
-      llvm::Value *data = m_Builder.CreateExtractValue(val, {0}, "soul.data");
-      return PhysEntity(data, lhs_pe.typeName, data->getType(), false);
+    PhysEntity lhs_pe = genExpr(post->LHS.get());
+    llvm::Value *lhs_val = lhs_pe.value;
+    if (!lhs_val)
+      return nullptr;
+
+    bool isNullableSoul = false;
+    llvm::Type *innerType = nullptr;
+    if (lhs_pe.irType && lhs_pe.irType->isStructTy() &&
+        lhs_pe.irType->getStructNumElements() == 2 &&
+        lhs_pe.irType->getStructElementType(1)->isIntegerTy(1)) {
+      isNullableSoul = true;
+      innerType = lhs_pe.irType->getStructElementType(0);
+    }
+
+    if (lhs_pe.isAddress) {
+      if (isNullableSoul) {
+        // L-Value Propagation for Soul: { T, i1 }*
+        // 1. GEP to isPresent (index 1) and check
+        llvm::Value *isPresentPtr = m_Builder.CreateStructGEP(
+            lhs_pe.irType, lhs_val, 1, "soul.isPresentPtr");
+        llvm::Value *isPresent = m_Builder.CreateLoad(
+            m_Builder.getInt1Ty(), isPresentPtr, "soul.isPresent");
+        genNullCheck(isPresent, post);
+        // 2. GEP to data (index 0) and return its address
+        llvm::Value *dataPtr = m_Builder.CreateStructGEP(lhs_pe.irType, lhs_val,
+                                                         0, "soul.dataPtr");
+        return PhysEntity(dataPtr, lhs_pe.typeName, innerType, true);
+      } else {
+        // Raw Pointer case: T**
+        llvm::Value *ptrVal =
+            m_Builder.CreateLoad(lhs_pe.irType, lhs_val, "nn.load");
+        genNullCheck(ptrVal, post);
+        return lhs_pe; // Still an address T**
+      }
     } else {
-      genNullCheck(val, post);
-      return lhs_pe;
+      // R-Value (already loaded / value type)
+      if (isNullableSoul) {
+        llvm::Value *isPresent =
+            m_Builder.CreateExtractValue(lhs_val, {1}, "soul.isPresent");
+        genNullCheck(isPresent, post);
+        llvm::Value *data =
+            m_Builder.CreateExtractValue(lhs_val, {0}, "soul.data");
+        return PhysEntity(data, lhs_pe.typeName, innerType, false);
+      } else {
+        genNullCheck(lhs_val, post);
+        return lhs_pe;
+      }
     }
   }
 

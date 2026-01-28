@@ -3,9 +3,10 @@ import std/memory
 import core/traits::{@encap}
 import std/debug::assert
 
+
 shape Point(
     x: i32 = 0,
-    y: i32
+    y#: i32
 )
 shape Node(
     val: i32,
@@ -29,6 +30,10 @@ fn main() -> i32 {
         auto v2 = n_ok.pp??.x 
         println("Success access: {}", v2) // Should print 4
         assert(v2 == 4, "Success access failed") 
+
+        n_ok.pp??.y# = 111
+        println("Success access: {}", n_ok.pp??.y#) // Should print 111
+        assert(n_ok.pp??.y == 111, "Success access failed")
     }
     //* Path 2: Panic path    
     auto n_null = Node(val=1, ^point=nullptr, pp=none)
