@@ -1,0 +1,33 @@
+import std/io::println
+import std/debug::assert
+
+shape Point(x: i32, y: i32)
+shape Container(^p: Point, val: i32, immut$: i32)
+
+fn main() -> i32 {
+    //* 1. Terminal Marking & Bloodline check
+    auto p1 = Point(x=1, y=2)
+    auto c1# = Container(p=new Point(x=10, y=20), val=100, immut=999)
+    
+    // c1# has write permission, 'val' inherits it (Bloodline)
+    c1.val# = 101
+    println("Success Bloodline: {}", c1.val)
+    assert(c1.val == 101, "Bloodline failed")
+
+    //* 2. Single Hat Principle (Intermediate path must be bare)
+    // Legal: c1.p??.x (?? is exempt)
+    println("Success Single Hat path: {}", c1.p??.x)
+    assert(c1.p??.x == 10, "Path failed")
+    
+    //* 3. Inherent Restriction ($)
+    // c1.immut# = 888 // SHOULD FAIL sema (Blocked by $)
+    
+    //* 4. Insulation (Pointers break automatic inheritance)
+    // c1# is writable, but c1.p.x# is NOT automatically writable because p is a pointer.
+    // To modify soul of p, we need inherent privilege or explicit unwrap.
+    c1.p??.x# = 55
+    println("Success Insulation override: {}", c1.p??.x)
+    assert(c1.p??.x == 55, "Insulation override failed")
+
+    return 0
+}

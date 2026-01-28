@@ -243,6 +243,10 @@ private:
   bool m_InLHS = false;
   bool m_IsUnsetInitCall = false;     // [NEW] Track .unset() intrinsic
   bool m_DisableSoulCollapse = false; // [NEW] Track context for soul collapse
+  bool m_InIntermediatePath =
+      false; // [Ch 5] Track if we are in a chain (not leaf)
+  bool m_IsAssignmentTarget =
+      false; // [Ch 6] Track if we are at the LHS terminal
   TokenType m_OuterPointerSigil =
       TokenType::TokenNone; // [NEW] Track outer pointer sigil for nested member
                             // access
@@ -353,7 +357,7 @@ private:
   static std::string synthesizePhysicalType(const T &Arg) {
     std::string Signature = "";
 
-    // 1. Morphologies
+    // 1. Morphologies (Prefix Zone)
     if (Arg.IsUnique) {
       Signature += "^";
     } else if (Arg.IsShared) {
@@ -364,8 +368,7 @@ private:
       Signature += "*";
     }
 
-    // 4. Value Attributes (Constitution 1.3: Duality)
-    // Handle/Identity Attributes (Prefix Zone)
+    // 2. Identity Attributes (Prefix Zone)
     if (Arg.IsPointerNullable)
       Signature += "?";
     if (Arg.IsRebindable)
@@ -373,10 +376,11 @@ private:
     if (Arg.IsRebindBlocked)
       Signature += "$";
 
-    // 3. Soul Type (Base Name)
-    Signature += toka::Type::stripPrefixes(getTypeName(Arg));
+    // 3. Soul Type (Base Name) - Strip everything to avoid
+    // double-hatting/double-suffoding
+    Signature += toka::Type::stripMorphology(getTypeName(Arg));
 
-    // Soul/Object Attributes (Suffix Zone)
+    // 4. Soul/Object Attributes (Suffix Zone)
     if (Arg.IsValueNullable)
       Signature += "?";
     if (Arg.IsValueMutable)
@@ -390,6 +394,8 @@ private:
   // Specialization for ShapeMember to include morphology flags
   static std::string synthesizePhysicalType(const ShapeMember &Arg) {
     std::string Signature = "";
+
+    // 1. Morphologies (Prefix Zone)
     if (Arg.IsUnique)
       Signature += "^";
     else if (Arg.IsShared)
@@ -399,6 +405,7 @@ private:
     else if (Arg.HasPointer)
       Signature += "*";
 
+    // 2. Identity Attributes (Prefix Zone)
     if (Arg.IsPointerNullable)
       Signature += "?";
     if (Arg.IsRebindable)
@@ -406,9 +413,10 @@ private:
     if (Arg.IsRebindBlocked)
       Signature += "$";
 
-    Signature += toka::Type::stripPrefixes(Arg.Type);
+    // 3. Soul Type (Base Name)
+    Signature += toka::Type::stripMorphology(Arg.Type);
 
-    // Soul/Object Attributes (Suffix Zone)
+    // 4. Soul/Object Attributes (Suffix Zone)
     if (Arg.IsValueNullable)
       Signature += "?";
     if (Arg.IsValueMutable)

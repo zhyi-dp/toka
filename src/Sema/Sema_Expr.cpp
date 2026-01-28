@@ -1582,94 +1582,19 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
   std::string path = getStringifyPath(Memb);
   bool isNarrowed = m_NarrowedPaths.count(path);
 
-  // [Fix] Visual Semantics Enforcement: Symmetry Rule
-  // 1. Arrow '->' REQUIRES explicit pointer sigil (UnaryExpr with ^, *,
-  // ~, &)
-  // 2. Dot '.' FORBIDS explicit pointer sigil
-  bool isExplicitPtr = false;
-  if (auto *UE = dynamic_cast<UnaryExpr *>(Memb->Object.get())) {
-    if (UE->Op == TokenType::Caret || UE->Op == TokenType::Star ||
-        UE->Op == TokenType::Tilde || UE->Op == TokenType::Ampersand) {
-      isExplicitPtr = true;
-    }
-  }
+  // [Ch 5] Single Hat Principle & Terminal Marking Trace
+  bool oldIntermediate = m_InIntermediatePath;
+  m_InIntermediatePath = true; // Sub-indices are intermediate
 
-  // [FIX] Handle context-aware sigil (^p->x)
-  if (!isExplicitPtr && (m_OuterPointerSigil == TokenType::Caret ||
-                         m_OuterPointerSigil == TokenType::Star ||
-                         m_OuterPointerSigil == TokenType::Tilde ||
-                         m_OuterPointerSigil == TokenType::Ampersand)) {
-    isExplicitPtr = true;
-  }
-
-  if (Memb->IsArrow) {
-    if (!isExplicitPtr) {
-      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_ARROW_SIGIL_REQUIRED);
-      HasError = true;
-      return toka::Type::fromString("unknown");
-    }
-  } else {
-    if (isExplicitPtr) {
-      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_MEMBER_SIGIL_MISMATCH);
-      HasError = true;
-      return toka::Type::fromString("unknown");
-    }
-  }
-
-  // [FIX] Manual Peeling for Explicit Semantic Access
-  // If Object is (^p)->x or *p->x, checkMemberExpr receives
-  // UnaryExpr(^p). checking ^p via verifyUnaryExpr triggers "stack
-  // variable" error. We must manually peel it, verify morphology, and
-  // proceed.
+  // [FIX] Peeling for Semantic Access (Internal)
   std::shared_ptr<toka::Type> objTypeObj;
-  bool isExplicitPeel = false;
-  TokenType explicitOp = TokenType::TokenNone;
 
-  // Check peeling FIRST
-  if (auto *UE = dynamic_cast<UnaryExpr *>(Memb->Object.get())) {
-    // DEBUG:
-    // llvm::errs() << "DEBUG: checkMemberExpr Object is UnaryExpr Op="
-    //              << (int)UE->Op << "\n";
+  // Rule: Intermediate paths MUST NOT have explicit pointer sigils or write
+  // sigils Check if current Memb is intermediate or terminal
+  bool isTerminal = m_IsAssignmentTarget; // Only terminals can have # or ~^*&
 
-    if (UE->Op == TokenType::Caret || UE->Op == TokenType::Star ||
-        UE->Op == TokenType::Tilde || UE->Op == TokenType::Ampersand) {
-
-      // Manual Check of Inner Logic
-      objTypeObj = checkExpr(UE->RHS.get());
-      isExplicitPeel = true;
-      explicitOp = UE->Op;
-
-      // Match Logic:
-      // ^ requires UniquePtr
-      // ~ requires SharedPtr
-      // * requires Any Pointer (Raw/Smart/Array)
-      // & requires Any (Address of)
-
-      bool match = false;
-      if (explicitOp == TokenType::Caret && (objTypeObj->isUniquePtr()))
-        match = true;
-      else if (explicitOp == TokenType::Tilde && (objTypeObj->isSharedPtr()))
-        match = true;
-      else if (explicitOp == TokenType::Star &&
-               (objTypeObj->isPointer() || objTypeObj->isArray() ||
-                objTypeObj->isSmartPointer()))
-        match = true;
-      else if (explicitOp == TokenType::Ampersand)
-        match = true; // Always valid to refer
-
-      if (!match && objTypeObj->toString() != "unknown") {
-        // Let strict checks later decide, but for now we peeled it.
-      }
-    }
-  } else if (auto *Post = dynamic_cast<PostfixExpr *>(Memb->Object.get())) {
-    // Handle Postfix like p# passed to us?
-    // No, p# is internal.
-    // If ^p#, then Unary -> Postfix. handled above.
-  }
-
-  if (!isExplicitPeel) {
-    objTypeObj = checkExpr(Memb->Object.get());
-  }
+  objTypeObj = checkExpr(Memb->Object.get());
+  m_InIntermediatePath = oldIntermediate;
 
   // Unset Check for Member Access
   if (!m_InLHS) {
@@ -1737,16 +1662,19 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
   //           << " IsNullable=" << objTypeObj->IsNullable
   //           << " isNarrowed=" << isNarrowed << "\n";
 
-  // [Constitution] Strict Null Safety: No Flow-Sensitive Analysis
-  // We enforce explicit unwrap/check. "isNarrowed" suppression is removed.
-  if (objTypeObj->IsNullable) {
-    //      DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
-    //                               objTypeObj->toString());
-    //      HasError = true;
-    // [Update] Reporting logic kept same
+  // [Ch 6.2] LHS Write Exemption
+  bool isLHSTarget = m_InLHS && m_IsAssignmentTarget;
+  if (objTypeObj->IsNullable && !isLHSTarget) {
     DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_NULL_ACCESS,
                              objTypeObj->toString());
     HasError = true;
+  }
+
+  // [Ch 5.5] Implicit Dereference for soul access
+  // If Object is a pointer but we use '.', we must treat it as accessing the
+  // soul. Exception: Identity properties or methods.
+  if (objTypeObj->isPointer() || objTypeObj->isSmartPointer()) {
+    objTypeObj = objTypeObj->getSoulType();
   }
 
   std::string ObjType =
@@ -1756,13 +1684,9 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
     ShapeDecl *SD = ShapeMap[ObjType];
     std::string requestedMember = Memb->Member;
     std::string requestedPrefix = "";
-    if (!requestedMember.empty() &&
-        (requestedMember[0] == '*' || requestedMember[0] == '^' ||
-         requestedMember[0] == '~' || requestedMember[0] == '&' ||
-         (requestedMember.size() >= 2 &&
-          requestedMember.substr(0, 2) == "??"))) {
+    if (!requestedMember.empty()) {
       size_t prefixEnd = 0;
-      if (requestedMember.substr(0, 2) == "??") {
+      if (requestedMember.size() >= 2 && requestedMember.substr(0, 2) == "??") {
         prefixEnd = 2;
       } else {
         while (prefixEnd < requestedMember.size() &&
@@ -1778,6 +1702,14 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
       }
       requestedPrefix = requestedMember.substr(0, prefixEnd);
       requestedMember = requestedMember.substr(prefixEnd);
+    }
+
+    // [Ch 5] Single Hat & Terminal Audit: Except for ?? assertion
+    if (m_InIntermediatePath && !requestedPrefix.empty() &&
+        requestedPrefix != "??") {
+      error(Memb, "Pointer morphology and permission symbols are only allowed "
+                  "at the terminal of an access chain, got '" +
+                      requestedPrefix + "'");
     }
 
     for (int i = 0; i < (int)SD->Members.size(); ++i) {
@@ -1839,6 +1771,7 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
         std::shared_ptr<toka::Type> fieldType =
             toka::Type::fromString(fullType);
 
+        // [Ch 5.4] Insulation: Pointers physically break permission inheritance
         bool isSoulInsulated = fieldType->isPointer() ||
                                fieldType->isSmartPointer() ||
                                fieldType->isReference();
@@ -2143,8 +2076,16 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   if (!isAssign)
     Bin->LHS = foldGenericConstant(std::move(Bin->LHS));
 
+  bool oldTarget = m_IsAssignmentTarget;
+  if (Bin->Op == "=" || Bin->Op == "^#=" || Bin->Op == "~#=" ||
+      Bin->Op == "*#=" || Bin->Op == "&#=") {
+    // Identity or simple assignment are terminals in this context
+    m_IsAssignmentTarget = true;
+  }
+
   auto lhsType = checkExpr(Bin->LHS.get());
   m_InLHS = oldLHS;
+  m_IsAssignmentTarget = oldTarget;
 
   if (!lhsType || !rhsType)
     return toka::Type::fromString("unknown");
