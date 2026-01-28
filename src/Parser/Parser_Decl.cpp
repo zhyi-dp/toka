@@ -377,7 +377,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
           arg.Type = parseTypeString();
         }
 
-        args.push_back(arg);
+        args.push_back(std::move(arg));
         firstArg = false;
         continue;
       }
@@ -444,6 +444,10 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
       arg.IsValueNullable = argName.HasNull;
       arg.IsValueBlocked = argName.IsBlocked;
 
+      if (match(TokenType::Equal)) {
+        arg.DefaultValue = parseExpr();
+      }
+
       args.push_back(std::move(arg));
     } while (match(TokenType::Comma));
   }
@@ -478,8 +482,8 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
     expectEndOfStatement();
   }
   auto decl = std::make_unique<FunctionDecl>(
-      isPub, name.Text, args, std::move(body), retType, genericParams,
-      std::move(lifeDeps));
+      isPub, name.Text, std::move(args), std::move(body), retType,
+      genericParams, std::move(lifeDeps));
   decl->IsVariadic = isVariadic;
   decl->setLocation(name, m_CurrentFile);
   return decl;
@@ -515,6 +519,9 @@ std::unique_ptr<ExternDecl> Parser::parseExternDecl() {
       arg.HasPointer = hasPointer;
       arg.IsValueMutable = argName.HasWrite;
       arg.IsValueNullable = argName.HasNull;
+      if (match(TokenType::Equal)) {
+        arg.DefaultValue = parseExpr();
+      }
       args.push_back(std::move(arg));
     } while (match(TokenType::Comma));
   }

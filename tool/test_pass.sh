@@ -1,98 +1,118 @@
 #!/bin/bash
 
-# Auto-Compile Compiler if needed
-make -C build -j8
-if [ $? -ne 0 ]; then
-    echo "Compiler Build Failed"
-    exit 1
-fi
-
-# Configuration
+# --- Configuration ---
 TOKAC="./build/src/tokac"
 LLI=$(which lli || which lli-17 || echo "/usr/local/Cellar/llvm@17/17.0.6/bin/lli")
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 pass_count=0
 fail_count=0
 
-if [ ! -f "$TOKAC" ]; then
-    echo "Error: Compiler not found at $TOKAC"
-    echo "Please run this script from the project root and ensure the project is built."
-    exit 1
-fi
+# --- Diagnostics ---
+
+log_fail() {
+    local test_name="$1"
+    local error_type="$2"
+    local click_link="$3"
+    local extra_msg="$4"
+    local log_file="$5"
+    
+    printf "Testing %-35s ... " "$test_name"
+    echo -e "${RED}FAIL ($error_type)${NC}"
+    echo -e "    ${RED}$click_link: error: $extra_msg${NC}"
+    
+    # If it's a runtime/unexpected error, show the tail of the log
+    if [ -f "$log_file" ] && [[ "$error_type" == *"Panic"* || "$error_type" == *"Runtime"* ]]; then
+        echo -e "    --- Last 5 lines of $log_file ---"
+        tail -n 5 "$log_file" | sed 's/^/    | /'
+    fi
+}
+
+log_pass() {
+    ((pass_count++))
+}
+
+# --- Logic ---
+
+# 1. Build
+make -C build -j8 || { echo "Compiler Build Failed"; exit 1; }
 
 echo "Starting Toka 'PASS' Test Suite..."
 echo "---------------------------------"
 
-# Targeted test collection: ONLY tests/pass/
-files=(tests/pass/*.tk)
+for test_path in tests/pass/*.tk; do
+    [ -e "$test_path" ] || continue
+    
+    file_name=$(basename "$test_path")
+    ll_file="${file_name}.ll"
+    log_file="${file_name}.log"
 
-if [ ${#files[@]} -eq 0 ]; then
-    echo "No .tk files found in tests/pass/"
-    exit 0
-fi
+    # Step 1: Compile
+    if ! "$TOKAC" "$test_path" > "$ll_file" 2> "$log_file"; then
+        log_fail "$file_name" "Compile" "$test_path:1" "Check compilation log" "$log_file"
+        ((fail_count++))
+        continue
+    fi
 
-for test_file in "${files[@]}"; do
-    # Check existence
-    [ -e "$test_file" ] || continue
+    # Step 2: Run
+    # Use a subshell to avoid "Abort trap" spam in some shells
+    ( "$LLI" "$ll_file" >> "$log_file" 2>&1 )
+    exit_code=$?
 
-    test_name=$(basename "$test_file")
-    #printf "Testing %-35s ... " "$test_name"
+    # Step 3: Extract Info
+    # Extract actual panic message and line from log
+    # We look specifically for the block after "Panic:" to avoid catching compiler notes
+    panic_info=$(grep -A 5 "Panic:" "$log_file" | tail -n 5)
+    actual_line=$(echo "$panic_info" | grep -oE "[^[:space:]]*${file_name}:[0-9]+" | head -n 1 | cut -d':' -f2)
+    actual_msg=$(echo "$panic_info" | grep "Panic:" | sed 's/.*Panic: //')
+    
+    # expected_markers: Find all active (not commented out) markers
+    # We want to match:
+    #   - // EXPECT_PANIC: 38
+    #   - auto x = ... // EXPECT_PANIC
+    # But ignore:
+    #   - // auto x = ... // EXPECT_PANIC
+    active_markers=$(grep -n "// EXPECT_PANIC" "$test_path" | grep -vE '^[0-9]+:[[:space:]]*//[^[:space:]E]')
+    primary_marker_line=$(echo "$active_markers" | head -n 1 | cut -d: -f1)
 
-    # Temporary files
-    ll_file="${test_name}.ll"
-    log_file="${test_name}.log"
-
-    # 1. Compile
-    if $TOKAC "$test_file" > "$ll_file" 2> "$log_file"; then
-        
-        # Check for EXPECT_PANIC logic
-        panic_line=$(grep "// EXPECT_PANIC:" "$test_file" | head -n 1 | sed 's/.*EXPECT_PANIC: \([0-9]*\).*/\1/')
-        
-        if [ -n "$panic_line" ]; then
-            # 2a. Run with lli and expect FAILURE, then verify log
-            $LLI "$ll_file" >> "$log_file" 2>&1
-            # We don't check exit code here, but we must find the panic message location
-            if grep -q "at .*$(basename "$test_file"):$panic_line" "$log_file"; then
-                 ((pass_count++))
-                 rm -f "$ll_file" "$log_file"
-            else
-                 printf "Testing %-35s ... " "$test_name"
-                 echo -e "${RED}FAIL (Panic Mismatch)${NC}"
-                 ((fail_count++))
-                 echo -e "${RED}    Expected panic at line $panic_line not found in ./${log_file}${NC}"
-            fi
+    # Step 4: Verification
+    if [ $exit_code -eq 0 ]; then
+        # Should NOT have had a marker
+        if [ -n "$active_markers" ]; then
+            log_fail "$file_name" "Panic Missing" "$test_path:$primary_marker_line" "Expected panic did not occur" "$log_file"
+            ((fail_count++))
         else
-            # 2b. Run with lli (Original logic)
-            if $LLI "$ll_file" >> "$log_file" 2>&1; then
-                 ((pass_count++))
-                 rm -f "$ll_file" "$log_file"
-            else
-                 printf "Testing %-35s ... " "$test_name"
-                 echo -e "${RED}FAIL (Runtime)${NC}"
-                 ((fail_count++))
-                 echo -e "${RED}    Runtime error details in ./${log_file}${NC}"
-            fi
+            log_pass
+            rm -f "$ll_file" "$log_file"
         fi
     else
-        echo -e "${RED}FAIL (Compile)${NC}"
-        ((fail_count++))
-        echo -e "${RED}    Compilation error details in ./${log_file}${NC}"
+        # Fault occurred
+        if [ -n "$actual_line" ]; then
+            # Rigorous Check: The ACTUAL panic must match the FIRST expected marker in the file.
+            # If we skip an earlier marker and hit a later one, it's a mismatch.
+            if [ "$actual_line" == "$primary_marker_line" ]; then
+                log_pass
+                rm -f "$ll_file" "$log_file"
+            else
+                log_fail "$file_name" "Panic Mismatch" "$test_path:$actual_line" "Expected panic at line $primary_marker_line, but crashed here instead (Panic message: $actual_msg)" "$log_file"
+                ((fail_count++))
+            fi
+        else
+            # No line info found in log
+            fail_ptr="${test_path}:${primary_marker_line:-1}"
+            log_fail "$file_name" "Runtime Error ($exit_code)" "$fail_ptr" "Process crashed without panic info" "$log_file"
+            ((fail_count++))
+        fi
     fi
 done
 
+# --- Report ---
 echo "---------------------------------"
 echo "Summary:"
 echo -e "  Passed: ${GREEN}$pass_count${NC}"
 echo -e "  Failed: ${RED}$fail_count${NC}"
 
-if [ $fail_count -eq 0 ]; then
-    echo -e "${GREEN}All tests passed!${NC}"
-    exit 0
-else
-    echo -e "${RED}Some tests failed.${NC}"
-    exit 1
-fi
+[ $fail_count -eq 0 ] || exit 1

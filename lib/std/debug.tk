@@ -1,7 +1,8 @@
+import core/types::SourceLoc
 import std/memory::__toka_panic
-// TODO: __FILE__ and __LINE__
-pub fn assert(condition: bool, message: str) {
+
+pub fn assert(condition: bool, message: str, loc: SourceLoc = __LOC__) {
     if !condition {
-        __toka_panic(message,"",-1)
+        __toka_panic(message, loc.file, loc.line)
     }
 }

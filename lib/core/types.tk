@@ -96,3 +96,5 @@ pub const LIMITS = (
         )
     )
 )
+
+pub shape SourceLoc(file: str, line: i32)

@@ -3262,17 +3262,17 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
 
   if (Fn) {
     Call->ResolvedFn = Fn;
-    for (auto &Arg : Fn->Args) {
+    for (auto &arg : Fn->Args) {
       ParamTypes.push_back(
-          toka::Type::fromString(Sema::synthesizePhysicalType(Arg)));
+          toka::Type::fromString(Sema::synthesizePhysicalType(arg)));
     }
     ReturnType = toka::Type::fromString(Fn->ReturnType);
     IsVariadic = Fn->IsVariadic;
   } else if (Ext) {
     Call->ResolvedExtern = Ext;
-    for (auto &Arg : Ext->Args) {
+    for (auto &arg : Ext->Args) {
       ParamTypes.push_back(
-          toka::Type::fromString(Sema::synthesizePhysicalType(Arg)));
+          toka::Type::fromString(Sema::synthesizePhysicalType(arg)));
     }
     ReturnType = toka::Type::fromString(Ext->ReturnType);
     IsVariadic = Ext->IsVariadic;
@@ -3562,11 +3562,62 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   funcType =
       std::make_shared<toka::FunctionType>(ParamTypes, ReturnType, IsVariadic);
 
-  // 6. Argument Matching
-  if (!IsVariadic && Call->Args.size() != ParamTypes.size()) {
+  // 6. Argument Matching and Default Argument Injection
+  size_t providedCount = Call->Args.size();
+  size_t paramCount = ParamTypes.size();
+
+  if (providedCount < paramCount) {
+    for (size_t i = providedCount; i < paramCount; ++i) {
+      std::unique_ptr<Expr> injected = nullptr;
+      const ASTNode *defValNode = nullptr;
+      if (Fn)
+        defValNode = Fn->Args[i].DefaultValue.get();
+      else if (Ext)
+        defValNode = Ext->Args[i].DefaultValue.get();
+
+      if (defValNode) {
+        const Expr *defVal = static_cast<const Expr *>(defValNode);
+        if (auto *magic = dynamic_cast<const MagicExpr *>(defVal)) {
+          auto fullloc = DiagnosticEngine::SrcMgr->getFullSourceLoc(Call->Loc);
+          if (magic->Kind == TokenType::KwFile) {
+            injected = std::make_unique<StringExpr>(fullloc.FileName);
+          } else if (magic->Kind == TokenType::KwLine) {
+            injected = std::make_unique<NumberExpr>(fullloc.Line);
+          } else if (magic->Kind == TokenType::KwLoc) {
+            // shape SourceLoc(file: str, line: i32)
+            std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
+            fields.push_back(
+                {"file", std::make_unique<StringExpr>(fullloc.FileName)});
+            fields.push_back(
+                {"line", std::make_unique<NumberExpr>(fullloc.Line)});
+            injected = std::make_unique<InitStructExpr>("SourceLoc",
+                                                        std::move(fields));
+          }
+          // Actually, injected source bits should come from Call site
+          if (injected)
+            injected->Loc = Call->Loc;
+        } else {
+          injected = std::unique_ptr<Expr>(
+              static_cast<Expr *>(defVal->clone().release()));
+        }
+      }
+
+      if (injected) {
+        Call->Args.push_back(std::move(injected));
+      } else {
+        if (!IsVariadic) {
+          error(Call, "Argument count mismatch for '" + CallName +
+                          "': expected " + std::to_string(paramCount) +
+                          ", got " + std::to_string(providedCount));
+          return ReturnType;
+        }
+      }
+    }
+  } else if (!IsVariadic && providedCount > paramCount) {
     error(Call, "Argument count mismatch for '" + CallName + "': expected " +
-                    std::to_string(ParamTypes.size()) + ", got " +
-                    std::to_string(Call->Args.size()));
+                    std::to_string(paramCount) + ", got " +
+                    std::to_string(providedCount));
+    return ReturnType;
   }
 
   for (size_t i = 0; i < Call->Args.size(); ++i) {

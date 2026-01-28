@@ -587,6 +587,32 @@ public:
   }
 };
 
+class MagicExpr : public Expr {
+public:
+  TokenType Kind;
+  MagicExpr(TokenType kind) : Kind(kind) {}
+
+  std::string toString() const override {
+    switch (Kind) {
+    case TokenType::KwFile:
+      return "__FILE__";
+    case TokenType::KwLine:
+      return "__LINE__";
+    case TokenType::KwLoc:
+      return "__LOC__";
+    default:
+      return "MagicExpr";
+    }
+  }
+
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<MagicExpr>(Kind);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
+};
+
 class NewExpr : public Expr {
 public:
   std::string Type;
@@ -1115,6 +1141,26 @@ public:
     bool IsValueBlocked = false;  // "$" identifier attribute
 
     std::shared_ptr<toka::Type> ResolvedType;
+    std::unique_ptr<Expr> DefaultValue;
+
+    Arg clone() const {
+      Arg a;
+      a.Name = Name;
+      a.Type = Type;
+      a.HasPointer = HasPointer;
+      a.IsUnique = IsUnique;
+      a.IsShared = IsShared;
+      a.IsReference = IsReference;
+      a.IsRebindable = IsRebindable;
+      a.IsValueMutable = IsValueMutable;
+      a.IsPointerNullable = IsPointerNullable;
+      a.IsValueNullable = IsValueNullable;
+      a.IsRebindBlocked = IsRebindBlocked;
+      a.IsValueBlocked = IsValueBlocked;
+      a.ResolvedType = ResolvedType;
+      a.DefaultValue = cloneNode(DefaultValue);
+      return a;
+    }
   };
 
   bool IsPub = false;
@@ -1143,7 +1189,10 @@ public:
     // shared_ptr copy is shallow for resolved type, which is what we want?
     // Wait, generic template args have unresolved types usually? Or generic
     // types? We copy whatever is there.
-    std::vector<Arg> clonedArgs = Args;
+    std::vector<Arg> clonedArgs;
+    for (const auto &arg : Args) {
+      clonedArgs.push_back(arg.clone());
+    }
 
     // Deep copy body
     auto clonedBody =
@@ -1151,7 +1200,7 @@ public:
                    static_cast<BlockStmt *>(Body->clone().release()))
              : nullptr;
 
-    auto n = std::make_unique<FunctionDecl>(IsPub, Name, clonedArgs,
+    auto n = std::make_unique<FunctionDecl>(IsPub, Name, std::move(clonedArgs),
                                             std::move(clonedBody), ReturnType,
                                             GenericParams, LifeDependencies);
     n->IsVariadic = IsVariadic;
@@ -1181,6 +1230,25 @@ public:
     bool IsValueNullable = false;
     bool IsRebindBlocked = false;
     bool IsValueBlocked = false;
+    std::unique_ptr<Expr> DefaultValue;
+
+    Arg clone() const {
+      Arg a;
+      a.Name = Name;
+      a.Type = Type;
+      a.HasPointer = HasPointer;
+      a.IsReference = IsReference;
+      a.IsUnique = IsUnique;
+      a.IsShared = IsShared;
+      a.IsRebindable = IsRebindable;
+      a.IsValueMutable = IsValueMutable;
+      a.IsPointerNullable = IsPointerNullable;
+      a.IsValueNullable = IsValueNullable;
+      a.IsRebindBlocked = IsRebindBlocked;
+      a.IsValueBlocked = IsValueBlocked;
+      a.DefaultValue = cloneNode(DefaultValue);
+      return a;
+    }
   };
   std::string Name;
   std::vector<Arg> Args;
@@ -1191,6 +1259,17 @@ public:
              std::string retType)
       : Name(name), Args(std::move(args)), ReturnType(retType) {}
   std::string toString() const override { return "Extern(" + Name + ")"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    std::vector<Arg> clonedArgs;
+    for (const auto &arg : Args) {
+      clonedArgs.push_back(arg.clone());
+    }
+    auto n =
+        std::make_unique<ExternDecl>(Name, std::move(clonedArgs), ReturnType);
+    n->IsVariadic = IsVariadic;
+    n->Loc = Loc;
+    return n;
+  }
 };
 
 struct EncapEntry {

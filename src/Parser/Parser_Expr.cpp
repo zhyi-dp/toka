@@ -266,6 +266,12 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     auto node = std::make_unique<NoneExpr>();
     node->setLocation(tok, m_CurrentFile);
     expr = std::move(node);
+  } else if (match(TokenType::KwFile) || match(TokenType::KwLine) ||
+             match(TokenType::KwLoc)) {
+    Token tok = previous();
+    auto node = std::make_unique<MagicExpr>(tok.Kind);
+    node->setLocation(tok, m_CurrentFile);
+    expr = std::move(node);
   } else if (match(TokenType::KwUnset)) {
     Token tok = previous();
     auto node = std::make_unique<UnsetExpr>();
@@ -753,17 +759,29 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       expr =
           std::make_unique<PostfixExpr>(TokenType::MinusMinus, std::move(expr));
     } else if (match(TokenType::DoubleQuestion)) {
-      expr = std::make_unique<PostfixExpr>(TokenType::DoubleQuestion,
-                                           std::move(expr));
+      Token opTok = previous();
+      auto node = std::make_unique<PostfixExpr>(TokenType::DoubleQuestion,
+                                                std::move(expr));
+      node->setLocation(opTok, m_CurrentFile);
+      expr = std::move(node);
     } else if (match(TokenType::TokenWrite)) {
-      expr =
+      Token opTok = previous();
+      auto node =
           std::make_unique<PostfixExpr>(TokenType::TokenWrite, std::move(expr));
+      node->setLocation(opTok, m_CurrentFile);
+      expr = std::move(node);
     } else if (match(TokenType::TokenNull)) {
-      expr =
+      Token opTok = previous();
+      auto node =
           std::make_unique<PostfixExpr>(TokenType::TokenNull, std::move(expr));
+      node->setLocation(opTok, m_CurrentFile);
+      expr = std::move(node);
     } else if (match(TokenType::TokenNone)) {
-      expr =
+      Token opTok = previous();
+      auto node =
           std::make_unique<PostfixExpr>(TokenType::TokenNone, std::move(expr));
+      node->setLocation(opTok, m_CurrentFile);
+      expr = std::move(node);
     } else {
       break;
     }

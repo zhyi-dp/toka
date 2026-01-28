@@ -1,0 +1,31 @@
+import std/debug::{assert}
+import core/types::SourceLoc
+
+fn get_line(line: i32 = __LINE__) -> i32 { return line }
+
+fn get_file(f: str = __FILE__) -> str { return f }
+
+fn get_loc(loc: SourceLoc = __LOC__) -> SourceLoc { return loc }
+
+fn test_val(x: i32 = 42) -> i32 { return x }
+
+fn main() -> i32 {
+    // 1. Regular default arg
+    assert(test_val() == 42, "Default value failed")
+    assert(test_val(10) == 10, "Override value failed")
+
+    // 2. __LINE__
+    auto l = get_line()
+    assert(l == 18, "Line injection failed")
+
+    // 3. __FILE__
+    auto f = get_file()
+    assert(f != "", "File injection failed")
+
+    // 4. __LOC__
+    auto loc = get_loc()
+    assert(loc.line == 26, "Loc line failed")
+    assert(loc.file != "", "Loc file failed")
+
+    return 0
+}

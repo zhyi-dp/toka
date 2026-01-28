@@ -31,14 +31,13 @@ fn main() -> i32 {
         assert(v2 == 4, "Success access failed")
     }
     
-    //* Path 2: Panic path
-    // EXPECT_PANIC: 38
+    //* Path 2: Panic path    
     auto n_null = Node(val=1, ^point=nullptr, pp=none)
     println("This should panic next...pointer is nullptr")
-    auto v2 = n_null.??point.x
+    auto v2 = n_null.??point.x // EXPECT_PANIC
 
     println("This should panic next...soul is none")
-    //auto v3 = n_null.pp??.x
+    auto v3 = n_null.pp??.x // EXPECT_PANIC
     //*/
     
     return 0
