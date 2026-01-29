@@ -26,7 +26,7 @@ fn main() -> i32 {
     // After y1, y2 go out of scope, we can mutably borrow
     {
         auto &z# = &x#
-        z# = 20
+        z = 20
         println("z={}", z)
         assert(z == 20, "z mismatch")
         // println("x={}", x) // This would be an error

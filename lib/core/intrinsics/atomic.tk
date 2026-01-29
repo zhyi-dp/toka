@@ -32,7 +32,7 @@ pub fn load<T>(*ptr: T, _order: Ordering) -> T {
 pub fn store<T>(*ptr#: T, val: T, _order: Ordering) {
     unsafe {
         if *ptr == nullptr { unreachable }
-        ptr# = val // 显式解引用写入
+        ptr = val // 显式解引用写入
     }
 }
 
@@ -43,7 +43,7 @@ pub fn fetch_add<T>(*ptr#: T, val: T, _order: Ordering) -> T {
         
         // 这里的逻辑必须基于“地址”
         auto old = ptr     // Read from addr
-        ptr# = old + val   // Write to addr
+        ptr = old + val   // Write to addr
         return old
     }
 }
@@ -54,7 +54,7 @@ pub fn fetch_sub<T>(*ptr#: T, val: T, _order: Ordering) -> T {
         if *ptr == nullptr { unreachable }
         
         auto old = ptr
-        ptr# = old - val
+        ptr = old - val
         return old
     }
 }
@@ -66,7 +66,7 @@ pub fn fetch_and<T>(*ptr#: T, val: T, _order: Ordering) -> T {
 
         auto old = ptr
         // 假设 Toka 位运算关键字为 band (bitwise and)
-        ptr# = old band val 
+        ptr = old band val 
         return old
     }
 }
@@ -77,7 +77,7 @@ pub fn fetch_or<T>(*ptr#: T, val: T, _order: Ordering) -> T {
         if *ptr == nullptr { unreachable }
 
         auto old = ptr
-        ptr# = old bor val
+        ptr = old bor val
         return old
     }
 }
@@ -88,7 +88,7 @@ pub fn fetch_xor<T>(*ptr#: T, val: T, _order: Ordering) -> T {
         if *ptr == nullptr { unreachable }
 
         auto old = ptr
-        ptr# = old bxor val
+        ptr = old bxor val
         return old
     }
 }
@@ -99,7 +99,7 @@ pub fn swap<T>(*ptr#: T, val: T, _order: Ordering) -> T {
         if *ptr == nullptr { unreachable }
 
         auto old = ptr
-        ptr# = val
+        ptr = val
         return old
     }
 }
@@ -117,7 +117,7 @@ pub fn compare_exchange<T>(
 
         auto old = ptr // Read
         if old == current {
-            ptr# = new_val // Write
+            ptr = new_val // Write
             return (old, true)
         } else {
             return (old, false)

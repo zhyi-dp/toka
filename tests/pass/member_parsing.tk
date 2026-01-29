@@ -31,7 +31,7 @@ fn main() -> i32 {
         println("Success access: {}", v2) // Should print 4
         assert(v2 == 4, "Success access failed") 
 
-        n_ok.pp??.y# = 111
+        n_ok.pp??.y = 111
         println("Success access: {}", n_ok.pp??.y) // Should print 111
         assert(n_ok.pp??.y == 111, "Success access failed")
     }

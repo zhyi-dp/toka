@@ -25,8 +25,8 @@ shape Point(
 impl Point@encap {
     pub *
     fn drop(self#) {
-        println("    Dropping Point x:{} y:{}, drop_flag={}", self.x, self.y, self.drop_flag#)
-        self.drop_flag# += 1
+        println("    Dropping Point x:{} y:{}, drop_flag={}", self.x, self.y, self.drop_flag)
+        self.drop_flag += 1
     }
 }
 
@@ -48,7 +48,7 @@ fn main() -> i32 {
     println("Start")
     auto tmp_drop_flag# = 0
     {
-        auto r1 = Resource(id=1,point=Point(x=1,y=1,&drop_flag = &tmp_drop_flag#))
+        auto r1 = Resource(id=1,point=Point(x=1,y=1,&drop_flag = &tmp_drop_flag))
         println("Inside block")
         assert(tmp_drop_flag == 0, "tmp_drop_flag should be 0")
         println("reached end of block")
@@ -60,25 +60,25 @@ fn main() -> i32 {
     auto s1_drop_flag# = 0
     auto r2_drop_flag# = 0
     {
-        auto ^#p1 = new Resource(id=11, point=Point(x=10,y=1,&drop_flag = &p1_drop_flag#))
-        println("p1_drop_flag: {}", p1_drop_flag#)
+        auto ^#p1 = new Resource(id=11, point=Point(x=10,y=1,&drop_flag = &p1_drop_flag))
+        println("p1_drop_flag: {}", p1_drop_flag)
         assert(p1_drop_flag == 0, "p1_drop_flag should be 0")
 
-        auto ~s1 = new Resource(id=21, point=Point(x=20,y=1,&drop_flag = &s1_drop_flag#))
-        println("s1_drop_flag: {}", s1_drop_flag#)
+        auto ~s1 = new Resource(id=21, point=Point(x=20,y=1,&drop_flag = &s1_drop_flag))
+        println("s1_drop_flag: {}", s1_drop_flag)
         assert(s1_drop_flag == 0, "s1_drop_flag should be 0")
 
         //auto ^p2 = ^p1
         println("will rebind ^#p1")
-        tmp_drop_flag# = 0
-        ^#p1 = new Resource(id=31, point=Point(x=30,y=1,&drop_flag = &tmp_drop_flag#))
+        tmp_drop_flag = 0
+        ^#p1 = new Resource(id=31, point=Point(x=30,y=1,&drop_flag = &tmp_drop_flag))
         println("after rebind ^#p1")
         assert(p1_drop_flag == 1, "p1_drop_flag should be 1")
 
         auto ~s2 = ~s1
         println("s2_drop_flag: {}", s1_drop_flag)
         
-        auto r2 = Resource(id=41, point=Point(x=40,y=1,&drop_flag = &r2_drop_flag#))
+        auto r2 = Resource(id=41, point=Point(x=40,y=1,&drop_flag = &r2_drop_flag))
         println("reached end of block")
     }
     assert(p1_drop_flag == 1, "p1_drop_flag should be 1")
@@ -86,30 +86,30 @@ fn main() -> i32 {
     assert(r2_drop_flag == 1, "r2_drop_flag should be 1")
     assert(tmp_drop_flag == 1, "tmp_drop_flag should be 1")
 
-    p1_drop_flag# = 0
-    s1_drop_flag# = 0
-    r2_drop_flag# = 0
-    tmp_drop_flag# = 0
+    p1_drop_flag = 0
+    s1_drop_flag = 0
+    r2_drop_flag = 0
+    tmp_drop_flag = 0
     {
-        auto ~#p1 = new Resource(id=11, point=Point(x=10,y=1,&drop_flag = &p1_drop_flag#))
+        auto ~#p1 = new Resource(id=11, point=Point(x=10,y=1,&drop_flag = &p1_drop_flag))
         auto ~pp1 = ~p1
         assert(p1_drop_flag == 0, "p1_drop_flag should be 0")
 
-        auto ~s1 = new Resource(id=21, point=Point(x=20,y=1,&drop_flag = &s1_drop_flag#))
+        auto ~s1 = new Resource(id=21, point=Point(x=20,y=1,&drop_flag = &s1_drop_flag))
         println("s1_drop_flag: {}", s1_drop_flag)
         assert(s1_drop_flag == 0, "s1_drop_flag should be 0")
 
         //auto ~p2 = ~p1
         println("2 will rebind ~#p1")
-        tmp_drop_flag# = 0
-        ~#p1 = new Resource(id=31, point=Point(x=30,y=1,&drop_flag = &tmp_drop_flag#))
+        tmp_drop_flag = 0
+        ~#p1 = new Resource(id=31, point=Point(x=30,y=1,&drop_flag = &tmp_drop_flag))
         println("2 after rebind ~#p1")
         assert(p1_drop_flag == 1, "p1_drop_flag should be 1 because old ~#p1 is not only owned")
 
         auto ~s2 = ~s1
         println("2 s2_drop_flag: {}", s1_drop_flag)
         
-        auto r2 = Resource(id=41, point=Point(x=40,y=1,&drop_flag = &r2_drop_flag#))
+        auto r2 = Resource(id=41, point=Point(x=40,y=1,&drop_flag = &r2_drop_flag))
         println("2 reached end of block")
     }
     println("End of main")

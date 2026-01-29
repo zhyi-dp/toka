@@ -34,7 +34,7 @@ pub fn __toka_free(*#ptr: void) {
     unsafe {
         if *ptr != nullptr {
             libc_free(*ptr)
-            *#ptr = nullptr
+            *ptr = nullptr
         }
     }
 }

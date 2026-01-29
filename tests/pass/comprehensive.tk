@@ -64,8 +64,8 @@ shape Entity (
 impl Point {
     // Method with mutable self (in-place capture)
     pub fn add(self#, other: Point) {
-        self.x# = self.x + other.x
-        self.y# = self.y + other.y
+        self.x = self.x + other.x
+        self.y = self.y + other.y
     }
 }
 
@@ -99,11 +99,11 @@ fn simulate(e#: Entity) -> bool {
     }
 
     // struct mutation
-    e#.pos.add(Point(x=1.0:f32, y=0.5:f32))
+    e.pos#.add(Point(x=1.0:f32, y=0.5:f32))
 
     // logic check
     if e.pos.x > 100.0:f32 {
-        e#.status = Status::Inactive()
+        e.status = Status::Inactive()
         return false
     }
 

@@ -99,9 +99,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
       // [Fix] Enable Capture for Unique Pointers
       bool needsCapture =
-          (isDirectValue &&
-           (isAggregate || arg.IsValueMutable || arg.IsRebindable)) ||
-          arg.IsUnique || arg.IsShared;
+          (isDirectValue && (isAggregate || arg.IsValueMutable)) ||
+          arg.IsRebindable || arg.IsUnique || arg.IsShared;
 
       // [NEW] Lifetime Union: Force capture if param is a dependency
       for (const auto &dep : func->LifeDependencies) {
@@ -212,9 +211,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     bool isAggregate = allocaType->isStructTy() || allocaType->isArrayTy();
     bool isDirectValue = !typeObj->isPointer() && !typeObj->isReference();
     bool needsCapture =
-        (isDirectValue &&
-         (isAggregate || argDecl.IsValueMutable || argDecl.IsRebindable)) ||
-        argDecl.IsUnique || argDecl.IsShared;
+        (isDirectValue && (isAggregate || argDecl.IsValueMutable)) ||
+        argDecl.IsRebindable || argDecl.IsUnique || argDecl.IsShared;
 
     // [NEW] Lifetime Union: Force capture if param is a dependency
     for (const auto &dep : func->LifeDependencies) {

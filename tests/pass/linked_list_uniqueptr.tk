@@ -17,24 +17,6 @@ impl Node@encap {
     }
 }
 
-impl Node {
-    fn unwrap(^?self: Node) -> &Node <- self {
-        if ^?self is ^self {
-            return &self
-        }
-        assert(false, "unwrap null")
-        return &self
-    }
-}
-
-fn unwrap(^?p: Node) -> &Node <- p {
-    if ^?p is ^p {
-        return &p
-    }
-    assert(false, "unwrap null")
-    return &p
-}
-
 pub fn main() -> i32 {
     {
         auto node111 = Node(val=111, ^?next=nullptr)
@@ -55,7 +37,7 @@ pub fn main() -> i32 {
         {
             for auto i in [1,2,3,4,5] {
                 auto ^next = ^head
-                ^#head = new Node(val=i, ^?next=^next)
+                ^head = new Node(val=i, ^?next=^next)
                 println("[{}]pushed: {}, address: {}", i, head.val, ^head as OAddr)
                 assert(head.val == i, "check head.val")
             }
@@ -68,14 +50,14 @@ pub fn main() -> i32 {
             assert(i >= 0, "check i >= 0")
             println("[{}]val: {}", i, cursor.val)
             assert(cursor.val == i, "check cursor.val")
-            i# -= 1
+            i -= 1
             if i == 4 {
                 //break
             }
             
             if cursor.^?next is cursor.^next {
                 println("will reseat to {}", cursor.^next as OAddr)
-                &#cursor = cursor.^next as &Node 
+                &cursor = cursor.^next as &Node 
             } else {
                 break
             }

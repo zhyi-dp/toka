@@ -36,7 +36,7 @@ fn main() -> i32 {
         auto i# = 0:u64
         while i < v1.len() {
             println("v1[{}] = {}", i, v1.get(i))
-            i# = i + 1
+            i = i + 1
         }
     }  
         // v1.drop() // Explicit drop is private

@@ -2637,11 +2637,11 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         }
       }
 
-      // [Fix] Unique/Shared Pointers MUST be passed by Reference (Capture)
-      // This matches genFunction ABI where they are treated as Captured
-      // Arguments. This allows the Callee to manipulate the Handle (e.g.
-      // invalidating it on Move).
-      if (arg.IsUnique || arg.IsShared) {
+      // [Fix] Unique/Shared/Rebindable Pointers MUST be passed by Reference
+      // (Capture) This matches genFunction ABI where they are treated as
+      // Captured Arguments. This allows the Callee to manipulate the Handle
+      // (e.g. invalidating it on Move or rebinding it).
+      if (arg.IsUnique || arg.IsShared || arg.IsRebindable) {
         isCaptured = true;
       }
     } else if (extDecl && i < extDecl->Args.size()) {

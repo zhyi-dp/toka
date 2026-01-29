@@ -37,9 +37,9 @@ impl String@encap {
         unsafe {
             if self.*buf != nullptr {
                 // libc_free(self.*buf as *void)
-                self.*#buf = nullptr 
-                self.len# = 0
-                // self#.cap = 0
+                self.*buf = nullptr 
+                self.len = 0
+                self.cap = 0
             }
         }
     }
@@ -76,10 +76,10 @@ impl SplitIterator {
              while i < self.source_len {
                  // dereference
                  if self.*source[i] == self.delimiter {
-                     found# = true
+                     found = true
                      break
                  }
-                 i# = i + 1
+                 i = i + 1
              }
              
              auto end = i
@@ -87,9 +87,9 @@ impl SplitIterator {
              
              // Update iterator state
              if found {
-                 self.current_pos# = end + 1
+                 self.current_pos = end + 1
              } else {
-                 self.current_pos# = self.source_len + 1 // Done
+                 self.current_pos = self.source_len + 1 // Done
              }
              
              // Extract substring
@@ -117,7 +117,7 @@ impl String {
             auto l = libc_strlen(*s)
             auto *p# = libc_malloc((l + 1) as usize) as *char
             libc_memcpy(*p as *void, *s as *void, l)
-            p#[l] = 0 as char
+            p[l] = 0 as char
             
             return String(
                 *buf = *p,
@@ -133,7 +133,7 @@ impl String {
             auto l = len
             auto *p# = libc_malloc((l + 1) as usize) as *char
             libc_memcpy(*p as *void, *s as *void, l as usize)
-            p#[l] = 0 as char
+            p[l] = 0 as char
             
             return String(
                 *buf = *p,
@@ -158,7 +158,7 @@ impl String {
             
             auto *p# = libc_malloc((l + 1) as usize) as *char
             libc_memcpy(*p as *void, *s as *void, l)
-            p#[l] = 0 as char
+            p[l] = 0 as char
             
             // Free the input pointer (take ownership)
             // libc_free(*s as *void)
@@ -235,14 +235,14 @@ impl String {
                 auto new_cap = (self.cap * 2) + (slen as i32) + 1
                 auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *char
                 if *tmp == (0 as *char) { return 0 }
-                self.*#buf = *tmp
-                self.cap# = new_cap
+                self.*buf = *tmp
+                self.cap = new_cap
             }
             
             auto *dst# = (self.*buf as usize + self.len as usize) as *char
             libc_memcpy(*dst as *void, *s as *void, slen)
-            self.len# = needed
-            dst#[slen] = 0 as char
+            self.len = needed
+            dst[slen] = 0 as char
         }
         return 1
     }
@@ -255,14 +255,14 @@ impl String {
                 auto new_cap = (self.cap * 2) + 2
                 auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *char
                 if *tmp == (0 as *char) { return 0 }
-                self.*#buf = *tmp
-                self.cap# = new_cap
+                self.*buf = *tmp
+                self.cap = new_cap
             }
             
             auto *dst# = (self.*buf as usize + self.len as usize) as *char
-            dst#[0] = c
-            dst#[1] = 0 as char
-            self.len# = needed
+            dst[0] = c
+            dst[1] = 0 as char
+            self.len = needed
         }
         return 1
     }
@@ -277,7 +277,7 @@ impl String {
                 auto *p1 = (b1 as usize + i as usize) as *char
                 auto *p2 = (b2 as usize + i as usize) as *char
                 if *p1 != *p2 { return false }
-                i# = i + 1
+                i = i + 1
             }
             return true
         }
@@ -310,7 +310,7 @@ impl String {
                 if !String::is_whitespace(p) {
                     break
                 }
-                start# = start + 1
+                start = start + 1
             }
             
             // Find end
@@ -319,7 +319,7 @@ impl String {
                 if !String::is_whitespace(p) {
                     break
                 }
-                end# = end - 1
+                end = end - 1
             }
             
             auto new_len = end - start + 1
@@ -360,7 +360,7 @@ impl String {
                 if self.*buf[i] == c {
                     return i
                 }
-                i# = i + 1
+                i = i + 1
             }
             return -1
         }
@@ -374,7 +374,7 @@ impl String {
             auto *s2 = other.c_str()
             while i < other.len() {
                 if s1[i] != s2[i] { return false }
-                i# = i + 1
+                i = i + 1
             }
             return true
         }
@@ -389,7 +389,7 @@ impl String {
             auto offset = self.len - other.len()
             while i < other.len() {
                 if s1[offset + i] != s2[i] { return false }
-                i# = i + 1
+                i = i + 1
             }
             return true
         }
@@ -411,9 +411,9 @@ impl String {
             while i < res.len {
                 auto c = res.*buf[i]
                 if c >= 97:char && c <= 122:char { // 'a'-'z'
-                    res#.*buf[i] = (c as i32 - 32) as char
+                    res.buf[i] = (c as i32 - 32) as char
                 }
-                i# = i + 1
+                i = i + 1
             }
         }
         return res
@@ -426,9 +426,9 @@ impl String {
             while i < res.len {
                 auto c = res.*buf[i]
                 if c >= 65:char && c <= 90:char { // 'A'-'Z'
-                    res#.*buf[i] = (c as i32 + 32) as char
+                    res.buf[i] = (c as i32 + 32) as char
                 }
-                i# = i + 1
+                i = i + 1
             }
         }
         return res
@@ -440,9 +440,9 @@ impl String {
             auto i# = 0
             while i < res.len {
                 if res.*buf[i] == old_c {
-                    res#.*buf[i] = new_c
+                    res.buf[i] = new_c
                 }
-                i# = i + 1
+                i = i + 1
             }
         }
         return res

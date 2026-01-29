@@ -2,7 +2,7 @@ import std/io::println
 import std/debug::assert
 
 shape Point(x: i32, y: i32)
-shape Container(^p: Point, val: i32, immut$: i32)
+shape Container(^p#: Point, val: i32, immut$: i32)
 
 fn main() -> i32 {
     //* 1. Terminal Marking & Bloodline check
@@ -10,7 +10,7 @@ fn main() -> i32 {
     auto c1# = Container(p=new Point(x=10, y=20), val=100, immut=999)
     
     // c1# has write permission, 'val' inherits it (Bloodline)
-    c1.val# = 101
+    c1.val = 101
     println("Success Bloodline: {}", c1.val)
     assert(c1.val == 101, "Bloodline failed")
 
@@ -25,7 +25,7 @@ fn main() -> i32 {
     //* 4. Insulation (Pointers break automatic inheritance)
     // c1# is writable, but c1.p.x# is NOT automatically writable because p is a pointer.
     // To modify soul of p, we need inherent privilege or explicit unwrap.
-    c1.p??.x# = 55
+    c1.p??.x = 55 //定义是^p#: Point，所以p#是灵魂可变的(即使c1不可变)，所以可以修改p.x(x继承了p的可变性)
     println("Success Insulation override: {}", c1.p??.x)
     assert(c1.p??.x == 55, "Insulation override failed")
 

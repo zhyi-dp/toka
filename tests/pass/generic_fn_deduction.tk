@@ -5,8 +5,8 @@ fn id<T>(x: T) -> T {
 // &x#: T -> x is a reference to T, mutable binding (so we can write to x, which means rewriting value)
 fn swap<T>(x#: T, y#: T) {
     auto temp = x;
-    x# = y;
-    y# = temp;
+    x = y;
+    y = temp;
 }
 
 fn main() -> i32 {

@@ -1,7 +1,7 @@
 
 pub fn main() -> i32 {
     auto x#: i32 = unset
-    x# = 42
+    x = 42
     // Should be initialized (mask updated)
     auto y = x
     return 0

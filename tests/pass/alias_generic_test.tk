@@ -19,7 +19,7 @@ fn main() -> i32 {
         auto n2 = GenericNode<i32>(val = 20)
         
         // Alias should be compatible with underlying
-        n1# = n2 
+        n1 = n2 
         println("Alias work, n1.val: {}, n2.val: {}", n1.val, n2.val)
         assert(n1.val == n2.val, "Alias work")
 
@@ -35,7 +35,7 @@ fn main() -> i32 {
         auto n2 = GenericNode<i32>(val = 20)
         
         // Alias should be compatible with underlying
-        n1# = n2 
+        n1 = n2 
         println("Alias work, n1.val: {}, n2.val: {}", n1.val, n2.val)
         assert(n1.val == n2.val, "Alias work")
 

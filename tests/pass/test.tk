@@ -35,11 +35,11 @@ fn addx(point: Point, v: i32) -> i32 {
 }
 
 fn addtox(point#: Point, v: i32) {
-    point#.x += v
+    point.x += v
 }
 
 fn addtox_useref(&point#: Point, v: i32) {
-    point#.x += v
+    point.x += v
 }
 
 fn main() -> i32 {
@@ -47,53 +47,53 @@ fn main() -> i32 {
     auto i# = 0
     auto logi# = 0
     while (i < 3) {
-        println("[{}]p.x is {}, loop {}", logi#++, p.x, i)
-        p#.x = p.x + 10
-        i# = i + 1
+        println("[{}]p.x is {}, loop {}", logi++, p.x, i)
+        p.x = p.x + 10
+        i = i + 1
     }
-    println("[{}]p.x is {}, loop {}", logi#++, p.x, i)
-    p#.x = addx(p, 10)
-    println("[{}]p.x is {} (after addx, should be 41)", logi#++, p.x)
+    println("[{}]p.x is {}, loop {}", logi++, p.x, i)
+    p.x = addx(p, 10)
+    println("[{}]p.x is {} (after addx, should be 41)", logi++, p.x)
     assert(p.x == 41, "p.x mismatch after addx")
     
     addtox(p#, 10)
-    println("[{}]p.x is {} (after addtox, should be 51 because of In-place Capture)", logi#++, p.x)
+    println("[{}]p.x is {} (after addtox, should be 51 because of In-place Capture)", logi++, p.x)
     assert(p.x == 51, "p.x mismatch after addtox")
     
     addtox_useref(&p#, 10)
-    println("[{}]p.x is {} (after addtox_useref, should be 61)", logi#++, p.x)
+    println("[{}]p.x is {} (after addtox_useref, should be 61)", logi++, p.x)
     assert(p.x == 61, "p.x mismatch after addtox_useref")
 
     auto b# = true
     if (b) {
-        println("[{}]bool true works", logi#++)
+        println("[{}]bool true works", logi++)
     }
-    b# = false
+    b = false
     if (b) {
-        println("[{}]bool false error", logi#++)
+        println("[{}]bool false error", logi++)
     } else {
-        println("[{}]bool false works", logi#++)
+        println("[{}]bool false works", logi++)
     }
 
     auto f# = 3.14
-    println("[{}]float is {}", logi#++, f)
+    println("[{}]float is {}", logi++, f)
     assert(f == 3.14, "float mismatch")
 
     auto s = "Hello Toka"
-    println("[{}]string is {}", logi#++, s)
+    println("[{}]string is {}", logi++, s)
 
     auto arr# = [10, 20, 30]
-    println("[{}]arr[0] is {}", logi#++, arr[0])
-    println("[{}]arr[1] is {}", logi#++, arr[1])
-    arr#[2] = 40
-    println("[{}]arr[2] is {}", logi#++, arr[2])
+    println("[{}]arr[0] is {}", logi++, arr[0])
+    println("[{}]arr[1] is {}", logi++, arr[1])
+    arr[2] = 40
+    println("[{}]arr[2] is {}", logi++, arr[2])
     assert(arr[0] == 10, "arr[0] mismatch")
     assert(arr[2] == 40, "arr[2] mismatch")
 
     auto tup = (1, "tuple", 1.1)
-    println("[{}]tup.0 is {}", logi#++, tup.0)
-    println("[{}]tup.1 is {}", logi#++, tup.1)
-    println("[{}]tup.2 is {}", logi#++, tup.2)
+    println("[{}]tup.0 is {}", logi++, tup.0)
+    println("[{}]tup.1 is {}", logi++, tup.1)
+    println("[{}]tup.2 is {}", logi++, tup.2)
     assert(tup.0 == 1, "tup.0 mismatch")
     assert(tup.2 == 1.1, "tup.2 mismatch")
 
@@ -101,59 +101,59 @@ fn main() -> i32 {
     processPoint(pt)
 
     auto PointTup(tup0, tup1) = pt
-    println("[{}]tup0 is {}", logi#++, tup0)
-    println("[{}]tup1 is {}", logi#++, tup1)
+    println("[{}]tup0 is {}", logi++, tup0)
+    println("[{}]tup1 is {}", logi++, tup1)
     assert(tup0 == 100, "destructuring tup0 mismatch")
     assert(tup1 == 200, "destructuring tup1 mismatch")
 
     auto Point(v0, v1, v2) = p
-    println("[{}]v0 is {}", logi#++, v0)
-    println("[{}]v1 is {}", logi#++, v1)
-    println("[{}]v2 is {}", logi#++, v2)
+    println("[{}]v0 is {}", logi++, v0)
+    println("[{}]v1 is {}", logi++, v1)
+    println("[{}]v2 is {}", logi++, v2)
 
     // Reference tests following safety rules
     auto a# = 10
     {
         auto &b# = &a#
-        b# = 20
+        b = 20
         // Accessing 'a' here would be a violation of rule 406
     }
     // Now b# is out of scope, safe to access a
     if (a == 20) {
-        println("[{}]Reference assignment works: a is {}", logi#++, a)
+        println("[{}]Reference assignment works: a is {}", logi++, a)
     } else {
-        println("[{}]Reference assignment FAILED: a is {}", logi#++, a)
+        println("[{}]Reference assignment FAILED: a is {}", logi++, a)
         assert(false, "Reference assignment failed block reached")
     }
     assert(a == 20, "Reference assignment verification")
 
     {
         auto &c = &a // immutable ref
-        println("[{}]Immutable ref: c is {}", logi#++, c)
+        println("[{}]Immutable ref: c is {}", logi++, c)
         // rule 405: multiple immutable refs are fine, and accessing 'a' read-only is fine
-        println("[{}]Original a is still {}", logi#++, a)
+        println("[{}]Original a is still {}", logi++, a)
     }
 
     auto d# = 100
-    println("[{}]Prefix ++: d is {}", logi#++, ++d#)
-    println("[{}]Prefix --: d is {}", logi#++, --d#)
+    println("[{}]Prefix ++: d is {}", logi++, ++d)
+    println("[{}]Prefix --: d is {}", logi++, --d)
 
     {
         println("Testing Raw pointer...")
         auto *ptr = new Point(x=999, y=111, z=0)
-        println("[{}]Raw Heap Point: ptr.x={}, address={}", logi#++, ptr.x, *ptr)
+        println("[{}]Raw Heap Point: ptr.x={}, address={}", logi++, ptr.x, *ptr)
         del *ptr
     }
 
     // Heap Allocation Test
     auto ^heapNode = new Point(x = 777, y = 888, z = 0)
-    println("[{}]Heap Point is ({}, {})", logi#++, heapNode.x, heapNode.y)
+    println("[{}]Heap Point is ({}, {})", logi++, heapNode.x, heapNode.y)
 
     {
         println("Testing Move Semantics...")
         auto ^p = new Point(x=999, y=111, z=0)
         auto ^q = ^p
-        println("[{}]Moved Heap Point: q.x={}", logi#++, q.x)
+        println("[{}]Moved Heap Point: q.x={}", logi++, q.x)
         assert(q.x == 999, "Move semantics q.x mismatch")
     }
 
@@ -162,12 +162,12 @@ fn main() -> i32 {
         auto ~s1# = new Point(x = 1000, y = 2000, z = 0) //(ref++)
         {
             auto ~s2# = ~s1# // Shared Copy (ref++)
-            s2#.x = 3000
+            s2.x = 3000
         }//ref--
-        println("[{}]Shared s1.x=3000", logi#++)
+        println("[{}]Shared s1.x=3000", logi++)
         assert(s1.x == 3000, "Shared value mismatch")
         if (s1.x == 3000) {
-            println("[{}]Shared s1.x sees change (3000)", logi#++)
+            println("[{}]Shared s1.x sees change (3000)", logi++)
         } else {
             println("FAIL: s1.x not updated")
         }

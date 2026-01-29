@@ -18,12 +18,12 @@ fn main() -> i32 {
     auto x# = 10
     {
         auto &y# = &x#
-        y# = 20
+        y = 20
         println("y = {}", y)
     }
     // y is dead. x should be free.
     assert(x == 20, "x should be 20")
-    x# = 30
+    x = 30
     println("x = {}", x)
     assert(x == 30, "x should be 30")
 
@@ -31,11 +31,11 @@ fn main() -> i32 {
     auto y# = 10
     {
         auto &#z# = &x#
-        z# = 33
+        z = 33
         println("z = {}", z)
 
-        &#z# = &y#
-        z# = 44
+        &z = &y#
+        z = 44
         println("z = {}", z)
     }
     println("x = {}, y = {}", x, y)
@@ -43,7 +43,7 @@ fn main() -> i32 {
     assert(y == 44, "y should be 44")
 
     // z is dead. y should be free.
-    y# = 30
+    y = 30
     assert(y == 30, "y should be 30")
     return 0
 }

@@ -415,9 +415,6 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
         isRebindable = t.IsSwappablePtr;
         isPtrNullable = t.HasNull;
         isRebindBlocked = t.IsBlocked;
-        if (t.IsSwappablePtr)
-          isRef = true; // Legacy support? *# implies rebindable pointer,
-                        // usually by reference
       } else if (match(TokenType::Tilde)) {
         isShared = true;
         Token t = previous();

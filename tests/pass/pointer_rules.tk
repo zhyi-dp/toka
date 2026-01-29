@@ -15,7 +15,7 @@ pub fn main() -> i32 {
         assert(p.x == 1, "check p.x (same as p[0].x)")
         assert(p[1].x == 1, "check p[1].x (broadcast init)")
 
-        p#[1] = Point(x=1*2 + 1, y=(1+1) * 2)
+        p[1] = Point(x=1*2 + 1, y=(1+1) * 2)
         assert(p[1].x == 3, "check p[1].x (after p[1] assignment)")
         assert(p[0].x == 1, "check p[0].x (after p[1] assignment, p[0] not affected)")        
 

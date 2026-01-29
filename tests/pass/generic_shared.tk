@@ -7,11 +7,11 @@ shape Atomic<T> (
 impl<T> Atomic<T> {
     fn fetch_add(self#) {
         //println("type u64 enter .fetch_add, now is {}", self)
-        self.t# += 1 
+        self.t += 1 
     }
     fn fetch_sub(self#) { 
         //println("type u64 enter .fetch_sub, now is {}", self)
-        self.t# -= 1 
+        self.t -= 1 
     }
     fn load(self) -> T { 
         //println("type u64 enter .load, now is {}", self)
@@ -19,7 +19,7 @@ impl<T> Atomic<T> {
     }
     fn store(self#, val: T) {
         //println("type u64 enter .store, now is {}, will set to {}", self, val)
-        self.t# = val 
+        self.t = val 
     }
 }
 
@@ -72,7 +72,7 @@ impl<T> SharedPtr<T> {
         self.xdrop() 
 
         // 接纳新值
-        self.*#wrapper = rhs.*wrapper
+        self.*wrapper = rhs.*wrapper
 
         // [帽子规则]: 原始指针必须显式解包 (*ptr) 才能访问成员
         if self.*wrapper != nullptr {
@@ -104,7 +104,7 @@ impl<T> SharedPtr<T> {
                 unsafe free self.*wrapper
                 
                 // 置空 (在 unsafe 块内允许非空 raw 指针接收 nullptr)
-                self.*#wrapper = nullptr
+                self.*wrapper = nullptr
             }
         }
         else

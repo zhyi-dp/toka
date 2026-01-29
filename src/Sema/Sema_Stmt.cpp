@@ -519,6 +519,7 @@ void Sema::checkStmt(Stmt *S) {
       fullType += "#";
 
     Info.TypeObj = toka::Type::fromString(fullType);
+    Info.IsRebindable = Var->IsRebindable;
 
     Var->ResolvedType = Info.TypeObj;
 

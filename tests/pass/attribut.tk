@@ -1,0 +1,59 @@
+import core/traits::{@encap}
+import std/io::println
+
+shape S (
+    *ptr: i32    //继承 self 的可变性为句柄可变性，指向的灵魂内容可变性不继承，按默认规则（不可变）
+    *buf#: i32,  //继承self的可变性为句柄可变性，指向的灵魂内容可变
+    len: i32,      //继承 self 的可变性
+    age$: i32 = 18,//值内部不可变
+    outmut#: i32 //值内部可变
+    *#rebind: i32 //句柄内部可变，指向的灵魂内容可变性不继承，按默认规则（不可变）
+    //以上*示例 对全部指针类型均有效，规则完全一致，包括 原始指针* 独占指针^ 共享指针~ 引用&
+)
+
+impl S@encap {
+    fn drop(self#) {
+        println("drop")
+        unsafe free self.*ptr
+        unsafe free self.*buf
+        unsafe free self.*rebind
+    }
+}
+
+impl S {
+    pub fn modify(self#) -> i32 {
+        self.len += 1
+        //self.age += 1 //forbidden
+        self.outmut += 1
+        return self.age
+    }
+}
+
+fn main() -> i32 {
+    {
+        auto *b# = unsafe alloc [10]i32(0)
+        auto *p = unsafe alloc [10]i32(0)
+        auto *r = unsafe alloc [10]i32(0)
+        auto s = S(*ptr = *p, *buf = *b, len = 2, outmut = 4, *rebind = *r)
+        //auto x = s.modify() //forbidden
+        //auto x = s#.modify() //forbidden
+        s.outmut += 1 
+        // 允许重绑定句柄
+        auto *r2 = unsafe alloc [10]i32(0)
+        s.*rebind = *r2
+        // 不需要的手动 free 之前要把旧的 ptr 解决掉，
+        // 或者在这个简单的测试里我们就不演示复杂的 rebind 了
+        // 直接测试权限即可
+        unsafe s.buf[0] += 1
+    }
+    {
+        auto *b# = unsafe alloc [10]i32(0)
+        auto *p = unsafe alloc [10]i32(0)
+        auto *r = unsafe alloc [10]i32(0)
+        auto s# = S(*ptr = *p, *buf = *b, len = 2, outmut = 4, *rebind = *r)
+        //auto x = s.modify() //forbidden
+        auto x = s#.modify() //这里属于函数调用，形参要求self#，所以这里必须显式的加上#
+    }
+    println("Hello World")
+    return 0
+}

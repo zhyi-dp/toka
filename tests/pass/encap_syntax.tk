@@ -51,8 +51,8 @@ impl Device@encap {
 impl Device {
     pub fn reset(self#) {
         // Same file: can access everything
-        self.internal_state# = 0
-        self.secret_key#[0] = 0
+        self.internal_state = 0
+        self.secret_key[0] = 0
     }
 }
 
@@ -66,8 +66,8 @@ fn main() -> i32 {
     )
     
     d#.reset()
-    d#.public_config = 200
-    d#.crate_shared = 60
+    d.public_config = 200
+    d.crate_shared = 60
     //d#.internal_state = 10 // Error: internal_state is not public
     println("Encap syntax test parsed successfully.")
     assert(d.public_config == 200, "public_config mismatch")

@@ -30,7 +30,7 @@ fn main() -> i32 {
     }
 
     // Range loop
-    i# = 0
+    i = 0
     for auto x in [0,1,2] {
         if i == 0 {
             assert(x == 0, "x mismatch")
@@ -42,7 +42,7 @@ fn main() -> i32 {
             assert(x == 2, "x mismatch")
         }
         println("for range: {}", x)
-        i# += 1
+        i += 1
     }
 
     // Loop as expression with yield
@@ -51,7 +51,7 @@ fn main() -> i32 {
             println("i = {}, break", i)
             break 42 
         }
-        i# += 1
+        i += 1
     }
     println("loop result: {}", res)
     assert(res == 42, "loop result mismatch")
@@ -63,7 +63,7 @@ fn main() -> i32 {
             println("j = {}, break", j)
             break j * 2 
         }
-        j# += 1
+        j += 1
     }
     or {
         println("or, pass\n")

@@ -37,10 +37,10 @@ fn main() -> i32 {
         // ---------------------------------------------------
         // 规则：修改值，必须在访问路径末尾出示 #
         
-        ptr#[0] = 30         // ✅ 修改 ptr[0]。语义：Access Soul -> Write.
+        ptr[0] = 30         // ✅ 修改 ptr[0]。语义：Access Soul -> Write.
         
         // 语义：Offset to 1 -> Access Soul -> Write.
-        ptr#[1] = 40      
+        ptr[1] = 40      
         
         assert(arr1[0] == 30, "arr1[0] should be 30")
         assert(arr1[1] == 40, "arr1[1] should be 40")
@@ -51,7 +51,7 @@ fn main() -> i32 {
         // 规则：修改指向，必须在 * 后出示 #
         // 此时不需要 ptr#，因为我们改的是地址，不是值。
         
-        *#ptr = *arr2     // ✅ 指针重定向！指向了 arr2
+        *ptr = *arr2     // ✅ 指针重定向！指向了 arr2
         
         // ---------------------------------------------------
         // 场景 C：在新地址上行使权力
@@ -60,7 +60,7 @@ fn main() -> i32 {
         assert(ptr == 99, "ptr should be 99") // ptr[0] 现在是 arr2[0]
         
         // 继续修改灵魂 (因为 ptr# 依然拥有写权限，且 arr2# 允许被写)
-        ptr# = 100        // ✅ 修改 arr2[0]
+        ptr = 100        // ✅ 修改 arr2[0]
         assert(arr2[0] == 100, "arr2[0] should be 100")
     }
     return 0

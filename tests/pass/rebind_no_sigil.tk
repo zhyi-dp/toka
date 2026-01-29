@@ -1,0 +1,18 @@
+// tests/pass/rebind_no_sigil.tk
+// EXPECT: Parsing tests/pass/rebind_no_sigil.tk...
+// EXPECT: Parse Successful. Running Semantic Analysis...
+// EXPECT: Sema Successful. Merging and Generating IR...
+
+pub fn __toka_free(*#ptr: i32) {
+    unsafe {
+        if *ptr != nullptr {
+            *ptr = nullptr
+        }
+    }
+}
+
+pub fn main() -> i32 {
+    auto *#p: i32 = nullptr
+    __toka_free(*#p)
+    return 0
+}

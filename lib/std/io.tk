@@ -36,7 +36,7 @@ impl File {
             auto *p = libc_fopen(path.c_str(), mode.c_str())
             auto valid# = true
             if *p == (ADDR0 as *void) {
-                valid# = false
+                valid = false
             }
             return File(
                 *handle = *p,
@@ -49,8 +49,8 @@ impl File {
         unsafe {
             if self.opened {
                 libc_fclose(self.*handle)
-                self.opened# = false
-                self.*#handle = ADDR0 as *void
+                self.opened = false
+                self.*handle = ADDR0 as *void
             }
         }
     }
@@ -71,7 +71,7 @@ impl File {
             
             // Read
             auto count = libc_fread(*buf as *void, 1, size as usize, self.*handle)
-            buf#[count] = 0 as char
+            buf[count] = 0 as char
             
             // Make String (copies data)
             auto s = String::from_with_len(*buf, count as i32)
@@ -110,12 +110,12 @@ impl File {
                 auto c = libc_fgetc(self.*handle)
                 
                 if c == -1 { // EOF
-                    done# = true
+                    done = true
                 } else {
                     auto ch = c as char
                     s.push_char(ch)
                     if ch == 10 as char { // \n
-                        done# = true
+                        done = true
                     }
                 }
             }

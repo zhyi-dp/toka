@@ -11,7 +11,7 @@ fn main() -> i32 {
         println("p addr {}", *p as OAddr)   
         
         // Pointer arithmetic: increment the pointer by bytes
-        *#p = *p + 1 * sizeof<i32>()
+        *p = *p + 1 * sizeof<i32>()
         println("p addr {}", *p as OAddr)   
         
         // Compare dereferenced value (p without hat is *p in C)
@@ -21,7 +21,7 @@ fn main() -> i32 {
         }
         
         // Pointer arithmetic: decrement the pointer by bytes
-        *#p = *p + 1 * sizeof<i32>()
+        *p = *p + 1 * sizeof<i32>()
         println("p addr {}", *p as OAddr)   
         if p[0] != 3 {
             println("ptr += 1 failed, expected 3, got {}", p[0])

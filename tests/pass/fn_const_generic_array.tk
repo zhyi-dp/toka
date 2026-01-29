@@ -14,7 +14,7 @@ fn sum_array<N_: usize>(arr: [i32; N_]) -> i32 {
     loop {
         if i == N_ { break }
         sum# = sum + arr[i]
-        i# = i + 1 as usize
+        i = i + 1 as usize
     }
     return sum
 }

@@ -49,7 +49,7 @@ impl ReadDir {
             
             auto name = call_readdir(self.handle)
             if name.len() == 0 {
-                self.finished# = true
+                self.finished = true
                 call_closedir(self.handle)
                 return String::from("")
             }
@@ -61,7 +61,7 @@ impl ReadDir {
         unsafe {
             if !self.finished {
                 call_closedir(self.handle)
-                self.finished# = true
+                self.finished = true
             }
         }
     }

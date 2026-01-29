@@ -402,9 +402,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // or permissions Check flags because Lexer splits them from the identifier
     // name.
     if (m_InIntermediatePath) {
-      if (ve->HasPointer || ve->IsUnique || ve->IsShared ||
-          ve->IsValueMutable || ve->IsValueBlocked) {
-        error(ve, "Pointer morphology and permission symbols are only allowed "
+      if (ve->HasPointer || ve->IsUnique || ve->IsShared) {
+        error(ve, "Pointer morphology symbols (*, ^, ~) are only allowed "
                   "at the terminal of an access chain, got '" +
                       ve->toString() + "'");
       }
@@ -647,10 +646,15 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // now.
     if (shouldCollapse || (current && !current->isPointer())) {
       if (current) {
-        // [Fix] Additive Nullability: Do not strip existing nullability from
-        // the type just because usage doesn't have '?'.
+        // [Toka 1.3] LHS Permission Exemption: '#' can be omitted on LHS
+        bool usageMutable = ve->IsValueMutable;
+        if (m_InLHS && Info.IsMutable()) {
+          usageMutable = true;
+        }
+
+        // [Fix] Additive Nullability
         bool effectiveNull = current->IsNullable || ve->IsValueNullable;
-        return current->withAttributes(ve->IsValueMutable, effectiveNull);
+        return current->withAttributes(usageMutable, effectiveNull);
       }
     }
 
@@ -1605,7 +1609,10 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
   // sigils Check if current Memb is intermediate or terminal
   bool isTerminal = m_IsAssignmentTarget; // Only terminals can have # or ~^*&
 
+  bool savedDisable = m_DisableSoulCollapse;
+  m_DisableSoulCollapse = true;
   objTypeObj = checkExpr(Memb->Object.get());
+  m_DisableSoulCollapse = savedDisable;
   m_InIntermediatePath = oldIntermediate;
 
   // Unset Check for Member Access
@@ -1795,8 +1802,14 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
         } else if (Field.IsValueBlocked) {
           finalSoulWritable = false;
         } else {
-          // Inherit from object SOUL only if NOT insulated
-          finalSoulWritable = isSoulInsulated ? false : objTypeObj->IsWritable;
+          // [Toka 1.3] Inheritance: Pointers usually block.
+          // EXCEPTION: If we are on the LHS, or if the usage explicitly showed
+          // # (handled via Postfix wrapper) Since checkMemberExpr doesn't see
+          // the Postfix wrapper easily, we rely on m_InLHS or
+          // m_IsAssignmentTarget.
+          bool permitInheritance = !isSoulInsulated;
+          finalSoulWritable =
+              permitInheritance ? objTypeObj->IsWritable : false;
         }
 
         // Apply soul writing to the fieldType itself if it's a pointer
@@ -1816,13 +1829,22 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
           // Use fieldType directly as the base (preserving its morphologies)
           std::shared_ptr<toka::Type> result = fieldType;
 
+          // [Toka 1.3] Handle Inheritance:
+          // The Identity pointer (Handle) inherits its own writable status from
+          // self#
+          if (!result->IsBlocked) {
+            result->IsWritable = result->IsWritable || objTypeObj->IsWritable;
+          }
+
           // Parse intent from requestedPrefix
           bool intentWritable =
               requestedPrefix.find('#') != std::string::npos ||
               requestedPrefix.find('!') != std::string::npos;
-          bool intentNullable =
-              requestedPrefix.find('?') != std::string::npos ||
-              requestedPrefix.find('!') != std::string::npos;
+          bool intentNullable = false;
+          if (requestedPrefix != "??") {
+            intentNullable = requestedPrefix.find('?') != std::string::npos ||
+                             requestedPrefix.find('!') != std::string::npos;
+          }
 
           // If requested prefix exists, ensure morphology matches or wrap it
           if (!requestedPrefix.empty() && requestedPrefix != "??") {
@@ -1915,7 +1937,11 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
         int idx = std::stoi(Memb->Member);
         if (idx >= 0 && idx < (int)TT->Elements.size()) {
           Memb->Index = idx; // Set index for CodeGen
-          return TT->Elements[idx];
+          auto elemType = TT->Elements[idx];
+          // [Toka 1.3] Tuple Inheritance: Elements inherit writability from the
+          // tuple container
+          bool finalWritable = elemType->IsWritable || objTypeObj->IsWritable;
+          return elemType->withAttributes(finalWritable, elemType->IsNullable);
         } else {
           error(Memb, DiagID::ERR_TUPLE_INDEX_OOB, Memb->Member,
                 std::to_string(TT->Elements.size()));
@@ -1989,7 +2015,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
 
       if (Unary->Op == TokenType::Ampersand) {
         auto innerType = rhsType;
-        bool handleMutable = Unary->IsRebindable;
+        bool handleMutable =
+            Unary->IsRebindable || (m_IsAssignmentTarget && Info->IsRebindable);
         bool soulMutable = rhsType->IsWritable;
 
         auto refType = std::make_shared<toka::ReferenceType>(innerType);
@@ -2017,7 +2044,10 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
 
       if (Unary->Op == TokenType::Star) {
         if (physType && physType->isRawPointer()) {
-          return physType->withAttributes(Unary->IsRebindable, Unary->HasNull);
+          return physType->withAttributes(
+              Unary->IsRebindable ||
+                  (m_IsAssignmentTarget && Info->IsRebindable),
+              Unary->HasNull);
         }
         // [New] Array-to-Pointer Decay for Variable Elevation
         if (physType && physType->isArray()) {
@@ -2028,7 +2058,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           return res;
         }
         auto res = std::make_shared<toka::RawPointerType>(rhsType);
-        res->IsWritable = Unary->IsRebindable;
+        res->IsWritable =
+            Unary->IsRebindable || (m_IsAssignmentTarget && Info->IsRebindable);
         res->IsNullable = Unary->HasNull;
         return res;
       }
@@ -2039,20 +2070,28 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
           error(Unary, DiagID::ERR_BORROW_MUT, Var->Name);
         }
         if (physType && physType->isUniquePtr()) {
-          return physType->withAttributes(Unary->IsRebindable, Unary->HasNull);
+          return physType->withAttributes(
+              Unary->IsRebindable ||
+                  (m_IsAssignmentTarget && Info->IsRebindable),
+              Unary->HasNull);
         }
         auto res = std::make_shared<toka::UniquePointerType>(rhsType);
-        res->IsWritable = Unary->IsRebindable;
+        res->IsWritable =
+            Unary->IsRebindable || (m_IsAssignmentTarget && Info->IsRebindable);
         res->IsNullable = Unary->HasNull;
         return res;
       }
 
       if (Unary->Op == TokenType::Tilde) {
         if (physType && physType->isSharedPtr()) {
-          return physType->withAttributes(Unary->IsRebindable, Unary->HasNull);
+          return physType->withAttributes(
+              Unary->IsRebindable ||
+                  (m_IsAssignmentTarget && Info->IsRebindable),
+              Unary->HasNull);
         }
         auto res = std::make_shared<toka::SharedPointerType>(rhsType);
-        res->IsWritable = Unary->IsRebindable;
+        res->IsWritable =
+            Unary->IsRebindable || (m_IsAssignmentTarget && Info->IsRebindable);
         res->IsNullable = Unary->HasNull;
         return res;
       }
@@ -2076,7 +2115,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
     }
     auto rawPtr = std::make_shared<toka::RawPointerType>(inner);
     rawPtr->IsNullable = Unary->HasNull;
-    rawPtr->IsWritable = Unary->IsRebindable;
+    rawPtr->IsWritable =
+        Unary->IsRebindable || (m_IsAssignmentTarget && rhsType->IsWritable);
     return rawPtr;
   }
   if (Unary->Op == TokenType::PlusPlus || Unary->Op == TokenType::MinusMinus) {
@@ -2124,9 +2164,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     Bin->LHS = foldGenericConstant(std::move(Bin->LHS));
 
   bool oldTarget = m_IsAssignmentTarget;
-  if (Bin->Op == "=" || Bin->Op == "^#=" || Bin->Op == "~#=" ||
-      Bin->Op == "*#=" || Bin->Op == "&#=") {
-    // Identity or simple assignment are terminals in this context
+  if (isAssign) {
     m_IsAssignmentTarget = true;
   }
 
@@ -2294,7 +2332,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     // e.g. "p = ..." where p is smart pointer, or "~#p = ..."
     // Constitution 1.3: Reference rebinding is ALSO a Reseat operation.
     if (!isImplicitDerefAssign) {
-      if (lhsType->isSmartPointer() || isRefAssign) {
+      if (lhsType->isPointer() || lhsType->isSmartPointer() || isRefAssign) {
         isRebind = true;
       }
     }
@@ -2319,44 +2357,12 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
           }
         }
 
-        // [Constitution] Rebind (# prefix) check
-        if (isRebind) {
-          // Rebinding (Reseat) requires explicit IDENTITY attribute (# or !)
-          if (InfoPtr->IsRebindable) {
-            isLHSWritable = true;
-          } else {
-            // If the variable was unset, allow initialization as a rebind
-            // exemption
-            if (InfoPtr->InitMask != ~0ULL)
-              isLHSWritable = true;
-          }
+        if (lhsType->IsWritable) {
+          isLHSWritable = true;
         } else {
-          // Soul Mutation
-          // [Constitution 3.0] Explicit Mutability Enforcement
-          // Usage site MUST show '#' or '!' (Var->IsValueMutable)
-          if (Var->IsValueMutable) {
-            bool authorized = InfoPtr->IsMutable();
-            // detailed check for Pointers: Soul is the Pointee
-            if (!authorized) {
-              if (InfoPtr->IsReference() ||
-                  (InfoPtr->TypeObj && InfoPtr->TypeObj->isPointer())) {
-                if (InfoPtr->TypeObj && InfoPtr->TypeObj->getPointeeType()) {
-                  if (InfoPtr->TypeObj->getPointeeType()->IsWritable) {
-                    authorized = true;
-                  }
-                }
-              }
-            }
-
-            if (authorized) {
-              isLHSWritable = true;
-            } else {
-              // User asserted mutability (#) on an immutable variable
-              error(Bin, DiagID::ERR_IMMUTABLE_MOD, Var->Name);
-              HasError = true;
-              isLHSWritable = true; // Bypasses subsequent error
-            }
-          }
+          // [Unset Safety] allow initialization
+          if (InfoPtr->InitMask != ~0ULL)
+            isLHSWritable = true;
         }
 
         // [Unset Safety] Allow writing to immutable variables if they are
@@ -2823,13 +2829,15 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
   if (!resultType)
     return toka::Type::fromString("unknown");
 
-  // 3. Permission Inheritance (The Law of Permission Inheritance)
-  // If base collection is Writable, the element view is Writable.
-  // We use withAttributes to propagate this property.
-
-  bool isBaseWritable = baseType->IsWritable;
-  resultType =
-      resultType->withAttributes(isBaseWritable, resultType->IsNullable);
+  // [Ch 5.4] Permission Inheritance:
+  // Arrays inherit writability from their handle.
+  // Pointers do NOT inherit from handle; they use their own Pointee attributes
+  // (Insulation).
+  if (baseType->isArray()) {
+    bool isBaseWritable = baseType->IsWritable;
+    resultType =
+        resultType->withAttributes(isBaseWritable, resultType->IsNullable);
+  }
 
   return resultType;
 }

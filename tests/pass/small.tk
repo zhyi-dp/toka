@@ -45,29 +45,29 @@ fn main() -> i32 {
     auto i# = 0
     auto logi# = 0
     while (i < 3) {
-        println("[{}]p.x is {}, loop {}", logi#++, p.x, i)
-        p#.x = p.x + 10
-        i# = i + 1
+        println("[{}]p.x is {}, loop {}", logi++, p.x, i)
+        p.x = p.x + 10
+        i = i + 1
     }
-    println("[{}]p.x is {}, loop {}", logi#++, p.x, i)
+    println("[{}]p.x is {}, loop {}", logi++, p.x, i)
     p#.x = addx(p, 10)
-    println("[{}]p.x is {} (after addx, should be 41)", logi#++, p.x)
+    println("[{}]p.x is {} (after addx, should be 41)", logi++, p.x)
     
     addtox(p#, 10)
-    println("[{}]p.x is {} (after addtox, should be 51 because of In-place Capture)", logi#++, p.x)
+    println("[{}]p.x is {} (after addtox, should be 51 because of In-place Capture)", logi++, p.x)
     
     addtox_useref(&p#, 10)
-    println("[{}]p.x is {} (after addtox_useref, should be 61)", logi#++, p.x)
+    println("[{}]p.x is {} (after addtox_useref, should be 61)", logi++, p.x)
 
     auto b# = true
     if (b) {
-        println("[{}]bool true works", logi#++)
+        println("[{}]bool true works", logi++)
     }
-    b# = false
+    b = false
     if (b) {
-        println("[{}]bool false error", logi#++)
+        println("[{}]bool false error", logi++)
     } else {
-        println("[{}]bool false works", logi#++)
+        println("[{}]bool false works", logi++)
     }
 
     auto f# = 3.14

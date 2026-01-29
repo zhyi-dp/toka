@@ -94,20 +94,20 @@ fn main() -> i32 {
     // Rule: Identity Reseat (*#ptr = *val) requires Hat Matching.
     
     // 1. [FAIL] Group I (*): Blocked by Scope($)
-    ex.*#p_i_default = *soul // EXPECT error:[E0xxx] PermissionDenied... (Hat Matches, Permission Fails)
+    ex.*p_i_default = *soul // EXPECT error:[E0xxx] PermissionDenied... (Hat Matches, Permission Fails)
 
     // 2. [FAIL] Group R (*$): Blocked by Hat($)
-    ex_mut.*#p_r_default = *soul // EXPECT error:[E0xxx] PermissionDenied...
+    ex_mut.*p_r_default = *soul // EXPECT error:[E0xxx] PermissionDenied...
 
     // 3. [PASS] Group M (*#): Privileged Identity
     // Hat Matching: *#target = *source
-    ex.*#p_m_default = *soul // OK
+    ex.*p_m_default = *soul // OK
 
     // 4. [FAIL] Group N (*?): Type is Nullable, but Identity is ReadOnly
-    ex.*#p_n_default = nullptr // EXPECT error:[E0xxx] PermissionDenied... (nullptr is special, implies *nullptr identity)
+    ex.*p_n_default = nullptr // EXPECT error:[E0xxx] PermissionDenied... (nullptr is special, implies *nullptr identity)
 
     // 5. [PASS] Group B (*!): Chaos Identity (Reseatable)
-    ex.*#p_b_default = *soul // OK
+    ex.*p_b_default = *soul // OK
 
     // ==================================================
     // TEST AREA 2: SOUL PERMISSIONS (The 4 Valid Suffixes)
@@ -117,32 +117,32 @@ fn main() -> i32 {
     
     // --- Variant 1: Default (none) ---
     // [FAIL] Insulation blocks write.
-    ex_mut.p_i_default.v# = 1 // EXPECT error:[E0xxx] PermissionDenied...
+    ex_mut.p_i_default.v = 1 // EXPECT error:[E0xxx] PermissionDenied...
     
-    ex_mut.??p_n_mutable.v# = 1 // OK
+    ex_mut.??p_n_mutable.v = 1 // OK
 
     // --- Variant 2: Mutable (#) ---
     // [PASS] Suffix # overrides Insulation.
-    ex.p_i_mutable.v# = 1 // OK
+    ex.p_i_mutable.v = 1 // OK
 
     // --- Variant 3: Nullable (?) ---
     // Suffix ? implies Type=Nullable, Permission=ReadOnly.
     // [FAIL] Insulation blocks write.
-    ex_mut.p_i_nullable.v# = 1 // EXPECT error:[E0xxx] PermissionDenied...
+    ex_mut.p_i_nullable.v = 1 // EXPECT error:[E0xxx] PermissionDenied...
     
     // [FAIL] Cannot assign 'none' without # permission
     // LHS is Soul (no hat), RHS is Value (none).
-    ex_mut.p_i_nullable# = none // EXPECT error:[E0xxx] PermissionDenied...
+    ex_mut.p_i_nullable = none // EXPECT error:[E0xxx] PermissionDenied...
     ex_mut.p_i_nullable = none // EXPECT error:[E0xxx] PermissionDenied...
 
     // --- Variant 4: Chaos (!) ---
     // Suffix ! implies Type=Nullable, Permission=Mutable.
     // [PASS] Suffix ! overrides Insulation.
-    ex.p_i_chaos.v# = 1 // OK
+    ex.p_i_chaos.v = 1 // OK
     
     // [PASS] Assigning none
     // LHS is Soul (no hat), RHS is Value (none).
-    ex.p_i_chaos# = none // OK
+    ex.p_i_chaos = none // OK
 
     // ==================================================
     // TEST AREA 3: CROSS INTERACTION (Hat vs Suffix)
@@ -150,18 +150,18 @@ fn main() -> i32 {
 
     // 1. Hat Rigid (*$) vs Suffix Mutable (#)
     // Reseat (Hat)? NO. Write Soul (Suffix)? YES.
-    ex_mut.*#p_r_mutable = *soul // EXPECT error:[E0xxx] PermissionDenied... (Hat mismatch permission)
-    ex.p_r_mutable.v# = 1        // OK
+    ex_mut.*p_r_mutable = *soul // EXPECT error:[E0xxx] PermissionDenied... (Hat mismatch permission)
+    ex.p_r_mutable.v = 1        // OK
 
     // 2. Hat Chaos (*!) vs Suffix Default
     // Reseat (Hat)? YES. Write Soul (Suffix)? NO.
-    ex.*#p_b_default = *soul  // OK (Hat Matching)
-    ex.p_b_default.v# = 1     // EXPECT error:[E0xxx] PermissionDenied...
+    ex.*p_b_default = *soul  // OK (Hat Matching)
+    ex.p_b_default.v = 1     // EXPECT error:[E0xxx] PermissionDenied...
 
     // 3. Hat Nullable (*?) vs Suffix Chaos (!)
     // Reseat (Hat)? NO. Write Soul (Suffix)? YES.
-    ex.*#p_n_chaos = nullptr  // EXPECT error:[E0xxx] PermissionDenied...
-    ex.p_n_chaos# = none       // OK
+    ex.*p_n_chaos = nullptr  // EXPECT error:[E0xxx] PermissionDenied...
+    ex.p_n_chaos = none       // OK
 
     return 0
 }

@@ -38,8 +38,8 @@ fn main() -> i32 {
             println("Borrowed shared: {}", y)
             // s cannot be mutated here
         }
-        s# = 250
-        ~#s = new i32(300) // Rebind shared pointer to new object
+        s = 250
+        ~s = new i32(300) // Rebind shared pointer to new object
     }
     
     return 0

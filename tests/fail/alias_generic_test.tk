@@ -16,14 +16,14 @@ fn main() -> i32 {
     auto n2 = GenericNode<i32>(val = 20)
     
     // Alias should be compatible with underlying
-    n1# = n2 
+    n1 = n2 
     println("Alias work, n1.val: {}, n2.val: {}", n1.val, n2.val)
     assert(n1.val == n2.val, "Alias work")
 
     auto s1# = StrongNode(val = 30)
     auto s2 = GenericNode<i32>(val = 40)
     
-    s1# = s2 // EXPECT: error[E0408]: Cannot convert type
+    s1 = s2 // EXPECT: error[E0408]: Cannot convert type
     println("Strong work, s1.val: {}, s2.val: {}", s1.val, s2.val)
     assert(s1.val == s2.val, "Strong work")
 
