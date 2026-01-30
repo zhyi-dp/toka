@@ -20,13 +20,20 @@ extern fn println(fmt: str, ...) -> void
 
 pub shape File (
     *handle: void, // FILE*
-    opened: bool
+    opened: bool,
+    owned: bool
 )
 
 impl File@encap {
     pub *
     fn drop(self#) {
-        // Observer only, no resource to free
+        unsafe {
+            if self.owned && self.opened && self.*handle != (ADDR0 as *void) {
+                libc_fclose(self.*handle)
+                self.opened = false
+                self.*handle = ADDR0 as *void
+            }
+        }
     }
 }
 
@@ -40,7 +47,8 @@ impl File {
             }
             return File(
                 *handle = *p,
-                opened = valid
+                opened = valid,
+                owned = true
             )
         }
     }
@@ -152,21 +160,21 @@ impl File {
 pub fn stdin() -> File {
     unsafe {
         auto *p = libc_fdopen(0, "r" as *char)
-        return File(*handle = *p, opened = (*p != nullptr))
+        return File(*handle = *p, opened = (*p != nullptr), owned = false)
     }
 }
 
 pub fn stdout() -> File {
     unsafe {
         auto *p = libc_fdopen(1, "w" as *char)
-        return File(*handle = *p, opened = (*p != nullptr))
+        return File(*handle = *p, opened = (*p != nullptr), owned = false)
     }
 }
 
 pub fn stderr() -> File {
     unsafe {
         auto *p = libc_fdopen(2, "w" as *char)
-        return File(*handle = *p, opened = (*p != nullptr))
+        return File(*handle = *p, opened = (*p != nullptr), owned = false)
     }
 }
 

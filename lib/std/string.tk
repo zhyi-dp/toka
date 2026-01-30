@@ -17,7 +17,7 @@
 // ==========================================
 
 import core/types::{char, usize, Addr, ADDR0}
-import core/traits::{@encap}
+import core/traits::{@encap, @Hash}
 import core/libc::*
 
 
@@ -446,5 +446,19 @@ impl String {
             }
         }
         return res
+    }
+}
+impl String@Hash {
+    pub fn hash(self) -> u64 {
+        unsafe {
+            auto hash#: u64 = 5381
+            auto i# = 0
+            while i < self.len {
+                auto c = self.*buf[i] as u64
+                hash = ((hash bshl 5) + hash) + c
+                i = i + 1
+            }
+            return hash
+        }
     }
 }

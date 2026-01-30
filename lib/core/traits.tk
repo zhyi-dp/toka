@@ -16,3 +16,11 @@ pub trait @encap {
     //pub *
     fn drop(self#)
 }
+
+pub trait @Hash {
+    pub fn hash(self) -> u64
+}
+
+pub trait @PartialEq {
+    pub fn eq(self, other: Self) -> bool
+}

@@ -1,0 +1,22 @@
+import std/io::println
+import std/string::String
+import std/debug::assert
+import core/traits::{@Hash}
+
+fn main() -> i32 {
+    auto s1 = String::from("hello")
+    auto s2 = String::from("hello")
+    auto s3 = String::from("world")
+    
+    auto h1 = s1.hash()
+    auto h2 = s2.hash()
+    auto h3 = s3.hash()
+    
+    println("Hash('hello'): {}", h1)
+    println("Hash('world'): {}", h3)
+    
+    assert(h1 == h2, "Hash stability failed")
+    assert(h1 != h3, "Hash collision? highly unlikely")
+    
+    return 0
+}
