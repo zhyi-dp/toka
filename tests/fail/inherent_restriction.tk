@@ -3,14 +3,15 @@ shape Data(
     y$: i32
 )
 
-fn foo(a$: i32) { // Error: Redundant inherent restriction '$' on 'a'
+fn foo(a$: i32) { // EXPECT: error[E0406]:
 }
 
 fn main() -> i32 {
     auto d# = Data(x=1, y=2)
-    d#.y = 20 // Error: Cannot modify immutable entity 'd.y'
+    auto v = (^d#).x // EXPECT: error[E0406]:
+    d#.y = 20 // EXPECT: error[E0443]:
     
-    auto z$ = 10 // Error: Redundant inherent restriction '$' on 'z'
+    auto z$ = 10 // EXPECT: error[E0406]:
     
     return 0
 }

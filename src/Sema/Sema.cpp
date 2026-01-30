@@ -83,7 +83,8 @@ void Sema::exitScope() {
         CurrentScope->Parent->findSymbol(sourceName, sourcePtr)) {
       // Robust Cleanup: Clear BOTH if they match the borrower or the intent.
       if (sourcePtr->IsMutablyBorrowed &&
-          sourcePtr->MutablyBorrowedBy == refName) {
+          (sourcePtr->MutablyBorrowedBy == refName ||
+           sourcePtr->MutablyBorrowedBy.empty())) {
         sourcePtr->IsMutablyBorrowed = false;
         sourcePtr->MutablyBorrowedBy = "";
       } else if (isMutable && sourcePtr->IsMutablyBorrowed) {
@@ -92,7 +93,7 @@ void Sema::exitScope() {
         sourcePtr->MutablyBorrowedBy = "";
       }
 
-      if (!isMutable && sourcePtr->ImmutableBorrowCount > 0) {
+      if (sourcePtr->ImmutableBorrowCount > 0) {
         sourcePtr->ImmutableBorrowCount--;
       }
     }
@@ -382,8 +383,8 @@ void Sema::registerGlobals(Module &M) {
 
     if (!Impl->GenericParams.empty() || typeIsGeneric) {
       if (Impl->GenericParams.empty()) {
-        // [Check] Validate that we aren't using undefined types as generic args
-        // e.g. impl Vec<T> {} -> Error "T is undefined"
+        // [Check] Validate that we aren't using undefined types as generic
+        // args e.g. impl Vec<T> {} -> Error "T is undefined"
         auto typeObj = toka::Type::fromString(Impl->TypeName);
         if (auto st = std::dynamic_pointer_cast<ShapeType>(typeObj)) {
           for (auto &Arg : st->GenericArgs) {
@@ -402,16 +403,16 @@ void Sema::registerGlobals(Module &M) {
             else {
               // Consult Sema lookup (CurrentScope)
               // Since we are in registerGlobals, imports might be in scope or
-              // Extern declarations? But usually simple generic params are just
-              // T, U, etc.
+              // Extern declarations? But usually simple generic params are
+              // just T, U, etc.
               SymbolInfo info;
               if (CurrentScope && CurrentScope->lookup(name, info))
                 known = true;
             }
 
             if (!known) {
-              // Heuristic: If name is short (1-2 chars) or clearly looks like a
-              // placeholder
+              // Heuristic: If name is short (1-2 chars) or clearly looks like
+              // a placeholder
               DiagnosticEngine::report(Impl->Loc, DiagID::ERR_UNDEFINED_TYPE,
                                        name);
               DiagnosticEngine::report(Impl->Loc,
@@ -852,8 +853,8 @@ void Sema::analyzeShapes(Module &M) {
         }
 
         // [Rule Update] "但不限制成员的成员包含了什么"
-        // We no longer perform recursive check for resource types / drop impls
-        // within value-type members of a Bare Union.
+        // We no longer perform recursive check for resource types / drop
+        // impls within value-type members of a Bare Union.
 
         if (isResource) {
           DiagnosticEngine::report(getLoc(S.get()),

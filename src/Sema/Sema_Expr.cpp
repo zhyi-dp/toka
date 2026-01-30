@@ -403,12 +403,34 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // name.
     if (m_InIntermediatePath) {
       if (ve->HasPointer || ve->IsUnique || ve->IsShared) {
-        error(ve, "Morphology symbols (^, *, ~, &) are only allowed at the "
-                  "terminal of an access chain, got '" +
-                      ve->Name + "'");
+        // [Rule] Allow pointer morphology if it's a member base (deref access)
+        if (!m_IsMemberBase) {
+          error(ve, "Morphology symbols (^, *, ~, &) are only allowed at the "
+                    "terminal of an access chain, got '" +
+                        ve->Name + "'");
+        }
       }
       if (ve->IsValueMutable || ve->IsValueNullable || ve->IsValueBlocked) {
-        if (!m_IsMemberBase) {
+        // [Rule] Intermediate permission symbols ONLY allowed for
+        // pointers/unions as bases
+        bool allowed = false;
+        if (m_IsMemberBase) {
+          SymbolInfo info;
+          if (CurrentScope->lookup(ve->Name, info)) {
+            if (info.TypeObj) {
+              if (info.TypeObj->isPointer()) {
+                allowed = true;
+              } else if (info.TypeObj->isShape()) {
+                std::string soul = info.TypeObj->getSoulName();
+                if (ShapeMap.count(soul) &&
+                    ShapeMap[soul]->Kind == toka::ShapeKind::Union) {
+                  allowed = true;
+                }
+              }
+            }
+          }
+        }
+        if (!allowed) {
           error(ve,
                 "Permission symbols (#, ?, $) are only allowed at the terminal "
                 "of an access chain, got '" +
@@ -1774,6 +1796,21 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
                  EffectiveInfo->MutablyBorrowedBy == borrower)
           authorized = true;
 
+        // [FIX] SharedPointer non-exclusive borrow
+        if (EffectiveInfo->TypeObj &&
+            EffectiveInfo->TypeObj->isSmartPointer()) {
+          // Shared pointers allow multiple immutable borrows
+          // Mutable borrows are still exclusive
+          if (EffectiveInfo->TypeObj->typeKind == toka::Type::SharedPtr) {
+            // If it's a shared pointer, immutable borrows are always allowed.
+            // Mutable borrows are still subject to exclusivity.
+            if (!m_IsAssignmentTarget) { // If not an assignment target, it's an
+                                         // immutable borrow
+              authorized = true;
+            }
+          }
+        }
+
         if (!authorized) {
           SymbolInfo objInfo;
           if (CurrentScope->lookup(objVar->Name, objInfo)) {
@@ -2216,6 +2253,9 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
         // of the handle if handleMutable is false.
         bool isExclusive = handleMutable;
         if (soulMutable) {
+          // Rule: Shared pointers (~), Raw pointers (*), and References (&)
+          // provide Internal Mutability (Aliasing). They are NOT exclusive
+          // unless explicitly rebindable (#).
           if (physType &&
               !(physType->isSharedPtr() || physType->isRawPointer() ||
                 physType->isReference())) {
@@ -2659,7 +2699,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
             if (EffectiveInfo->IsMutablyBorrowed) {
               error(Bin, DiagID::ERR_BORROW_MUT, EffectiveName);
             } else if (EffectiveInfo->ImmutableBorrowCount > 0) {
-              error(Bin, DiagID::ERR_MOVE_BORROWED, EffectiveName);
+              // Rule: For assignments, use ERR_BORROW_IMMUT (E0442)
+              error(Bin, DiagID::ERR_BORROW_IMMUT, EffectiveName);
             }
           }
         }

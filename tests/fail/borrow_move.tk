@@ -17,7 +17,7 @@ fn main() -> i32 {
     auto ^p = new Point(x = 10)
     auto &y = &p
 
-    auto ^z# = ^p // EXPECT: error[E0441]:
+    auto ^z# = ^p // EXPECT: error[E0440]:
     
     return 0
 }

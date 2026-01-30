@@ -35,11 +35,11 @@ fn addx(point: Point, v: i32) -> i32 {
 }
 
 fn addtox(point#: Point, v: i32) {
-    point#.x += v
+    point.x += v
 }
 
 fn addtox_useref(&point#: Point, v: i32) {
-    point#.x += v
+    point.x += v
 }
 
 fn main() -> i32 {

@@ -8,7 +8,8 @@ shape Soul (
     v: i32
 )
 
-shape Exhaustive (
+shape Exhaustive ( // EXPECT: error[E0445]:
+    // EXPECT: error[E0444]:
     // =========================================================
     // 1. Soul Members (Direct Fields)
     // =========================================================
@@ -94,17 +95,17 @@ fn main() -> i32 {
     // Rule: Identity Reseat (*#ptr = *val) requires Hat Matching.
     
     // 1. [FAIL] Group I (*): Blocked by Scope($)
-    ex.*p_i_default = *soul // EXPECT error:[E0xxx] PermissionDenied... (Hat Matches, Permission Fails)
+    ex.*p_i_default = *soul // EXPECT: error[E0443]:
 
     // 2. [FAIL] Group R (*$): Blocked by Hat($)
-    ex_mut.*p_r_default = *soul // EXPECT error:[E0xxx] PermissionDenied...
+    ex_mut.*p_r_default = *soul // EXPECT: error[E0443]:
 
     // 3. [PASS] Group M (*#): Privileged Identity
     // Hat Matching: *#target = *source
     ex.*p_m_default = *soul // OK
 
     // 4. [FAIL] Group N (*?): Type is Nullable, but Identity is ReadOnly
-    ex.*p_n_default = nullptr // EXPECT error:[E0xxx] PermissionDenied... (nullptr is special, implies *nullptr identity)
+    ex.*p_n_default = nullptr // EXPECT: error[E0443]:
 
     // 5. [PASS] Group B (*!): Chaos Identity (Reseatable)
     ex.*p_b_default = *soul // OK
@@ -117,7 +118,7 @@ fn main() -> i32 {
     
     // --- Variant 1: Default (none) ---
     // [FAIL] Insulation blocks write.
-    ex_mut.p_i_default.v = 1 // EXPECT error:[E0xxx] PermissionDenied...
+    ex_mut.p_i_default.v = 1 // EXPECT: error[E0443]:
     
     ex_mut.??p_n_mutable.v = 1 // OK
 
@@ -128,12 +129,12 @@ fn main() -> i32 {
     // --- Variant 3: Nullable (?) ---
     // Suffix ? implies Type=Nullable, Permission=ReadOnly.
     // [FAIL] Insulation blocks write.
-    ex_mut.p_i_nullable.v = 1 // EXPECT error:[E0xxx] PermissionDenied...
+    ex_mut.p_i_nullable.v = 1 // EXPECT: error[E0443]:
     
     // [FAIL] Cannot assign 'none' without # permission
     // LHS is Soul (no hat), RHS is Value (none).
-    ex_mut.p_i_nullable = none // EXPECT error:[E0xxx] PermissionDenied...
-    ex_mut.p_i_nullable = none // EXPECT error:[E0xxx] PermissionDenied...
+    ex_mut.p_i_nullable = none // EXPECT: error[E0443]:
+    ex_mut.p_i_nullable = none // EXPECT: error[E0443]:
 
     // --- Variant 4: Chaos (!) ---
     // Suffix ! implies Type=Nullable, Permission=Mutable.
@@ -150,17 +151,17 @@ fn main() -> i32 {
 
     // 1. Hat Rigid (*$) vs Suffix Mutable (#)
     // Reseat (Hat)? NO. Write Soul (Suffix)? YES.
-    ex_mut.*p_r_mutable = *soul // EXPECT error:[E0xxx] PermissionDenied... (Hat mismatch permission)
+    ex_mut.*p_r_mutable = *soul // EXPECT: error[E0443]:
     ex.p_r_mutable.v = 1        // OK
 
     // 2. Hat Chaos (*!) vs Suffix Default
     // Reseat (Hat)? YES. Write Soul (Suffix)? NO.
     ex.*p_b_default = *soul  // OK (Hat Matching)
-    ex.p_b_default.v = 1     // EXPECT error:[E0xxx] PermissionDenied...
+    ex.p_b_default.v = 1     // EXPECT: error[E0443]:
 
     // 3. Hat Nullable (*?) vs Suffix Chaos (!)
     // Reseat (Hat)? NO. Write Soul (Suffix)? YES.
-    ex.*p_n_chaos = nullptr  // EXPECT error:[E0xxx] PermissionDenied...
+    ex.*p_n_chaos = nullptr  // EXPECT: error[E0443]:
     ex.p_n_chaos = none       // OK
 
     return 0

@@ -2,6 +2,6 @@ shape Foo(x: i32)
 fn test(^p: Foo) {
     // [ILLEGAL] ^ is morphology sigil in intermediate path.
     // Should be p.x (bare) or p.x^ (terminal)
-    auto v = (^p).x 
+    auto v = (^p).x // EXPECT: error[E0406]:
 }
 fn main() -> i32 { return 0 }
