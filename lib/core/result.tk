@@ -1,0 +1,48 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+
+import core/prelude::*
+import core/libc::libc_exit
+import core/libc::libc_printf
+
+pub shape Result<T, E> (
+    Ok(T) = 1 |
+    Err(E) = 0
+)
+
+impl<T, E> Result<T, E> {
+    pub fn is_ok(self) -> bool {
+        match self {
+            Result::Ok(_) => return true
+            _ => return false
+        }
+    }
+
+    pub fn is_err(self) -> bool {
+        return self.is_ok() == false
+    }
+
+/*
+    pub fn unwrap(self) -> T {
+        match self {
+            auto Result::Ok(val) => return val
+            _ => {
+                libc_printf("Called Result::unwrap() on an Err value\n")
+                libc_exit(1)
+                // Unreachable but satisfy return type analysis
+                return self.unwrap()
+            }
+        }
+    }
+
+    pub fn unwrap_err(self) -> E {
+        match self {
+            auto Result::Err(e) => return e
+            _ => {
+                libc_printf("Called Result::unwrap_err() on an Ok value\n")
+                libc_exit(1)
+                return self.unwrap_err()
+            }
+        }
+    }
+*/
+}

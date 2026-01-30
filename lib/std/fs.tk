@@ -15,6 +15,8 @@ import std/sys/macos as sys
 import std/string::{String}
 import core/types::{Addr, ADDR0}
 import std/io
+import core/result::{Result}
+import core/option::{Option}
 
 // Helpers to workaround potential scope visibility issue in impl blocks
 fn call_readdir(h: Addr) -> String {
@@ -45,7 +47,9 @@ pub shape ReadDir (
 impl ReadDir {
     pub fn next(self#) -> String {
         unsafe {
-            if self.finished { return String::from("") }
+            if self.finished {
+                return String::from("")
+            }
             
             auto name = call_readdir(self.handle)
             if name.len() == 0 {
@@ -59,7 +63,7 @@ impl ReadDir {
     
     pub fn close(self#) {
         unsafe {
-            if !self.finished {
+            if self.finished == false {
                 call_closedir(self.handle)
                 self.finished = true
             }
@@ -70,10 +74,13 @@ impl ReadDir {
 pub fn read_dir(path: String) -> ReadDir {
     unsafe {
         auto h = call_opendir(path)
-        auto is_null = h == (0:Addr)
+        if h == (0:Addr) {
+            // Return finished iterator on failure
+            return ReadDir(handle = h, finished = true)
+        }
         return ReadDir(
             handle = h,
-            finished = is_null
+            finished = false
         )
     }
 }

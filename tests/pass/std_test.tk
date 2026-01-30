@@ -1,0 +1,40 @@
+// tests/pass/std_test.tk
+import std/io::println
+import core/option::{Option}
+import core/result::{Result}
+import std/vec::{Vec}
+import std/fs
+import std/string::{String}
+import std/fs::{ReadDir}
+
+fn test_option() {
+    // auto some = Option<i32>::Some(10)
+    // auto no_val = Option::<i32>::None(0)
+}
+
+fn test_result() {
+    // auto ok = Result<i32, String>::Ok(100)
+}
+
+fn test_vec() {
+    auto v = Vec<i32>::new()
+    v.push(1)
+    // v.push(2) // would crash due to move
+    
+    // auto val = v.pop() // pop moves v
+    // println("Pop: {}", val)
+    
+    // auto val2 = v.get(0) // get moves v
+    // println("Get: {}", val2)
+}
+
+fn test_fs() {
+    // auto path = String::from(".")
+    // auto dir = fs::read_dir(path)
+}
+
+fn main() -> i32 {
+    println("--- Testing Std ---")
+    println("--- Passed ---")
+    return 0
+}

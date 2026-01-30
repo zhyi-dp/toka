@@ -15,8 +15,6 @@ import core/types::{char, usize, Addr, ADDR0}
 import std/string::{String}
 import core/libc::*
 
-/*
-
 // macOS specific argument retrieval externs.
 extern fn _NSGetArgc() -> *i32
 extern fn _NSGetArgv() -> *Addr 
@@ -107,8 +105,17 @@ pub fn path_exists(path: String) -> bool {
 
 pub fn getcwd_impl() -> String {
     unsafe {
-        libc_write(2, "DEBUG: getcwd_impl returning dummy\n" as *u8, 31)
-        return String::from("test_cwd_dummy")
+        // libc_write(2, "DEBUG: getcwd_impl returning dummy\n" as *u8, 31)
+        // return String::from("test_cwd_dummy")
+        
+        // Real implementation using getcwd
+        auto *buf = libc_malloc(1024) as *char
+        auto res_addr = libc_getcwd(*buf, 1024:usize)
+        if res_addr == ADDR0 {
+             libc_free(*buf as *void)
+             return String::from("")
+        }
+        return String::from_take(*buf)
     }
 }
 
@@ -121,15 +128,14 @@ pub fn chdir_impl(path: String) -> bool {
 pub fn getenv_impl(name: String) -> String {
     unsafe {
         // libc_getenv returns *char (Borrowed)
-        auto val = libc_getenv(name.c_str())
-        auto val_addr = val as Addr
+        auto *val = libc_getenv(name.c_str())
         
-        if val_addr == ADDR0 {
+        if *val == nullptr {
             return String::from("")
         }
         
         // Copy from borrowed pointer
-        return String::from(val)
+        return String::from(*val)
     }
 }
 
@@ -145,7 +151,6 @@ pub fn unsetenv_impl(name: String) -> bool {
         return libc_unsetenv(name.c_str()) == 0
     }
 }
-*/
 
 pub fn __toka_panic_handler(msg: str) {
     // macOS 特有的实现：写 stderr + 退出

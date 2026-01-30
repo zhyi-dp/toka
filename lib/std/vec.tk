@@ -16,6 +16,7 @@ import core/types::{usize, Addr, ADDR0}
 import core/traits::{@encap}
 import core/libc::*
 import std/io::println
+import core/option::{Option}
 
 // Helper for mutable iteration
 shape Counter(val: usize)
@@ -92,12 +93,19 @@ impl<T> Vec<T> {
     pub fn pop(self#) -> T {
         unsafe {
             if self.len == 0 {
-                libc_printf("Error: pop from empty Vec\n")
+                // panic("Vec::pop empty")
+                // Return dummy? T is unknown.
+                // We cannot return dummy for T.
+                // So we MUST panic or abort.
+                // call libc::exit(1)
                 libc_exit(1)
+                // return uninit? unreachable
             }
             
             self.len -= 1
-            return self.buf[self.len]
+            // Copy out
+            auto val = self.buf[self.len]
+            return val
         }
     }
     
@@ -105,10 +113,10 @@ impl<T> Vec<T> {
     pub fn get(self, index: usize) -> T {
         unsafe {
              if index >= self.len {
-                 libc_printf("Error: index out of bounds\n")
                  libc_exit(1)
              }
-             return self.buf[index]
+             auto val = self.buf[index]
+             return val
         }
     }
 

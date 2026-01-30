@@ -1,0 +1,44 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+
+import core/prelude::*
+import std/io::println
+import core/libc::libc_exit
+
+pub shape Option<T> (
+    Some(T) = 1 |
+    None(i32) = 0
+)
+
+impl<T> Option<T> {
+    pub fn is_some(self) -> bool {
+        match self {
+            Option::Some(_) => return true
+            _ => return false
+        }
+    }
+
+    pub fn is_none(self) -> bool {
+        return self.is_some() == false
+    }
+
+/*
+    pub fn unwrap(self) -> T {
+        match self {
+            auto Option::Some(val) => return val
+            _ => {
+                libc_printf("Called Option::unwrap() on a None value\n")
+                libc_exit(1)
+                // Unreachable but satisfy return
+                return self.unwrap() 
+            }
+        }
+    }
+
+    pub fn unwrap_or(self, def_val: T) -> T {
+        match self {
+            auto Option::Some(val) => return val
+            _ => return def_val
+        }
+    }
+*/
+}
