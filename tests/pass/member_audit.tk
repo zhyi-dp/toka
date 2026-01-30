@@ -3,6 +3,12 @@ import std/debug::assert
 
 shape Point(x: i32, y: i32)
 shape Container(^p!: Point, val: i32, immut$: i32)
+impl Container {
+    fn drop(self#) {
+        // Resources are handled by compiler, but we need the method to exist
+    }
+}
+
 
 fn main() -> i32 {
     //* 1. Terminal Marking & Bloodline check

@@ -456,9 +456,17 @@ void Sema::checkStmt(Stmt *S) {
       }
       bool isMut = isMutFromExpr || Var->IsValueMutable || Var->IsRebindable;
 
-      // [Reconcile] Registration in ActiveBorrows is sufficient.
-      // Borrow counts are handled by checkExpr during traversal,
-      // and cleaned up by exitScope using ActiveBorrows metadata.
+      // [Reconcile] Link back the borrowing relationship to authorize this new
+      // variable.
+      SymbolInfo *srcInfo = nullptr;
+      if (CurrentScope->findSymbol(m_LastBorrowSource, srcInfo)) {
+        if (isMut) {
+          srcInfo->IsMutablyBorrowed = true;
+          srcInfo->MutablyBorrowedBy = Var->Name;
+        }
+        // [Fix] Do NOT increment ImmutableBorrowCount here.
+        // It's already incremented by checkExpr() during RHS evaluation.
+      }
       Info.BorrowedFrom = m_LastBorrowSource;
       CurrentScope->ActiveBorrows[Var->Name] = {m_LastBorrowSource, isMut};
 

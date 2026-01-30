@@ -403,9 +403,17 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // name.
     if (m_InIntermediatePath) {
       if (ve->HasPointer || ve->IsUnique || ve->IsShared) {
-        error(ve, "Pointer morphology symbols (*, ^, ~) are only allowed "
-                  "at the terminal of an access chain, got '" +
-                      ve->toString() + "'");
+        error(ve, "Morphology symbols (^, *, ~, &) are only allowed at the "
+                  "terminal of an access chain, got '" +
+                      ve->Name + "'");
+      }
+      if (ve->IsValueMutable || ve->IsValueNullable || ve->IsValueBlocked) {
+        if (!m_IsMemberBase) {
+          error(ve,
+                "Permission symbols (#, ?, $) are only allowed at the terminal "
+                "of an access chain, got '" +
+                    ve->Name + (ve->IsValueMutable ? "#" : "") + "'");
+        }
       }
     }
 
@@ -448,7 +456,6 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     bool authorized = false;
     // 1. Definition-time Authorization: The being-defined variable (borrower)
-    // is authorized to access its source.
     if (!borrower.empty()) {
       if (ve->Name == borrower)
         authorized = true;
@@ -1529,10 +1536,18 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // [Fix] Do NOT disable soul collapse.
     // If the user wants the handle, they must use explicit prefix (e.g. ^ptr#).
     // Otherwise `ptr#` means "Mutable Value".
-    // bool oldDisable = m_DisableSoulCollapse;
-    // m_DisableSoulCollapse = true;
+    if (m_InIntermediatePath) {
+      if (Post->Op == TokenType::TokenWrite ||
+          Post->Op == TokenType::TokenNull) {
+        if (!m_IsMemberBase) {
+          error(Post,
+                "Permission symbols (#, ?) are only allowed at the terminal "
+                "of an access chain");
+        }
+      }
+    }
+
     auto lhsObj = checkExpr(Post->LHS.get());
-    // m_DisableSoulCollapse = oldDisable;
     std::string lhsInfo = lhsObj->toString();
     if (auto *Var = dynamic_cast<VariableExpr *>(Post->LHS.get())) {
       SymbolInfo Info;
@@ -1718,7 +1733,10 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
 
   bool savedDisable = m_DisableSoulCollapse;
   m_DisableSoulCollapse = true;
+  bool savedMemberBase = m_IsMemberBase;
+  m_IsMemberBase = true;
   objTypeObj = checkExpr(Memb->Object.get());
+  m_IsMemberBase = savedMemberBase;
   m_DisableSoulCollapse = savedDisable;
   m_InIntermediatePath = oldIntermediate;
 
@@ -2123,8 +2141,16 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   if (m_InIntermediatePath) {
     if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
         Unary->Op == TokenType::Tilde || Unary->Op == TokenType::Ampersand) {
-      error(Unary, "Pointer morphology symbols are only allowed at the "
-                   "terminal of an access chain");
+      error(Unary,
+            "Morphology symbols (^, *, ~, &) are only allowed at the terminal "
+            "of an access chain");
+    }
+    if (Unary->IsRebindable || Unary->HasNull) {
+      if (!m_IsMemberBase) {
+        error(Unary,
+              "Permission symbols (#, ?) are only allowed at the terminal "
+              "of an access chain");
+      }
     }
   }
 
@@ -2228,18 +2254,14 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
                 !reborrow_authorized) {
               error(Unary, DiagID::ERR_BORROW_MUT, EffectiveName);
             }
-            if (!isReceiver) {
-              EffectiveInfo->IsMutablyBorrowed = true;
-              if (!borrower.empty())
-                EffectiveInfo->MutablyBorrowedBy = borrower;
-            }
+            EffectiveInfo->IsMutablyBorrowed = true;
+            if (!borrower.empty())
+              EffectiveInfo->MutablyBorrowedBy = borrower;
           } else {
             if (EffectiveInfo->IsMutablyBorrowed && !reborrow_authorized) {
               error(Unary, DiagID::ERR_BORROW_MUT, EffectiveName);
             }
-            if (!isReceiver) {
-              EffectiveInfo->ImmutableBorrowCount++;
-            }
+            EffectiveInfo->ImmutableBorrowCount++;
           }
 
           m_LastBorrowSource = EffectiveName;
@@ -2272,9 +2294,12 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
       }
 
       if (Unary->Op == TokenType::Caret) {
-        if (!m_InLHS && (EffectiveInfo->IsMutablyBorrowed ||
-                         EffectiveInfo->ImmutableBorrowCount > 0)) {
-          error(Unary, DiagID::ERR_BORROW_MUT, EffectiveName);
+        if (!m_InLHS) {
+          if (EffectiveInfo->IsMutablyBorrowed) {
+            error(Unary, DiagID::ERR_BORROW_MUT, EffectiveName);
+          } else if (EffectiveInfo->ImmutableBorrowCount > 0) {
+            error(Unary, DiagID::ERR_MOVE_BORROWED, EffectiveName);
+          }
         }
         if (physType && physType->isUniquePtr()) {
           return physType->withAttributes(
@@ -2490,7 +2515,9 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       SymbolInfo *RHSInfoPtr = nullptr;
       if (CurrentScope->findSymbol(RHSVar->Name, RHSInfoPtr) &&
           RHSInfoPtr->IsUnique()) {
-        if (RHSInfoPtr->IsBorrowed()) {
+        if (RHSInfoPtr->IsMutablyBorrowed) {
+          error(Bin, DiagID::ERR_BORROW_MUT, RHSVar->Name);
+        } else if (RHSInfoPtr->ImmutableBorrowCount > 0) {
           error(Bin, DiagID::ERR_MOVE_BORROWED, RHSVar->Name);
         }
         CurrentScope->markMoved(RHSVar->Name);
@@ -2628,9 +2655,12 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
             }
           }
 
-          if ((EffectiveInfo->IsMutablyBorrowed && !authorized) ||
-              (EffectiveInfo->ImmutableBorrowCount > 0 && !authorized)) {
-            error(Bin, DiagID::ERR_BORROW_MUT, EffectiveName);
+          if (!authorized) {
+            if (EffectiveInfo->IsMutablyBorrowed) {
+              error(Bin, DiagID::ERR_BORROW_MUT, EffectiveName);
+            } else if (EffectiveInfo->ImmutableBorrowCount > 0) {
+              error(Bin, DiagID::ERR_MOVE_BORROWED, EffectiveName);
+            }
           }
         }
 

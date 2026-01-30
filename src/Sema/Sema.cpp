@@ -818,41 +818,26 @@ void Sema::analyzeShapes(Module &M) {
     }
 
     if (props.HasDrop && !hasExplicitDrop) {
-      // Synthesize an implicit drop implementation at AST level
-      // so CodeGen will naturally pick it up and generate recursive member
-      // drops.
-
-      // 1. Create Arg: self#
-      FunctionDecl::Arg selfArg;
-      selfArg.Name = "self#";
-      selfArg.Type = S->Name + "#";
-      // We don't necessarily need to resolve it here as genFunction will
-      // resolve it
-
-      // 2. Create BlockStmt: {}
-      auto body = std::make_unique<BlockStmt>();
-
-      // 3. Create FunctionDecl: drop(self#) {}
+      // [Ch 7] Synthesize default drop impl for resource-managing shapes
       std::vector<FunctionDecl::Arg> args;
-      args.push_back(std::move(selfArg));
+      args.push_back({"self#", "Self"});
+      auto dropFn =
+          std::make_unique<FunctionDecl>(false, "drop", std::move(args),
+                                         std::make_unique<BlockStmt>(), "void");
 
-      auto func = std::make_unique<FunctionDecl>(true, "drop", std::move(args),
-                                                 std::move(body), "void");
-      func->Loc = S->Loc; // Use Shape's location
-
-      // 4. Create ImplDecl: impl @encap for Shape { ... }
       std::vector<std::unique_ptr<FunctionDecl>> methods;
-      methods.push_back(std::move(func));
+      methods.push_back(std::move(dropFn));
 
       auto impl =
           std::make_unique<ImplDecl>(S->Name, std::move(methods), "encap");
-      impl->Loc = S->Loc;
 
-      // 5. Register Mangled Name
-      S->MangledDestructorName = "encap_" + S->Name + "_drop";
-
-      // 6. Push to Module
+      // Register and Add to Module
+      registerImpl(impl.get());
       M.Impls.push_back(std::move(impl));
+
+      // Authorize destructor for CodeGen
+      S->MangledDestructorName = "encap_" + S->Name + "_drop";
+      m_ShapeProps[S->Name].HasDrop = true;
     }
 
     // [Rule] Union Safety: No Resource Types (HasDrop)

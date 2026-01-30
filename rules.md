@@ -12,6 +12,7 @@
 - git commit -m 信息不能包含可能被 bash/zsh 等截断内容的符号
 - 每次commit前运行 tool/test_pass.sh， 将测试结果以 [pass 71/79]的格式放在 commit 信息的最开始
 - git 命令不要跟任何其他命令一起&&执行
+- 执行的命令中不要出现任何的中文
 - 如果遇到编译器代码出现大括号不匹配的问题，可以使用 tool/check_braces.py 工具辅助定位
 - toka编译器的编译错误信息必须出自DiagnosticDefs.def，若有新的错误信息类型，请维护DiagnosticDefs.def先
 - toka没有`let`关键字，而是`auto`关键字; toka的shape定义使用圆括号而不是大括号

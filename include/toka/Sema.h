@@ -248,6 +248,8 @@ private:
       false; // [Ch 5] Track if we are in a chain (not leaf)
   bool m_IsAssignmentTarget =
       false; // [Ch 6] Track if we are at the LHS terminal
+  bool m_IsMemberBase =
+      false; // [NEW] Track if we are checking the base of a member access
   TokenType m_OuterPointerSigil =
       TokenType::TokenNone; // [NEW] Track outer pointer sigil for nested member
                             // access

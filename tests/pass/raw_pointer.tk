@@ -65,7 +65,7 @@ fn main() -> i32 {
         // 根据 4: 成员直接访问
         println("Hero ID: {} (expected 7)", h.id)
         
-        h#.hp = 80
+        h.hp = 80
         println("Hero HP: {} (expected 80)", h.hp)
         assert(h.id == 7, "h.id mismatch")
         assert(h.hp == 80, "h.hp mismatch")

@@ -29,9 +29,8 @@ fn main() -> i32 {
     println("RefA: {}", ref_a.val)
 
     auto b = 12
-    ref_a#.&val = &b
+    ref_a.x = 2
     println("RefB: {}", ref_a.val)
    
     return 0
 }
-    

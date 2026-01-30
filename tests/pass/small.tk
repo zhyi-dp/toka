@@ -33,11 +33,11 @@ fn addx(point: Point, v: i32) -> i32 {
 }
 
 fn addtox(point#: Point, v: i32) {
-    point#.x += v
+    point.x += v
 }
 
 fn addtox_useref(&point#: Point, v: i32) {
-    point#.x += v
+    point.x += v
 }
 
 fn main() -> i32 {
@@ -50,7 +50,7 @@ fn main() -> i32 {
         i = i + 1
     }
     println("[{}]p.x is {}, loop {}", logi++, p.x, i)
-    p#.x = addx(p, 10)
+    p.x = addx(p, 10)
     println("[{}]p.x is {} (after addx, should be 41)", logi++, p.x)
     
     addtox(p#, 10)
