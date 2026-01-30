@@ -127,6 +127,29 @@ Toka 引入了“形态学”操作符来处理对象标识、所有权和空值
 | `&` | **借用/引用**: 对值或 Soul 的临时视图 (非所有权)。 | `auto &y = &x` |
 | `*` | **标识/原始指针**: 访问底层指针或地址。 | `println("Addr: {}", *ptr)` |
 
+### 空安全 (Null Safety)
+Toka 将可空性视为类型层面的特性 (`?`)。要安全地访问可空值，必须先进行解包。
+
+#### 安全解包 (`is`)
+使用 `if source is target` 来安全地解包可空变量。
+
+```toka
+auto ^?p = ...
+if ^?p is ^p {
+    // p 在此处非空
+}
+```
+
+#### 断言 (`??`)
+使用 `??` 断言值不为空。如果为空，并在运行时 Panic。
+- **身份断言**: `??ptr` 检查指针本身是否非空。
+- **值断言**: `val??` 检查可选值是否存在。
+
+```toka
+auto ^must = ??p       // 若 p 为 nullptr 则 Panic
+auto val = opt??       // 若 opt 为 none 则 Panic
+```
+
 ### 借用 (Borrowing)
 使用 `&` 创建借用引用。
 
@@ -186,16 +209,26 @@ memory::free(*raw)
 ### 自动资源管理 (深度释放/Deep Drop)
 Toka 支持 **递归释放 (Recursive Drop)**。当一个容器结构体被释放（例如超出作用域）时，Toka 会自动调用所有需要释放的成员的 `drop` 方法。
 
+**1.3 新特性**: 如果你没有提供 `drop` 方法，编译器会自动为包含资源（如智能指针或其他带有 `drop` 的 Shape）的 Shape **自动合成** 一个 `drop` 方法。这意味着递归清理默认发生，无需手动编写样板代码。
+
 ```toka
-impl Resource {
+shape Tree(
+    left: ^?Tree,  // 自动释放！
+    right: ^?Tree
+)
+// 无需手动编写 'impl Tree { drop... }'
+```
+
+如果你需要自定义清理逻辑（如日志记录或管理原始指针），你仍然可以手动实现 `drop`：
+
+```toka
+impl Resource@encap {
     fn drop(self#) {
         println("Resource dropped")
-        // 成员变量如 'self.inner_ptr' 会在此函数体执行完毕后自动释放。
+        // 成员变量会在此函数体执行完毕后自动释放。
     }
 }
 ```
-
-**安全规则:** 如果你的 Shape 包含资源（如原始指针或其他带有 `drop` 的 Shape），编译器会**强制**你为该 Shape 实现 `drop` 以确保权责分明。
 
 ---
 
@@ -238,7 +271,35 @@ impl Rect@Shape {
 
 ---
 
-## 6. 控制流
+## 6. 泛型 (Generics)
+Toka 支持 Shape 和函数的泛型编程。
+
+### 泛型 Shape
+你可以使用尖括号 `<T>` 定义适用于任何类型的 Shape。
+
+```toka
+shape Box<T> (
+    value: T
+)
+
+fn main() {
+    auto b1 = Box(value = 10)       // Box<i32>
+    auto b2 = Box(value = "hello")  // Box<str>
+}
+```
+
+### 泛型函数
+函数也可以是泛型的。
+
+```toka
+fn identity<T>(x: T) -> T {
+    return x
+}
+```
+
+---
+
+## 7. 控制流
 
 ### If / Else
 ```toka
@@ -264,7 +325,7 @@ loop {
 
 ---
 
-## 7. 模块与导入
+## 8. 模块与导入
 
 使用 `import` 将其他模块的符号引入当前作用域。
 
@@ -279,7 +340,7 @@ fn main() {
 
 ---
 
-## 8. 语言设计哲学：安全至上
+## 9. 语言设计哲学：安全至上
 Toka 旨在通过以下机制防止常见的内存错误：
 1. **严格的移动语义 (Strict Move Semantics)**: 防止“移动后使用”错误。
 2. **借用检查器 (Borrow Checker)**: 确保引用不会比其指向的数据存活得更久。

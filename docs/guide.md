@@ -146,6 +146,29 @@ Toka introduces "Morphology" operators to handle object identity, ownership, and
 | `&` | **Borrow/Reference**: A temporary view into a value/soul. | `auto &y = &x` |
 | `*` | **Identity/Raw Pointer**: Accesses the underlying pointer/address. | `println("Addr: {}", *ptr)` |
 
+### Null Safety (The `is` and `??` Operators)
+Toka treats nullability as a type-level feature (`?`). To safely access a nullable value, you must unwrap it.
+
+#### Safe Unwrap (`is`)
+Use `if source is target` to safely unwrap a nullable variable.
+
+```toka
+auto ^?p = ...
+if ^?p is ^p {
+    // p is non-null here
+}
+```
+
+#### Assertion (`??`)
+Use `??` to assert that a value is not null. It panics at runtime if the value is null.
+- **Identity Assertion**: `??ptr` checks if the pointer itself is not null.
+- **Value Assertion**: `val??` checks if the optional value exists.
+
+```toka
+auto ^must = ??p       // Panics if p is nullptr
+auto val = opt??       // Panics if opt is none
+```
+
 ### Borrowing
 Borrowed references are created using `&`.
 
@@ -186,16 +209,26 @@ memory::free(*raw)
 ### Automatic Resource Management (Deep Drop)
 Toka supports **Recursive Drop**. When a container struct is dropped (e.g. goes out of scope), Toka automatically calls `drop` on all its members that require it.
 
+**New in 1.3**: The compiler **automatically synthesizes** a `drop` method for shapes containing resources (like smart pointers or other shapes with `drop`) if you don't provide one. This ensures recursive cleanup happens by default without manual boilerplate.
+
 ```toka
-impl Resource {
+shape Tree(
+    left: ^?Tree,  // Automatically dropped!
+    right: ^?Tree
+)
+// No manual 'impl Tree { drop... }' needed.
+```
+
+If you need custom cleanup logic (e.g., logging or managing raw pointers), you can still implement `drop` manually:
+
+```toka
+impl Resource@encap {
     fn drop(self#) {
         println("Resource dropped")
-        // Members like 'self.inner_ptr' are dropped automatically AFTER this body.
+        // Members are dropped automatically AFTER this body.
     }
 }
 ```
-
-**Safety Rule:** If your shape contains resources (like raw pointers or other shapes with `drop`), the compiler **forces** you to implement `drop` for that shape to ensure accountability.
 
 ---
 
@@ -238,7 +271,35 @@ impl Rect@Shape {
 
 ---
 
-## 6. Control Flow
+## 6. Generics
+Toka supports generic programming for both Shapes and Functions.
+
+### Generic Shapes
+You can define shapes that work with any type using angle brackets `<T>`.
+
+```toka
+shape Box<T> (
+    value: T
+)
+
+fn main() {
+    auto b1 = Box(value = 10)       // Box<i32>
+    auto b2 = Box(value = "hello")  // Box<str>
+}
+```
+
+### Generic Functions
+Functions can also be generic.
+
+```toka
+fn identity<T>(x: T) -> T {
+    return x
+}
+```
+
+---
+
+## 7. Control Flow
 
 ### If / Else
 ```toka
@@ -264,7 +325,7 @@ loop {
 
 ---
 
-## 7. Modules and Imports
+## 8. Modules and Imports
 
 Use `import` to bring symbols from other modules into scope.
 
@@ -279,7 +340,7 @@ fn main() {
 
 ---
 
-## 8. Philosophy: Safety First
+## 9. Philosophy: Safety First
 Toka is designed to prevent common memory errors through:
 1. **Strict Move Semantics**: Prevents "Use-after-move".
 2. **Borrow Checker**: Ensures references do not outlive their data.

@@ -91,8 +91,9 @@ auto ^#p2? = ...    // 可交换(指向可变)、可空、独占指针
     - [x] 所有权与借用验证 (Ownership & Borrowing Verification)
     - [x] **空安全 (Null Safety)** (`is` 操作符、严格判空)
     - [x] **资源安全分析 (Resource Safety)** (强制含资源 Shape 实现 `drop`)
-- [ ] **高级特性**
-    - [ ] 泛型 / 模板 (Generics)
+- [x] **高级特性**
+    - [x] **泛型 / 模板 (Generics)** (类型与函数)
+    - [x] **自动析构合成 (Automatic Drop Synthesis)** (递归 Deep Drop)
     - [ ] 并发 (`Task`, `async`/`await`)
     - [ ] **标准库 (Standard Library)**
         - [x] 基础 I/O
@@ -160,14 +161,17 @@ fn main() {
 
 fn null_safety() {
     auto ^?p = nullptr // 身份可空 (Identity is Nullable)
+    
+    // 1. 安全解包 (通过 'is')
     if ^?p is ^p {
-        println("Not Null!") // 只有在指针不为空时执行
+        println("Not Null: {}", *p) // 只有在指针不为空时执行
     }
     
-    auto obj? = none // 内容可空 (Value is Nullable)
-    if obj? is obj {
-        println("Object exists!")
-    }
+    // 2. 直接断言 (空则 Panic)
+    // - 前缀 '??' 用于身份 (Pointer) 断言
+    // - 后缀 '??' 用于灵魂 (Value) 断言
+    auto ^must_ptr = ??p        
+    auto val = some_val??
 }
 ```
 

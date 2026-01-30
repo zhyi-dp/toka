@@ -62,6 +62,7 @@ Compiler parser should treat these as reserved.
     - Integer literals without suffix: `i32`.
     - Floating point literals without suffix: `f64`.
 - `<-`: Dependency / Channel receive (Context dependent).
+- `??`: **Null Assertion** (Prefix for pointer, Suffix for value).
 - `&`: **Reference prefix** (e.g., `auto &r = &x#`).
 - `++` / `--`: **Increment/Decrement** (Prefix and Postfix).
 - `.`: Access.
@@ -409,16 +410,21 @@ Toka uses a **Host-Based Permission Inheritance** system with **Explicit Slot Ov
 
 *(Note: `*p1` behaves as `*p1$` for the entity part due to blocking)*
 
-### 5. Nullability Handling (The `is` Operator)
-**Sole Mechanism**: Toka uses the `is` operator as the **only** method for null checks and unwrapping. 
--   **Discarded/Forbidden**: `if auto`, `match` for nulls, `== null` checks, implicit smart casts.
+### 5. Nullability Handling (The `is` and `??` Operators)
+**Mechanisms**: Toka uses `is` for safe unwrapping and `??` for direct assertion.
+-   **Discarded/Forbidden**: `if auto` (ambiguous), `== null` checks (unsafe).
 -   **Syntax**: `if Source is Target { ... }`
     -   **Source Expression**: `^?p` (matches the declaration pattern of the nullable variable).
     -   **Target Expression**: `^p` (matches the desired non-nullable pattern).
     -   **Actual Code**: `if ^?p is ^p { ... }`.
     -   **Semantics**: Checks if variable `p` (declared as `auto ^?p`) is not null.
     -   **Deep Conversion**: `if ~!ptr? is ~ptr`.
--   **Type Narrowing (Sema Rule)**: Inside the `then` branch of an `is` check, the compiler must temporarily narrow the source variable's type (e.g., `HasNull` becomes `false`). Generated IR can then safely perform GEPs and Loads without further guards.
+-   **Type Narrowing (Sema Rule)**: Inside the `then` branch of an `is` check, the compiler must temporarily narrow the source variable's type.
+
+#### 5.2 Direct Assertion (`??`)
+-   **Prefix `??p`**: Asserts that identity `p` (pointer) is not null. Returns `^T`.
+-   **Suffix `val??`**: Asserts that `val` (optional) contains a value. Returns `T`.
+-   **Runtime**: Emits a Panic if the check fails.
 
 ### 6. Encapsulation (@encap)
 Toka uses a centralized access control mechanism via the `@encap` trait implementation.

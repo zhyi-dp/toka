@@ -91,8 +91,9 @@ We are actively building the compiler self-hosting capabilities.
     - [x] Ownership & Borrowing Verification (Move Semantics)
     - [x] **Null Safety** (`is` Operator, Strict Null Checks)
     - [x] **Resource Safety Analysis** (Enforced `drop` for resources)
-- [ ] **Advanced Features**
-    - [ ] Generics / Templates
+- [x] **Advanced Features**
+    - [x] **Generics / Templates** (Type & Function)
+    - [x] **Automatic Drop Synthesis** (Recursive Deep Drop)
     - [ ] Concurrency (`Task`, `async`/`await`)
     - [ ] **Standard Library**
         - [x] Basic I/O
@@ -162,14 +163,17 @@ fn main() {
 
 fn null_safety() {
     auto ^?p = nullptr // Identity is Nullable
-    if ^?p is ^p {
-        println("Not Null!")
-    }
     
-    auto obj? = none // Value is Nullable (Option)
-    if obj? is obj {
-        println("Object exists!")
+    // 1. Safe Unwrap via 'is'
+    if ^?p is ^p {
+        println("Not Null: {}", *p)
     }
+
+    // 2. Direct Assertion (Panics if null)
+    // - Prefix '??' for Identity (Pointer) Check
+    // - Suffix '??' for Soul (Value) Check
+    auto ^must_ptr = ??p        
+    auto val = some_opt_val??
 }
 ```
 
