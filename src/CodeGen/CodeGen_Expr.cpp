@@ -2879,13 +2879,15 @@ PhysEntity CodeGen::genPostfixExpr(const PostfixExpr *post) {
         // 2. GEP to data (index 0) and return its address
         llvm::Value *dataPtr = m_Builder.CreateStructGEP(lhs_pe.irType, lhs_val,
                                                          0, "soul.dataPtr");
-        return PhysEntity(dataPtr, lhs_pe.typeName, innerType, true);
+        llvm::Type *resTy = getLLVMType(post->ResolvedType);
+        return PhysEntity(dataPtr, "", resTy, true);
       } else {
         // Raw Pointer case: T**
         llvm::Value *ptrVal =
             m_Builder.CreateLoad(lhs_pe.irType, lhs_val, "nn.load");
         genNullCheck(ptrVal, post);
-        return lhs_pe; // Still an address T**
+        llvm::Type *resTy = getLLVMType(post->ResolvedType);
+        return PhysEntity(ptrVal, "", resTy, true);
       }
     } else {
       // R-Value (already loaded / value type)

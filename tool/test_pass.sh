@@ -6,6 +6,7 @@ LLI=$(which lli || which lli-17 || echo "/usr/local/Cellar/llvm@17/17.0.6/bin/ll
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 GRAY='\033[0;90m'
 
@@ -136,14 +137,14 @@ for test_path in tests/pass/*.tk; do
         
         # If it passed BUT crashed (Expected Panic), show context for verification
         if [ $exit_code -ne 0 ]; then
-             printf "[${GREEN}PASS with Expected Panic${NC}] %-35s\n" "$file_name"
+             printf "[${GREEN}PASS${NC} with Expected ${YELLOW}Panic${NC}] %-35s\n" "$file_name"
              print_log_context "$log_file" "$exit_code"
         fi
         
         rm -f "$ll_file" "$log_file"
     else
         ((fail_count++))
-        printf "[FAIL] %-35s\n" "$file_name"
+        printf "[${RED}FAIL${NC}] %-35s\n" "$file_name"
         for err_msg in "${errors[@]}"; do
             echo -e "    $err_msg"
         done

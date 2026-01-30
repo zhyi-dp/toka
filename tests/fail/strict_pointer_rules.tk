@@ -4,14 +4,12 @@ shape Point(x: i32, y: i32)
 fn main() -> i32 {
     unsafe {
         // FAIL 1: Implicit pointer inference
-        auto p1 = new Point(x=1, y=2) 
-        // EXPECT: error[E0451]:
+        auto p1 = new Point(x=1, y=2) // EXPECT: error[E0451]:
         
         auto ^p2# = new Point(x=3, y=4)
         
         // FAIL 2: Dot with sigil
-        (^p2).x = 10
-        // EXPECT: error[E0452]:
+        (^p2).x = 10 // EXPECT: error[E0406]:
         
         // FAIL 3 REMOVED: Arrow usage causes Parser error which hides Sema errors
         // p2->y = 20

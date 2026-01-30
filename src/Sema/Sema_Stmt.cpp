@@ -456,34 +456,9 @@ void Sema::checkStmt(Stmt *S) {
       }
       bool isMut = isMutFromExpr || Var->IsValueMutable || Var->IsRebindable;
 
-      // [Reconcile] Sync borrow strength with reference declaration
-      SymbolInfo *srcInfo = nullptr;
-      if (CurrentScope->findSymbol(m_LastBorrowSource, srcInfo)) {
-        if (isMut) {
-          // Upgrade: Ensure source is mutably borrowed
-          if (srcInfo->ImmutableBorrowCount > 0 &&
-              !(srcInfo->IsMutablyBorrowed &&
-                srcInfo->MutablyBorrowedBy == Var->Name)) {
-            // Conflict: already immutably borrowed by others
-          }
-          srcInfo->IsMutablyBorrowed = true;
-          srcInfo->MutablyBorrowedBy = Var->Name;
-        } else {
-          // Downgrade: Reference is immutable, so source is only immutably
-          // borrowed
-          if (srcInfo->IsMutablyBorrowed &&
-              srcInfo->MutablyBorrowedBy == Var->Name) {
-            srcInfo->IsMutablyBorrowed = false;
-            srcInfo->MutablyBorrowedBy = "";
-          } else if (srcInfo->IsMutablyBorrowed &&
-                     srcInfo->MutablyBorrowedBy.empty()) {
-            // Statement-level anonymous mutable borrow, downgrade it
-            srcInfo->IsMutablyBorrowed = false;
-          }
-          srcInfo->ImmutableBorrowCount++;
-        }
-      }
-
+      // [Reconcile] Registration in ActiveBorrows is sufficient.
+      // Borrow counts are handled by checkExpr during traversal,
+      // and cleaned up by exitScope using ActiveBorrows metadata.
       Info.BorrowedFrom = m_LastBorrowSource;
       CurrentScope->ActiveBorrows[Var->Name] = {m_LastBorrowSource, isMut};
 

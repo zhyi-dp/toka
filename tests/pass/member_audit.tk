@@ -2,7 +2,7 @@ import std/io::println
 import std/debug::assert
 
 shape Point(x: i32, y: i32)
-shape Container(^p#: Point, val: i32, immut$: i32)
+shape Container(^p!: Point, val: i32, immut$: i32)
 
 fn main() -> i32 {
     //* 1. Terminal Marking & Bloodline check

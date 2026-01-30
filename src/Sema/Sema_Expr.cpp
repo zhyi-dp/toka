@@ -769,6 +769,13 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               Cast->TargetType);
       }
 
+      if (srcType->isReference()) {
+        // [Optimization] Source is already a reference.
+        // We are just re-interpreting the type, not creating a new borrow.
+        // Skip registration.
+        return targetType;
+      }
+
       // Semantic Side-Effect: Register this as a borrow
       Expr *Traverse = Cast->Expression.get();
       // Peel Identity Op if present: ^p -> p
@@ -808,11 +815,14 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
           if (!m_InLHS) {
             bool isExclusive = targetInner->IsWritable;
-            if (isExclusive) {
-              std::string borrower = "";
-              if (!m_ControlFlowStack.empty())
-                borrower = m_ControlFlowStack.back().Label;
+            std::string borrower = "";
+            bool isReceiver = false;
+            if (!m_ControlFlowStack.empty()) {
+              borrower = m_ControlFlowStack.back().Label;
+              isReceiver = m_ControlFlowStack.back().IsReceiver;
+            }
 
+            if (isExclusive) {
               if (EffectiveInfo->IsMutablyBorrowed ||
                   EffectiveInfo->ImmutableBorrowCount > 0) {
                 // [Fix] Authorization on Cast
@@ -822,20 +832,21 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                   error(Cast, DiagID::ERR_BORROW_MUT, EffectiveName);
                 }
               }
-              EffectiveInfo->IsMutablyBorrowed = true;
-              if (!borrower.empty())
-                EffectiveInfo->MutablyBorrowedBy = borrower;
+              if (!isReceiver) {
+                EffectiveInfo->IsMutablyBorrowed = true;
+                if (!borrower.empty())
+                  EffectiveInfo->MutablyBorrowedBy = borrower;
+              }
             } else {
               if (EffectiveInfo->IsMutablyBorrowed) {
-                std::string borrower = "";
-                if (!m_ControlFlowStack.empty())
-                  borrower = m_ControlFlowStack.back().Label;
                 if (!borrower.empty() &&
                     EffectiveInfo->MutablyBorrowedBy != borrower) {
                   error(Cast, DiagID::ERR_BORROW_MUT, EffectiveName);
                 }
               }
-              EffectiveInfo->ImmutableBorrowCount++;
+              if (!isReceiver) {
+                EffectiveInfo->ImmutableBorrowCount++;
+              }
             }
             m_LastBorrowSource = EffectiveName;
             m_CurrentStmtBorrows.push_back({EffectiveName, isExclusive});
@@ -2165,8 +2176,7 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
 
       if (Unary->Op == TokenType::Ampersand) {
         auto innerType = rhsType;
-        bool handleMutable =
-            Unary->IsRebindable || (m_IsAssignmentTarget && Info->IsRebindable);
+        bool handleMutable = Unary->IsRebindable;
         bool soulMutable = rhsType->IsWritable;
 
         auto refType = std::make_shared<toka::ReferenceType>(innerType);
@@ -2180,8 +2190,9 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
         // of the handle if handleMutable is false.
         bool isExclusive = handleMutable;
         if (soulMutable) {
-          if (!(rhsType->isSharedPtr() || rhsType->isRawPointer() ||
-                rhsType->isReference())) {
+          if (physType &&
+              !(physType->isSharedPtr() || physType->isRawPointer() ||
+                physType->isReference())) {
             isExclusive = true;
           }
         }
