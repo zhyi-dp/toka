@@ -2010,6 +2010,20 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
               permitInheritance ? objTypeObj->IsWritable : false;
         }
 
+        // [Toka 1.3] Unit Variant Support: Allow omission of parentheses
+        if (SD->Kind == ShapeKind::Enum || SD->Kind == ShapeKind::Union) {
+          bool isUnit = (Field.Type == "void" || Field.Type.empty());
+          if (isUnit) {
+            Memb->IsStatic =
+                true; // Mark as static for CodeGen to generate constant
+            // Use fieldType directly? No, fieldType is void.
+            // We return the Object Type (The Enum Type) as the value.
+            // Ensure no writability or nullability permissions are blindly
+            // inherited for value.
+            return objTypeObj->withAttributes(false, false);
+          }
+        }
+
         // Apply soul writing to the fieldType itself if it's a pointer
         if (finalSoulWritable) {
           if (auto pt = fieldType->getPointeeType())

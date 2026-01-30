@@ -1,0 +1,66 @@
+import std/debug::assert
+import std/io::println
+
+shape MyOption<T> (
+    Some(T) = 1 |
+    None(i32) = 0
+)
+
+fn main() -> i32 {
+    auto some = MyOption<i32>::Some(100)
+    auto val_none = MyOption<i32>::None(0)
+
+    match some {
+        auto MyOption<i32>::Some(v) => {
+            assert(v == 100, "Enum Some value match failed")
+        }
+        auto MyOption<i32>::None(v) => {
+            assert(false, "Enum match hit None improperly")
+        }
+    }
+
+    match val_none {
+        auto MyOption<i32>::None(v) => {
+            assert(v == 0, "Enum None value matched")
+        }
+        _ => {
+            assert(false, "Enum None match failed")
+        }
+    }
+
+    test_unit_variant()
+    println("Generic Enum with Discriminant passed")
+    return 0
+}
+
+shape MyResult<T> (
+    Val(T) |
+    Empty
+)
+
+fn test_unit_variant() {
+    // Construction requires parentheses
+    auto e = MyResult<i32>::Empty()
+    
+    // Construction without parentheses (New Feature)
+    auto e2 = MyResult<i32>::Empty
+    match e2 {
+        auto MyResult<i32>::Empty => {
+             println("Matched Empty unit variant (no parens)")
+        }
+        _ => assert(false, "Failed to match Empty (no parens)")
+    }
+    
+    match e {
+        auto MyResult<i32>::Empty => {
+            println("Matched Empty unit variant")
+        }
+        _ => assert(false, "Failed to match Empty")
+    }
+
+    auto v = MyResult<i32>::Val(42)
+    match v {
+        auto MyResult<i32>::Val(x) => assert(x == 42, "Failed to match Val")
+        _ => assert(false, "Failed to match Val wild")
+    }
+}

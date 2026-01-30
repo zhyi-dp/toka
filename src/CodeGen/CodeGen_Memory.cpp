@@ -285,19 +285,53 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
 
 PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
   if (mem->IsStatic) {
-    // 1. Get Type Name
+    const ShapeDecl *sh = nullptr;
     std::string typeName = "";
-    if (auto *ve = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
-      typeName = ve->Name;
-      if (ve->ResolvedType && ve->ResolvedType->isShape()) {
-        typeName = ve->ResolvedType->getSoulName();
+    llvm::Type *enumType = nullptr;
+
+    // 1. Resolve Shape from Type Expression (Robust for Generics)
+    if (mem->Object->ResolvedType) {
+      auto rt = mem->Object->ResolvedType;
+      // Peel pointers/refs if present (unlikely for static type access but
+      // safe)
+      while (rt &&
+             (rt->isPointer() || rt->isReference() || rt->isSmartPointer()))
+        rt = rt->getPointeeType();
+
+      if (rt && rt->isShape()) {
+        auto st = std::dynamic_pointer_cast<ShapeType>(rt);
+        if (st && st->Decl) {
+          sh = st->Decl;
+          typeName = st->toString(); // Fallback name
+          enumType = getLLVMType(rt);
+        }
       }
     }
-    // 2. Check if Enum Variant
-    if (m_Shapes.count(typeName) &&
-        m_Shapes[typeName]->Kind == ShapeKind::Enum) {
+
+    // 2. Fallback: Lookup by Variable Name (Legacy/Non-Resolved)
+    if (!sh) {
+      if (auto *ve = dynamic_cast<const VariableExpr *>(mem->Object.get())) {
+        typeName = ve->Name;
+        // Strip morphology
+        typeName = Type::stripMorphology(typeName);
+        if (m_Shapes.count(typeName)) {
+          sh = m_Shapes[typeName];
+          if (m_StructTypes.count(typeName))
+            enumType = m_StructTypes[typeName];
+        } else if (ve->ResolvedType && ve->ResolvedType->isShape()) {
+          // ResolvedType found on variable but not handled above?
+          typeName = ve->ResolvedType->getSoulName();
+          if (m_Shapes.count(typeName))
+            sh = m_Shapes[typeName];
+          if (m_StructTypes.count(typeName))
+            enumType = m_StructTypes[typeName];
+        }
+      }
+    }
+
+    // 3. Check if Enum Variant
+    if (sh && sh->Kind == ShapeKind::Enum) {
       int tag = -1;
-      const ShapeDecl *sh = m_Shapes[typeName];
       for (size_t i = 0; i < sh->Members.size(); ++i) {
         if (sh->Members[i].Name == mem->Member) {
           tag = (sh->Members[i].TagValue != -1) ? (int)sh->Members[i].TagValue
@@ -306,19 +340,22 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
         }
       }
       if (tag != -1) {
+        // Enums are Shapes (Structs), so return { tag }
+        if (enumType && enumType->isStructTy()) {
+          llvm::Value *res = llvm::UndefValue::get(enumType);
+          // Dynamically determine tag type (usually i32, but check struct)
+          if (enumType->getStructNumElements() > 0) {
+            llvm::Type *tagTy = enumType->getStructElementType(0);
+            llvm::Value *typedTagVal = llvm::ConstantInt::get(tagTy, tag);
+            res = m_Builder.CreateInsertValue(res, typedTagVal, 0);
+            return PhysEntity(res, typeName, enumType, false); // RValue
+          }
+        }
+        // Fallback (should ideally not happen for well-formed Enums)
         llvm::Value *tagVal =
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), tag);
-        // Enums are Shapes (Structs), so return { tag }
-        if (m_StructTypes.count(typeName)) {
-          llvm::StructType *st = m_StructTypes[typeName];
-          llvm::Value *res = llvm::UndefValue::get(st);
-          // Dynamically determine tag type (i8, i32, etc.)
-          llvm::Type *tagTy = st->getElementType(0);
-          llvm::Value *typedTagVal = llvm::ConstantInt::get(tagTy, tag);
-          res = m_Builder.CreateInsertValue(res, typedTagVal, 0);
-          return res;
-        }
-        return tagVal;
+        return PhysEntity(tagVal, typeName, llvm::Type::getInt32Ty(m_Context),
+                          false);
       }
     }
     return nullptr;
