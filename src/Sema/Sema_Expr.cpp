@@ -428,8 +428,64 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (Info.Moved && !m_InLHS) {
       error(ve, DiagID::ERR_USE_MOVED, ve->Name);
     }
-    if (Info.IsMutablyBorrowed) {
-      error(ve, DiagID::ERR_BORROW_MUT, ve->Name);
+    // [Fix] Trace to Source for Borrow Check
+    SymbolInfo *EffectiveInfo = &Info;
+    std::string EffectiveName = ve->Name;
+    int traceDepth = 0;
+    while (!EffectiveInfo->BorrowedFrom.empty() && traceDepth < 10) {
+      SymbolInfo *Next = nullptr;
+      if (CurrentScope->findSymbol(EffectiveInfo->BorrowedFrom, Next)) {
+        EffectiveName = EffectiveInfo->BorrowedFrom;
+        EffectiveInfo = Next;
+      } else
+        break;
+      traceDepth++;
+    }
+
+    std::string borrower = "";
+    if (!m_ControlFlowStack.empty())
+      borrower = m_ControlFlowStack.back().Label;
+
+    bool authorized = false;
+    // 1. Definition-time Authorization: The being-defined variable (borrower)
+    // is authorized to access its source.
+    if (!borrower.empty()) {
+      if (ve->Name == borrower)
+        authorized = true;
+      else if (EffectiveInfo->IsMutablyBorrowed &&
+               EffectiveInfo->MutablyBorrowedBy == borrower)
+        authorized = true;
+      else {
+        for (const auto &b : m_CurrentStmtBorrows) {
+          if (b.first == EffectiveName) {
+            authorized = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // 2. Usage-time Authorization: A previously defined reference (ve->Name)
+    // is authorized to access its own source (EffectiveName).
+    if (!authorized) {
+      SymbolInfo veInfo;
+      if (CurrentScope->lookup(ve->Name, veInfo)) {
+        if (veInfo.BorrowedFrom == EffectiveName) {
+          authorized = true;
+        }
+      }
+    }
+
+    if (EffectiveInfo->IsMutablyBorrowed && !authorized) {
+      error(ve, DiagID::ERR_BORROW_MUT, EffectiveName);
+    } else if (EffectiveInfo->ImmutableBorrowCount > 0 && !authorized) {
+      // Shared borrow blocks everyone else's mutable access,
+      // but authorized borrower can access?
+      // Actually, if I am the exclusive borrower, I can still read.
+      // But if I want to MUTATE (in LHS), then shared borrow blocks me.
+      if (m_InLHS) {
+        error(ve, DiagID::ERR_BORROW_MUT, EffectiveName);
+      }
     }
 
     // [Annotated AST] Constant Substitution: The Core Fix
@@ -561,23 +617,6 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       // `substituteConstantVars`? Or just accept that `HasConstantValue` IS the
       // way to go, but I need to fix the Crash reason.
       //
-      // The crash "Instruction does not dominate use" or similar LLVM errors
-      // usually come from block mess-up.
-      //
-      // Let's re-read the user's advice:
-      // "checkIdentifierExpr(IdentifierExpr* ID) ... return new NumberExpr"
-      // The user thinks I have `checkIdentifierExpr` returning `Expr*`. I DO
-      // NOT. I have `checkExpr(Expr*)` returning `Type`.
-      //
-      // COMPROMISE:
-      // I will use `HasConstantValue` (Sema) + `genVariableExpr` (CodeGen)
-      // checks. The user's premise that I can swap AST nodes return values is
-      // technically incompatible with the current `Sema` signature.
-      //
-      // However, I CAN mutate `VariableExpr` to `ResolvedType` = `const int`.
-      //
-      // Let's try to restore the CodeGen logic but be very careful.
-      //
       // The crash with `println` might be because `genVariableExpr` returned a
       // ConstantInt, and `genCallExpr` tried to pass it as `...` (VarArg). For
       // VarArgs, `genCallExpr` calls `genExpr`. If `genExpr` returns a
@@ -626,8 +665,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     if (shouldCollapse && current) {
       while (current && (current->isPointer() || current->isReference() ||
                          current->isSmartPointer())) {
-        if (current->IsNullable) {
-          // Rule: deref of nullable REQUIRES explicit check
+        // [Constitution 5.2] LHS Exemption: Nullable pointers collapse on LHS
+        // for assignment.
+        if (current->IsNullable && !m_InLHS) {
           break;
         }
         auto inner = current->getPointeeType();
@@ -646,16 +686,34 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     // now.
     if (shouldCollapse || (current && !current->isPointer())) {
       if (current) {
-        // [Toka 1.3] LHS Permission Exemption: '#' can be omitted on LHS
+        // [Toka 1.3] Permission View: Default to immutable unless '#' is
+        // present or in LHS.
         bool usageMutable = ve->IsValueMutable;
-        if (m_InLHS && Info.IsMutable()) {
-          usageMutable = true;
+        if (m_InLHS) {
+          if (shouldCollapse) {
+            // Looking at soul: inherit soul mutability
+            if (Info.IsSoulMutable())
+              usageMutable = true;
+          } else {
+            // Looking at identity: inherit handle mutability (rebindable)
+            if (Info.IsRebindable || Info.IsMutable())
+              usageMutable = true;
+          }
         }
 
         // [Fix] Additive Nullability
         bool effectiveNull = current->IsNullable || ve->IsValueNullable;
         return current->withAttributes(usageMutable, effectiveNull);
       }
+    }
+
+    // Identity view (Collapse disabled)
+    if (!shouldCollapse && current) {
+      bool identWritable = ve->IsValueMutable;
+      if (m_InLHS && (Info.IsRebindable || Info.IsMutable())) {
+        identWritable = true;
+      }
+      return current->withAttributes(identWritable, current->IsNullable);
     }
 
     return current;
@@ -681,6 +739,12 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                        resolveType("OAddr") == srcType->toString());
     bool targetIsOAddr = (Cast->TargetType == "OAddr" ||
                           resolveType("OAddr") == Cast->TargetType);
+
+    if (targetIsOAddr) {
+      // [User Directive] as OAddr is special and always safe.
+      // Skip all borrow registration and checks.
+      return targetType;
+    }
 
     if (srcIsOAddr && !targetIsOAddr) {
       DiagnosticEngine::report(getLoc(Cast), DiagID::ERR_CAST_MISMATCH,
@@ -728,21 +792,53 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       if (auto *Var = dynamic_cast<VariableExpr *>(Traverse)) {
         SymbolInfo *Info = nullptr;
         if (CurrentScope->findSymbol(Var->Name, Info)) {
+          // [Fix] Trace to Source for Borrow Registration
+          SymbolInfo *EffectiveInfo = Info;
+          std::string EffectiveName = Var->Name;
+          int traceDepth = 0;
+          while (!EffectiveInfo->BorrowedFrom.empty() && traceDepth < 10) {
+            SymbolInfo *Next = nullptr;
+            if (CurrentScope->findSymbol(EffectiveInfo->BorrowedFrom, Next)) {
+              EffectiveName = EffectiveInfo->BorrowedFrom;
+              EffectiveInfo = Next;
+            } else
+              break;
+            traceDepth++;
+          }
+
           if (!m_InLHS) {
             bool isExclusive = targetInner->IsWritable;
             if (isExclusive) {
-              if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
-                error(Cast, DiagID::ERR_BORROW_MUT, Var->Name);
+              std::string borrower = "";
+              if (!m_ControlFlowStack.empty())
+                borrower = m_ControlFlowStack.back().Label;
+
+              if (EffectiveInfo->IsMutablyBorrowed ||
+                  EffectiveInfo->ImmutableBorrowCount > 0) {
+                // [Fix] Authorization on Cast
+                if (!(EffectiveInfo->IsMutablyBorrowed &&
+                      !EffectiveInfo->MutablyBorrowedBy.empty() &&
+                      EffectiveInfo->MutablyBorrowedBy == borrower)) {
+                  error(Cast, DiagID::ERR_BORROW_MUT, EffectiveName);
+                }
               }
-              Info->IsMutablyBorrowed = true;
+              EffectiveInfo->IsMutablyBorrowed = true;
+              if (!borrower.empty())
+                EffectiveInfo->MutablyBorrowedBy = borrower;
             } else {
-              if (Info->IsMutablyBorrowed) {
-                error(Cast, DiagID::ERR_BORROW_MUT, Var->Name);
+              if (EffectiveInfo->IsMutablyBorrowed) {
+                std::string borrower = "";
+                if (!m_ControlFlowStack.empty())
+                  borrower = m_ControlFlowStack.back().Label;
+                if (!borrower.empty() &&
+                    EffectiveInfo->MutablyBorrowedBy != borrower) {
+                  error(Cast, DiagID::ERR_BORROW_MUT, EffectiveName);
+                }
               }
-              Info->ImmutableBorrowCount++;
+              EffectiveInfo->ImmutableBorrowCount++;
             }
-            m_LastBorrowSource = Var->Name;
-            m_CurrentStmtBorrows.push_back({Var->Name, isExclusive});
+            m_LastBorrowSource = EffectiveName;
+            m_CurrentStmtBorrows.push_back({EffectiveName, isExclusive});
           }
         }
       }
@@ -1620,10 +1716,46 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
     if (auto *objVar = dynamic_cast<VariableExpr *>(Memb->Object.get())) {
       SymbolInfo *Info = nullptr;
       if (CurrentScope->findSymbol(objVar->Name, Info)) {
+        // [Fix] Trace to Source for Member Access
+        SymbolInfo *EffectiveInfo = Info;
+        std::string EffectiveName = objVar->Name;
+        int traceDepth = 0;
+        while (!EffectiveInfo->BorrowedFrom.empty() && traceDepth < 10) {
+          SymbolInfo *Next = nullptr;
+          if (CurrentScope->findSymbol(EffectiveInfo->BorrowedFrom, Next)) {
+            EffectiveName = EffectiveInfo->BorrowedFrom;
+            EffectiveInfo = Next;
+          } else
+            break;
+          traceDepth++;
+        }
+
+        std::string borrower = "";
+        if (!m_ControlFlowStack.empty())
+          borrower = m_ControlFlowStack.back().Label;
+
         // [Rule] Borrowing check for Member Access
-        if (Info->IsMutablyBorrowed) {
+        bool authorized = (EffectiveInfo->IsMutablyBorrowed &&
+                           !EffectiveInfo->MutablyBorrowedBy.empty() &&
+                           EffectiveInfo->MutablyBorrowedBy == objVar->Name);
+
+        if (objVar->Name == borrower)
+          authorized = true;
+        else if (EffectiveInfo->IsMutablyBorrowed &&
+                 EffectiveInfo->MutablyBorrowedBy == borrower)
+          authorized = true;
+
+        if (!authorized) {
+          SymbolInfo objInfo;
+          if (CurrentScope->lookup(objVar->Name, objInfo)) {
+            if (objInfo.BorrowedFrom == EffectiveName)
+              authorized = true;
+          }
+        }
+
+        if (EffectiveInfo->IsMutablyBorrowed && !authorized) {
           DiagnosticEngine::report(getLoc(Memb), DiagID::ERR_BORROW_MUT,
-                                   objVar->Name);
+                                   EffectiveName);
           HasError = true;
         }
 
@@ -1985,9 +2117,14 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
     }
   }
 
-  // [Fix] Allow soul collapse when checking RHS. Identifiers like 'p' should
-  // refer to the soul so that sigils can correctly elevate exactly one level.
+  // [Fix] Disable soul collapse for pointer hats. Identity should be seen.
+  bool savedDisable = m_DisableSoulCollapse;
+  if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
+      Unary->Op == TokenType::Tilde || Unary->Op == TokenType::Ampersand) {
+    m_DisableSoulCollapse = true;
+  }
   auto rhsType = checkExpr(Unary->RHS.get());
+  m_DisableSoulCollapse = savedDisable;
 
   // Assuming checkExpr returns object now.
   if (!rhsType || rhsType->toString() == "unknown")
@@ -2011,7 +2148,20 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
   if (auto *Var = dynamic_cast<VariableExpr *>(Unary->RHS.get())) {
     SymbolInfo *Info = nullptr;
     if (CurrentScope->findSymbol(Var->Name, Info)) {
+      // [Fix] Trace to Source for Borrow Registration/Check
+      SymbolInfo *EffectiveInfo = Info;
+      std::string EffectiveName = Var->Name;
       std::shared_ptr<toka::Type> physType = Info->TypeObj;
+      int traceDepth = 0;
+      while (!EffectiveInfo->BorrowedFrom.empty() && traceDepth < 10) {
+        SymbolInfo *Next = nullptr;
+        if (CurrentScope->findSymbol(EffectiveInfo->BorrowedFrom, Next)) {
+          EffectiveName = EffectiveInfo->BorrowedFrom;
+          EffectiveInfo = Next;
+        } else
+          break;
+        traceDepth++;
+      }
 
       if (Unary->Op == TokenType::Ampersand) {
         auto innerType = rhsType;
@@ -2023,22 +2173,68 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
         refType->IsNullable = Unary->HasNull;
         refType->IsWritable = handleMutable;
 
-        bool isExclusive = soulMutable;
-        if (!m_InLHS) {
-          if (isExclusive) {
-            if (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0) {
-              error(Unary, DiagID::ERR_BORROW_MUT, Var->Name);
-            }
-            Info->IsMutablyBorrowed = true;
-          } else {
-            if (Info->IsMutablyBorrowed) {
-              error(Unary, DiagID::ERR_BORROW_MUT, Var->Name);
-            }
-            Info->ImmutableBorrowCount++;
+        // [Borrow Rule] Exclusive borrow logic refinement:
+        // Rebinding (&!/&#) is ALWAYS exclusive.
+        // If soul is mutable, it's exclusive ONLY for unique-ownership or
+        // value-types. External manage shared pointers (~#) are SHARED borrows
+        // of the handle if handleMutable is false.
+        bool isExclusive = handleMutable;
+        if (soulMutable) {
+          if (!(rhsType->isSharedPtr() || rhsType->isRawPointer() ||
+                rhsType->isReference())) {
+            isExclusive = true;
           }
-          m_LastBorrowSource = Var->Name;
-          m_CurrentStmtBorrows.push_back({Var->Name, isExclusive});
         }
+
+        if (!m_InLHS) {
+          std::string borrower = "";
+          bool isReceiver = false;
+          if (!m_ControlFlowStack.empty()) {
+            borrower = m_ControlFlowStack.back().Label;
+            isReceiver = m_ControlFlowStack.back().IsReceiver;
+          }
+
+          // Shared logic for verification
+          bool reborrow_authorized = false;
+          if (EffectiveInfo->IsMutablyBorrowed &&
+              !EffectiveInfo->MutablyBorrowedBy.empty() &&
+              EffectiveInfo->MutablyBorrowedBy == borrower) {
+            reborrow_authorized = true;
+          } else if (Var->Name == borrower) {
+            reborrow_authorized = true;
+          } else {
+            // Usage-time authorization: through reference tracing
+            SymbolInfo refInfo;
+            if (CurrentScope->lookup(Var->Name, refInfo)) {
+              if (refInfo.BorrowedFrom == EffectiveName)
+                reborrow_authorized = true;
+            }
+          }
+
+          if (isExclusive) {
+            if ((EffectiveInfo->IsMutablyBorrowed ||
+                 EffectiveInfo->ImmutableBorrowCount > 0) &&
+                !reborrow_authorized) {
+              error(Unary, DiagID::ERR_BORROW_MUT, EffectiveName);
+            }
+            if (!isReceiver) {
+              EffectiveInfo->IsMutablyBorrowed = true;
+              if (!borrower.empty())
+                EffectiveInfo->MutablyBorrowedBy = borrower;
+            }
+          } else {
+            if (EffectiveInfo->IsMutablyBorrowed && !reborrow_authorized) {
+              error(Unary, DiagID::ERR_BORROW_MUT, EffectiveName);
+            }
+            if (!isReceiver) {
+              EffectiveInfo->ImmutableBorrowCount++;
+            }
+          }
+
+          m_LastBorrowSource = EffectiveName;
+          m_CurrentStmtBorrows.push_back({EffectiveName, isExclusive});
+        }
+
         return refType;
       }
 
@@ -2065,9 +2261,9 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
       }
 
       if (Unary->Op == TokenType::Caret) {
-        if (!m_InLHS &&
-            (Info->IsMutablyBorrowed || Info->ImmutableBorrowCount > 0)) {
-          error(Unary, DiagID::ERR_BORROW_MUT, Var->Name);
+        if (!m_InLHS && (EffectiveInfo->IsMutablyBorrowed ||
+                         EffectiveInfo->ImmutableBorrowCount > 0)) {
+          error(Unary, DiagID::ERR_BORROW_MUT, EffectiveName);
         }
         if (physType && physType->isUniquePtr()) {
           return physType->withAttributes(
@@ -2083,6 +2279,9 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
       }
 
       if (Unary->Op == TokenType::Tilde) {
+        if (!m_InLHS && EffectiveInfo->IsMutablyBorrowed) {
+          error(Unary, DiagID::ERR_BORROW_MUT, EffectiveName);
+        }
         if (physType && physType->isSharedPtr()) {
           return physType->withAttributes(
               Unary->IsRebindable ||
@@ -2098,27 +2297,29 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
     }
   }
 
-  // Fallback for non-variable expressions
+  // Fallback for non-variable expressions or other op types
+  std::shared_ptr<toka::Type> inner = rhsType;
   if (Unary->Op == TokenType::Star) {
     // Identity (*)
-    std::shared_ptr<toka::Type> inner;
     if (rhsType->isArray()) {
       // Decay Array to Pointer-to-Element
       auto arr = std::dynamic_pointer_cast<toka::ArrayType>(rhsType);
       inner = arr->ElementType;
     } else if (rhsType->isPointer()) {
-      inner = rhsType->getPointeeType();
-      if (!inner)
-        inner = rhsType;
-    } else {
-      inner = rhsType;
+      auto ptr = std::dynamic_pointer_cast<toka::PointerType>(rhsType);
+      inner = ptr->getPointeeType();
     }
+    if (!inner)
+      inner = rhsType;
+  }
+  if (Unary->Op == TokenType::Star) {
     auto rawPtr = std::make_shared<toka::RawPointerType>(inner);
     rawPtr->IsNullable = Unary->HasNull;
     rawPtr->IsWritable =
         Unary->IsRebindable || (m_IsAssignmentTarget && rhsType->IsWritable);
     return rawPtr;
   }
+
   if (Unary->Op == TokenType::PlusPlus || Unary->Op == TokenType::MinusMinus) {
     if (!rhsType->isInteger()) {
       error(Unary, DiagID::ERR_OPERAND_TYPE_MISMATCH, "++/--", "integer",
@@ -2160,6 +2361,23 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   bool oldLHS = m_InLHS;
   m_InLHS = isAssign;
 
+  if (isAssign) {
+    // [Toka 1.3] Identify potential borrower name (LHS)
+    std::string lhsName = "";
+    Expr *curr = Bin->LHS.get();
+    while (auto *C = dynamic_cast<CastExpr *>(curr))
+      curr = C->Expression.get();
+    if (auto *V = dynamic_cast<VariableExpr *>(curr)) {
+      lhsName = V->Name;
+    } else if (auto *U = dynamic_cast<UnaryExpr *>(curr)) {
+      if (U->Op == TokenType::Ampersand) { // &cursor = ...
+        if (auto *RV = dynamic_cast<VariableExpr *>(U->RHS.get()))
+          lhsName = RV->Name;
+      }
+    }
+    m_ControlFlowStack.push_back({lhsName, "void", false, false});
+  }
+
   if (!isAssign)
     Bin->LHS = foldGenericConstant(std::move(Bin->LHS));
 
@@ -2169,6 +2387,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   }
 
   auto lhsType = checkExpr(Bin->LHS.get());
+  if (isAssign)
+    m_ControlFlowStack.pop_back();
   m_InLHS = oldLHS;
   m_IsAssignmentTarget = oldTarget;
 
@@ -2265,8 +2485,9 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         CurrentScope->markMoved(RHSVar->Name);
       }
     } else if (auto *Memb = dynamic_cast<MemberExpr *>(RHSExpr)) {
-      // [Move Restriction Rule] Prohibit moving member out of shape that has
-      // drop() Rule ONLY applies if we are moving a resource (UniquePtr)
+      // [Move Restriction Rule] Prohibit moving member out of shape that
+      // has drop() Rule ONLY applies if we are moving a resource
+      // (UniquePtr)
       if (rhsType->isUniquePtr()) {
         auto objType = checkExpr(Memb->Object.get());
         std::shared_ptr<toka::Type> soulType = objType->getSoulType();
@@ -2343,6 +2564,14 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         Traverse = M->Object.get();
       } else if (auto *Idx = dynamic_cast<ArrayIndexExpr *>(Traverse)) {
         Traverse = Idx->Array.get();
+      } else if (auto *Un = dynamic_cast<UnaryExpr *>(Traverse)) {
+        Traverse = Un->RHS.get();
+      } else if (auto *Post = dynamic_cast<PostfixExpr *>(Traverse)) {
+        if (Post->Op == TokenType::DoubleQuestion) {
+          Traverse = Post->LHS.get();
+        } else {
+          break;
+        }
       } else {
         break;
       }
@@ -2351,22 +2580,53 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     if (auto *Var = dynamic_cast<VariableExpr *>(Traverse)) {
       SymbolInfo *InfoPtr = nullptr;
       if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {
-        if (!isUnsetInit && InfoPtr) {
-          if (InfoPtr->IsMutablyBorrowed || InfoPtr->ImmutableBorrowCount > 0) {
-            error(Bin, DiagID::ERR_BORROW_MUT, Var->Name);
+        // [Fix] Trace to Source for Borrow Check
+        SymbolInfo *EffectiveInfo = InfoPtr;
+        std::string EffectiveName = Var->Name;
+        int traceDepth = 0;
+        while (!EffectiveInfo->BorrowedFrom.empty() && traceDepth < 10) {
+          SymbolInfo *Next = nullptr;
+          if (CurrentScope->findSymbol(EffectiveInfo->BorrowedFrom, Next)) {
+            EffectiveName = EffectiveInfo->BorrowedFrom;
+            EffectiveInfo = Next;
+          } else
+            break;
+          traceDepth++;
+        }
+
+        if (!isUnsetInit && EffectiveInfo) {
+          std::string borrower = "";
+          if (!m_ControlFlowStack.empty())
+            borrower = m_ControlFlowStack.back().Label;
+
+          bool authorized = (EffectiveInfo->IsMutablyBorrowed &&
+                             !EffectiveInfo->MutablyBorrowedBy.empty() &&
+                             EffectiveInfo->MutablyBorrowedBy == borrower);
+
+          if (Var->Name == borrower)
+            authorized = true;
+          else if (EffectiveInfo->IsMutablyBorrowed &&
+                   EffectiveInfo->MutablyBorrowedBy == Var->Name)
+            authorized = true;
+
+          if (!authorized) {
+            SymbolInfo varInfo;
+            if (CurrentScope->lookup(Var->Name, varInfo)) {
+              if (varInfo.BorrowedFrom == EffectiveName)
+                authorized = true;
+            }
+          }
+
+          if ((EffectiveInfo->IsMutablyBorrowed && !authorized) ||
+              (EffectiveInfo->ImmutableBorrowCount > 0 && !authorized)) {
+            error(Bin, DiagID::ERR_BORROW_MUT, EffectiveName);
           }
         }
 
-        if (lhsType->IsWritable) {
+        // [Unset Safety] allow initialization
+        if (InfoPtr->InitMask != ~0ULL)
           isLHSWritable = true;
-        } else {
-          // [Unset Safety] allow initialization
-          if (InfoPtr->InitMask != ~0ULL)
-            isLHSWritable = true;
-        }
 
-        // [Unset Safety] Allow writing to immutable variables if they are
-        // unset
         if (InfoPtr->IsReference()) {
           if (InfoPtr->DirtyReferentMask != ~0ULL)
             isLHSWritable = true;
@@ -2375,6 +2635,12 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
             isLHSWritable = true;
         }
       }
+    }
+
+    // [Fix] Global Permission Check: If Sema says it's writable, it's
+    // writable
+    if (lhsType->IsWritable) {
+      isLHSWritable = true;
     } else if (auto *Post = dynamic_cast<PostfixExpr *>(Traverse)) {
       if (Post->Op == TokenType::TokenWrite || Post->Op == TokenType::Bang) {
         isLHSWritable = true;
@@ -2390,7 +2656,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         // These are Rebindable handles or access handles.
         // If they are on the LHS without a deref, they are rebinds.
         if (isRebind) {
-          // Check if the UnaryExpr itself carries the rebind intent (# or !)
+          // Check if the UnaryExpr itself carries the rebind intent (# or
+          // !)
           if (Un->IsRebindable) {
             isLHSWritable = true;
           }
@@ -2831,8 +3098,8 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
 
   // [Ch 5.4] Permission Inheritance:
   // Arrays inherit writability from their handle.
-  // Pointers do NOT inherit from handle; they use their own Pointee attributes
-  // (Insulation).
+  // Pointers do NOT inherit from handle; they use their own Pointee
+  // attributes (Insulation).
   if (baseType->isArray()) {
     bool isBaseWritable = baseType->IsWritable;
     resultType =
@@ -3140,7 +3407,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
           continue;
 
         // DEBUG:
-        // std::cerr << "Deduce: Arg " << i << " Type=" << argType->toString()
+        // std::cerr << "Deduce: Arg " << i << " Type=" <<
+        // argType->toString()
         // << "\n";
 
         const auto &Param = Fn->Args[i];

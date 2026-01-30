@@ -42,6 +42,7 @@ struct SymbolInfo {
   // Borrow Tracking
   int ImmutableBorrowCount = 0;
   bool IsMutablyBorrowed = false;
+  std::string MutablyBorrowedBy = ""; // [NEW] Name of the mutable borrower
   std::string BorrowedFrom =
       ""; // If this is a reference, name of the source variable
   std::set<std::string> LifeDependencySet; // [NEW] Shadow Dependency Set

@@ -81,9 +81,18 @@ void Sema::exitScope() {
     SymbolInfo *sourcePtr = nullptr;
     if (CurrentScope->Parent &&
         CurrentScope->Parent->findSymbol(sourceName, sourcePtr)) {
-      if (isMutable) {
+      // Robust Cleanup: Clear BOTH if they match the borrower or the intent.
+      if (sourcePtr->IsMutablyBorrowed &&
+          sourcePtr->MutablyBorrowedBy == refName) {
         sourcePtr->IsMutablyBorrowed = false;
-      } else {
+        sourcePtr->MutablyBorrowedBy = "";
+      } else if (isMutable && sourcePtr->IsMutablyBorrowed) {
+        // Fallback for anonymous mutable borrows registered by intent
+        sourcePtr->IsMutablyBorrowed = false;
+        sourcePtr->MutablyBorrowedBy = "";
+      }
+
+      if (!isMutable && sourcePtr->ImmutableBorrowCount > 0) {
         sourcePtr->ImmutableBorrowCount--;
       }
     }
@@ -95,10 +104,12 @@ void Sema::clearStmtBorrows() {
   for (auto const &borrow : m_CurrentStmtBorrows) {
     SymbolInfo *info = nullptr;
     if (CurrentScope->findSymbol(borrow.first, info)) {
-      if (borrow.second)
+      if (borrow.second) {
         info->IsMutablyBorrowed = false;
-      else
+        info->MutablyBorrowedBy = "";
+      } else {
         info->ImmutableBorrowCount--;
+      }
     }
   }
   m_CurrentStmtBorrows.clear();

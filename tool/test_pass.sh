@@ -136,7 +136,7 @@ for test_path in tests/pass/*.tk; do
         
         # If it passed BUT crashed (Expected Panic), show context for verification
         if [ $exit_code -ne 0 ]; then
-             printf "[PASS with Expected Panic] %-35s\n" "$file_name"
+             printf "[${GREEN}PASS with Expected Panic${NC}] %-35s\n" "$file_name"
              print_log_context "$log_file" "$exit_code"
         fi
         

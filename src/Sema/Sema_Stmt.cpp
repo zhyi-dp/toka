@@ -296,7 +296,6 @@ void Sema::checkStmt(Stmt *S) {
       m_ControlFlowStack.push_back({Var->Name, "void", false, true});
       InitTypeObj = checkExpr(Var->Init.get());
       InitType = InitTypeObj->toString();
-      m_ControlFlowStack.pop_back();
       m_AllowUnsetUsage = false;
     }
 
@@ -448,23 +447,44 @@ void Sema::checkStmt(Stmt *S) {
       }
 
       // [NEW] Register in ActiveBorrows for scope-based cleanup
-      bool isMut = Var->IsValueMutable || Var->IsRebindable;
+      bool isMutFromExpr = false;
       for (auto const &b : m_CurrentStmtBorrows) {
         if (b.first == m_LastBorrowSource) {
-          if (b.second)
-            isMut = true; // Already exclusive from expr
+          isMutFromExpr = b.second;
           break;
         }
       }
+      bool isMut = isMutFromExpr || Var->IsValueMutable || Var->IsRebindable;
 
-      // Upgrade Source to MutablyBorrowed if reference is mutable
-      if (isMut) {
-        SymbolInfo *srcInfo = nullptr;
-        if (CurrentScope->findSymbol(m_LastBorrowSource, srcInfo)) {
+      // [Reconcile] Sync borrow strength with reference declaration
+      SymbolInfo *srcInfo = nullptr;
+      if (CurrentScope->findSymbol(m_LastBorrowSource, srcInfo)) {
+        if (isMut) {
+          // Upgrade: Ensure source is mutably borrowed
+          if (srcInfo->ImmutableBorrowCount > 0 &&
+              !(srcInfo->IsMutablyBorrowed &&
+                srcInfo->MutablyBorrowedBy == Var->Name)) {
+            // Conflict: already immutably borrowed by others
+          }
           srcInfo->IsMutablyBorrowed = true;
+          srcInfo->MutablyBorrowedBy = Var->Name;
+        } else {
+          // Downgrade: Reference is immutable, so source is only immutably
+          // borrowed
+          if (srcInfo->IsMutablyBorrowed &&
+              srcInfo->MutablyBorrowedBy == Var->Name) {
+            srcInfo->IsMutablyBorrowed = false;
+            srcInfo->MutablyBorrowedBy = "";
+          } else if (srcInfo->IsMutablyBorrowed &&
+                     srcInfo->MutablyBorrowedBy.empty()) {
+            // Statement-level anonymous mutable borrow, downgrade it
+            srcInfo->IsMutablyBorrowed = false;
+          }
+          srcInfo->ImmutableBorrowCount++;
         }
       }
 
+      Info.BorrowedFrom = m_LastBorrowSource;
       CurrentScope->ActiveBorrows[Var->Name] = {m_LastBorrowSource, isMut};
 
       // Remove from temporary borrows since it's now persistent
@@ -475,13 +495,8 @@ void Sema::checkStmt(Stmt *S) {
           break;
         }
       }
-    } else {
-
-      // Var->Name
-      //              << " Morph=" << morph << " LastSrc=" <<
-      //              m_LastBorrowSource
-      //              << "\n";
     }
+
     if (!m_LastLifeDependencies.empty()) {
       for (const auto &dep : m_LastLifeDependencies) {
         Info.LifeDependencySet.insert(dep);
@@ -509,10 +524,10 @@ void Sema::checkStmt(Stmt *S) {
     if (Var->IsRebindable)
       fullType += "#";
 
-    // 3. Base soul name
+    // 3. Base Type Name
     fullType += baseType;
 
-    // 4. Soul/Object suffix attributes
+    // 4. Soul/Value suffix attributes
     if (Var->IsValueNullable)
       fullType += "?";
     if (Var->IsValueMutable)
@@ -520,28 +535,16 @@ void Sema::checkStmt(Stmt *S) {
 
     Info.TypeObj = toka::Type::fromString(fullType);
     Info.IsRebindable = Var->IsRebindable;
-
     Var->ResolvedType = Info.TypeObj;
-
-    DiagnosticEngine::report(getLoc(Var), DiagID::NOTE_GENERIC,
-                             "Var: " + Var->Name +
-                                 " Type: " + Info.TypeObj->toString() +
-                                 " Mask: " + std::to_string(m_LastInitMask));
 
     if (Var->Init) {
       Info.InitMask = m_LastInitMask;
     } else {
-      // No initializer -> potentially uninitialized, but verify language rules.
-      // For now, if no init, implicit default? or garbage?
-      // Default to unset if no init is provided?
-      // If it's a declaration without init (e.g. extern? or C-style?), usually
-      // considered uninit.
       Info.InitMask = 0;
     }
 
-    // Check for Const Value Propagation
-    if (Var->IsConst && Var->Init) {
-      // If initialized with a literal number, mark as Const Value
+    // Rule: Numeric Substitution (Constant variables)
+    if (Var->Init && Var->TypeName == "i32" && !Var->IsValueMutable) {
       if (auto *Num = dynamic_cast<NumberExpr *>(Var->Init.get())) {
         Info.HasConstValue = true;
         Info.ConstValue = Num->Value;
@@ -581,8 +584,9 @@ void Sema::checkStmt(Stmt *S) {
           }
         }
       } else if (auto *Memb = dynamic_cast<MemberExpr *>(InitExpr)) {
-        // [Move Restriction Rule] Prohibit moving member out of shape that has
-        // drop() Rule ONLY applies if we are moving a resource (UniquePtr)
+        // [Move Restriction Rule] Prohibit moving member out of shape that
+        // has drop() Rule ONLY applies if we are moving a resource
+        // (UniquePtr)
         if (InitTypeObj->isUniquePtr()) {
           auto objType = checkExpr(Memb->Object.get());
           std::shared_ptr<toka::Type> soulType = objType->getSoulType();
@@ -594,6 +598,9 @@ void Sema::checkStmt(Stmt *S) {
       }
     }
     clearStmtBorrows();
+    if (Var->Init) {
+      m_ControlFlowStack.pop_back();
+    }
   } else if (auto *Destruct = dynamic_cast<DestructuringDecl *>(S)) {
     // Stage 1: Resolve Types using the new Type system
     auto initType = checkExpr(Destruct->Init.get());
@@ -615,15 +622,29 @@ void Sema::checkStmt(Stmt *S) {
       for (size_t i = 0; i < Limit; ++i) {
         SymbolInfo Info;
         std::string fullType = SD->Members[i].Type;
-        if (Destruct->Variables[i].IsValueMutable)
-          fullType += "#";
-        if (Destruct->Variables[i].IsValueNullable)
-          fullType += "?";
-        auto typeObj = toka::Type::fromString(fullType);
+        auto baseTypeObj = toka::Type::fromString(fullType);
+        // Apply attributes to the SOUL
+        auto soulType =
+            baseTypeObj->withAttributes(Destruct->Variables[i].IsValueMutable,
+                                        Destruct->Variables[i].IsValueNullable,
+                                        Destruct->Variables[i].IsValueBlocked);
+
         if (Destruct->Variables[i].IsReference) {
-          Info.TypeObj = std::make_shared<toka::ReferenceType>(typeObj);
+          Info.TypeObj = std::make_shared<toka::ReferenceType>(soulType);
+          Info.BorrowedFrom = m_LastBorrowSource;
+          // Register in ActiveBorrows
+          bool isMutFromExpr = false;
+          for (auto const &b : m_CurrentStmtBorrows) {
+            if (b.first == m_LastBorrowSource) {
+              isMutFromExpr = b.second;
+              break;
+            }
+          }
+          bool isMut = isMutFromExpr || Destruct->Variables[i].IsValueMutable;
+          CurrentScope->ActiveBorrows[Destruct->Variables[i].Name] = {
+              m_LastBorrowSource, isMut};
         } else {
-          Info.TypeObj = typeObj;
+          Info.TypeObj = soulType;
         }
         CurrentScope->define(Destruct->Variables[i].Name, Info);
       }
@@ -633,26 +654,54 @@ void Sema::checkStmt(Stmt *S) {
       for (size_t i = 0; i < Limit; ++i) {
         SymbolInfo Info;
         auto memType = tt->Elements[i];
+        // Apply attributes to the SOUL
+        auto soulType =
+            memType->withAttributes(Destruct->Variables[i].IsValueMutable,
+                                    Destruct->Variables[i].IsValueNullable,
+                                    Destruct->Variables[i].IsValueBlocked);
+
         if (Destruct->Variables[i].IsReference) {
-          Info.TypeObj = std::make_shared<toka::ReferenceType>(memType);
+          Info.TypeObj = std::make_shared<toka::ReferenceType>(soulType);
+          Info.BorrowedFrom = m_LastBorrowSource;
+          // Register in ActiveBorrows
+          bool isMutFromExpr = false;
+          for (auto const &b : m_CurrentStmtBorrows) {
+            if (b.first == m_LastBorrowSource) {
+              isMutFromExpr = b.second;
+              break;
+            }
+          }
+          bool isMut = isMutFromExpr || Destruct->Variables[i].IsValueMutable;
+          CurrentScope->ActiveBorrows[Destruct->Variables[i].Name] = {
+              m_LastBorrowSource, isMut};
         } else {
-          Info.TypeObj = memType;
+          Info.TypeObj = soulType;
         }
-        if (Destruct->Variables[i].IsValueMutable)
-          Info.TypeObj->IsWritable = true;
-        if (Destruct->Variables[i].IsValueNullable)
-          Info.TypeObj->IsNullable = true;
         CurrentScope->define(Destruct->Variables[i].Name, Info);
       }
     } else if (!soulName.empty() && TypeAliasMap.count(soulName)) {
       for (const auto &Var : Destruct->Variables) {
         SymbolInfo Info;
         std::string fullType = "i32"; // Fallback
-        if (Var.IsValueMutable)
-          fullType += "#";
-        if (Var.IsValueNullable)
-          fullType += "?";
-        Info.TypeObj = toka::Type::fromString(fullType);
+        auto baseTypeObj = toka::Type::fromString(fullType);
+        auto soulType = baseTypeObj->withAttributes(
+            Var.IsValueMutable, Var.IsValueNullable, Var.IsValueBlocked);
+        if (Var.IsReference) {
+          Info.TypeObj = std::make_shared<toka::ReferenceType>(soulType);
+          Info.BorrowedFrom = m_LastBorrowSource;
+          // Register in ActiveBorrows
+          bool isMutFromExpr = false;
+          for (auto const &b : m_CurrentStmtBorrows) {
+            if (b.first == m_LastBorrowSource) {
+              isMutFromExpr = b.second;
+              break;
+            }
+          }
+          bool isMut = isMutFromExpr || Var.IsValueMutable;
+          CurrentScope->ActiveBorrows[Var.Name] = {m_LastBorrowSource, isMut};
+        } else {
+          Info.TypeObj = soulType;
+        }
         CurrentScope->define(Var.Name, Info);
       }
     } else {

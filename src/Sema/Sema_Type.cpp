@@ -32,7 +32,7 @@ std::string Sema::resolveType(const std::string &Type, bool force) {
     SymbolInfo Sym;
     if (CurrentScope->lookup(Type, Sym)) {
       if (Sym.IsTypeAlias && Sym.TypeObj) {
-        return resolveType(Sym.TypeObj)->toString();
+        return resolveType(Sym.TypeObj->toString(), force);
       }
     }
   }
@@ -322,16 +322,11 @@ std::shared_ptr<toka::Type> Sema::resolveType(std::shared_ptr<toka::Type> type,
         }
         if (!force) {
           if (ShapeMap.count(shape->Name)) {
-            std::cerr << "Strong Alias Preserved: " << shape->Name << "\n";
             shape->resolve(ShapeMap[shape->Name]);
             return shape;
           }
-          std::cerr << "Strong Alias Preserved (No ShapeMap): " << shape->Name
-                    << "\n";
           return shape;
         }
-        std::cerr << "Strong Alias FORCED Resolve: " << shape->Name << " -> "
-                  << aliasInfo.Target << "\n";
         return resolveType(toka::Type::fromString(aliasInfo.Target), true);
       }
     }
@@ -646,9 +641,6 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   if (!Target || !Source)
     return false;
 
-  std::cerr << "checkCompat: " << Target->toString() << " vs "
-            << Source->toString() << "\n";
-
   // [CORE] Strong Type Wall: Strict Name Identity (Shapes only)
   bool isTShape =
       Target->isShape() || (Target->isPointer() && Target->getPointeeType() &&
@@ -661,19 +653,13 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
     std::string tName = toka::Type::stripMorphology(Target->getSoulName());
     std::string sName = toka::Type::stripMorphology(Source->getSoulName());
 
-    std::cerr << "Shape Wall Check: " << tName << " vs " << sName << "\n";
-
     if (TypeAliasMap.count(tName) && TypeAliasMap[tName].IsStrong) {
       if (tName != sName) {
-        // std::cerr << "BLOCKED: Strong Wall: " << tName << " vs " << sName
-        // <<
-        // "\n";
         return false;
       }
     }
     if (TypeAliasMap.count(sName) && TypeAliasMap[sName].IsStrong) {
       if (tName != sName) {
-        // std::cerr << "BLOCKED: Strong Wall: " << sName << " vs " << tName
         // <<
         // "\n";
         return false;
@@ -688,6 +674,14 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
   // Identity: For strong aliases, this is the final authority.
   if (T->equals(*S))
     return true;
+
+  // [Fix] Value Compatibility: T# is compatible with T (and vice versa) for
+  // non-indirection types.
+  if (T->typeKind == S->typeKind &&
+      (T->typeKind == Type::Primitive || T->typeKind == Type::Shape)) {
+    if (T->getSoulName() == S->getSoulName())
+      return true;
+  }
 
   // Check if one resolved to the other (Weak alias resolution check)
   // If T is a weak alias, resolveType(T, true) will get its target.
