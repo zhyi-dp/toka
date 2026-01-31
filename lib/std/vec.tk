@@ -90,22 +90,16 @@ impl<T> Vec<T> {
     }
     
     // Pop element from end
-    pub fn pop(self#) -> T {
+    pub fn pop(self#) -> Option<T> {
         unsafe {
             if self.len == 0 {
-                // panic("Vec::pop empty")
-                // Return dummy? T is unknown.
-                // We cannot return dummy for T.
-                // So we MUST panic or abort.
-                // call libc::exit(1)
-                libc_exit(1)
-                // return uninit? unreachable
+                return Option<T>::None
             }
             
             self.len -= 1
             // Copy out
             auto val = self.buf[self.len]
-            return val
+            return Option<T>::Some(val)
         }
     }
     
@@ -117,6 +111,17 @@ impl<T> Vec<T> {
              }
              auto val = self.buf[index]
              return val
+        }
+    }
+
+    // Safe get
+    pub fn get_opt(self, index: usize) -> Option<T> {
+        unsafe {
+             if index >= self.len {
+                 return Option<T>::None
+             }
+             auto val = self.buf[index]
+             return Option<T>::Some(val)
         }
     }
 

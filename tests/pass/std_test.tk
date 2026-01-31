@@ -22,7 +22,7 @@ fn test_vec() {
     v#.push(1)
     v#.push(2)
     
-    auto val = v#.pop() // pop moves v
+    auto val = v#.pop().unwrap() // pop moves v
     println("Pop: {}", val)
     
     auto val2 = v.get(0) // get moves v

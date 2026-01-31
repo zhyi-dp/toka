@@ -20,7 +20,7 @@ fn main() -> i32 {
         // assert(v1.len() == 3,"len should be 3")
         // assert(v1.cap() == 4,"cap should be 4")
         
-        auto val = v1#.pop()
+        auto val = v1#.pop().unwrap()
         println("pop: {}", val)
         // assert(val == 30:TestType,"popped value should be 30")
         
