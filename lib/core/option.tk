@@ -3,7 +3,7 @@ import core/libc::libc_exit
 
 pub shape Option<T> (
     Some(T) = 1 |
-    None(i32) = 0
+    None = 0
 )
 
 impl<T> Option<T> {
@@ -18,7 +18,6 @@ impl<T> Option<T> {
         return self.is_some() == false
     }
 
-    /*
     pub fn unwrap(self) -> T {
         match self {
             auto Option<T>::Some(val) => return val
@@ -35,5 +34,4 @@ impl<T> Option<T> {
             _ => return def_val
         }
     }
-    */
 }

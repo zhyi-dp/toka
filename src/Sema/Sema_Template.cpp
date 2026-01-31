@@ -69,6 +69,15 @@ public:
     return substituteTypeString(s, Replacements);
   }
 
+  void visitPattern(MatchArm::Pattern *Pat) {
+    if (!Pat)
+      return;
+    Pat->Name = sub(Pat->Name);
+    for (auto &Sub : Pat->SubPatterns) {
+      visitPattern(Sub.get());
+    }
+  }
+
   void visitFunction(FunctionDecl *Fn) {
     Fn->ReturnType = sub(Fn->ReturnType);
     for (auto &Arg : Fn->Args) {
@@ -188,6 +197,7 @@ public:
     } else if (auto *Match = dynamic_cast<MatchExpr *>(E)) {
       visitExpr(Match->Target.get());
       for (auto &Arm : Match->Arms) {
+        visitPattern(Arm->Pat.get());
         visitStmt(Arm->Body.get());
         if (Arm->Guard)
           visitExpr(Arm->Guard.get());

@@ -41,7 +41,7 @@ pub fn main() -> i32 {
             if i == count + 1 {
                 break
             }
-            i# += 1            
+            i += 1            
         }
     }
     
@@ -57,12 +57,12 @@ pub fn main() -> i32 {
             break
         }
 
-        sum# += cursor.val:i64
+        sum += cursor.val:i64
         
-        i# -= 1        
+        i -= 1        
         // 尝试获取下一个节点
         if cursor.~?next is cursor.~next {
-            ~#cursor = cursor.~next // 重绑定句柄，RC 自动处理
+            ~cursor = cursor.~next // 重绑定句柄，RC 自动处理
         } else {
             break
         }

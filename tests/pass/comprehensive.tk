@@ -163,7 +163,7 @@ fn main() -> i32 {
         
         // Assert intermediate state by calling render
         e1.render()
-        steps# += 1
+        steps += 1
     }
     
     println("Loop finished with code: {}", result_code)

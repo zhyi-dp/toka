@@ -18,7 +18,6 @@ impl<T, E> Result<T, E> {
         return self.is_ok() == false
     }
 
-    /*
     pub fn unwrap(self) -> T {
         match self {
             auto Result<T, E>::Ok(val) => return val
@@ -38,5 +37,4 @@ impl<T, E> Result<T, E> {
             }
         }
     }
-    */
 }

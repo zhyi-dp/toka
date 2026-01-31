@@ -1529,16 +1529,28 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
   PhysEntity targetVal_ent = genExpr(expr->Target.get()).load(m_Builder);
   llvm::Value *targetVal = targetVal_ent.load(m_Builder);
   llvm::Type *targetType = targetVal->getType();
+  std::cerr << "DEBUG: genMatchExpr ENTRY. TypeID: " << targetType->getTypeID()
+            << "\n";
+
   std::string shapeName;
   if (targetType->isStructTy() && m_TypeToName.count(targetType)) {
     shapeName = m_TypeToName[targetType];
   }
 
-  // Create result alloca (Assume i32 for now, ideally get from Sema or
-  // expr)
+  // Create result alloca (Assume i32 for now, ideally get from Sema or expr)
   llvm::Type *resultType = llvm::Type::getInt32Ty(m_Context);
-  llvm::AllocaInst *resultAddr =
-      m_Builder.CreateAlloca(resultType, nullptr, "match_result_addr");
+  if (expr->ResolvedType) {
+    resultType = getLLVMType(expr->ResolvedType);
+  }
+
+  if (!resultType)
+    resultType = llvm::Type::getInt32Ty(m_Context);
+
+  llvm::AllocaInst *resultAddr = nullptr;
+  if (!resultType->isVoidTy()) {
+    resultAddr =
+        m_Builder.CreateAlloca(resultType, nullptr, "match_result_addr");
+  }
 
   // Store target to temp alloca for addressing
   llvm::Value *targetAddr =
@@ -1550,16 +1562,22 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
       llvm::BasicBlock::Create(m_Context, "match_merge", func);
 
   // For Enums, we use a Switch
-  if (shapeName != "" && m_Shapes.count(shapeName) &&
-      m_Shapes[shapeName]->Kind == ShapeKind::Enum) {
-    const ShapeDecl *sh = m_Shapes[shapeName];
+  std::string baseShapeName = shapeName;
+  if (baseShapeName.find('<') != std::string::npos) {
+    baseShapeName = baseShapeName.substr(0, baseShapeName.find('<'));
+  }
+
+  if (baseShapeName != "" && m_Shapes.count(baseShapeName) &&
+      m_Shapes[baseShapeName]->Kind == ShapeKind::Enum) {
+    const ShapeDecl *sh = m_Shapes[baseShapeName];
     llvm::Value *tagVal = m_Builder.CreateExtractValue(targetVal, 0, "tag");
     llvm::BasicBlock *defaultBB =
         llvm::BasicBlock::Create(m_Context, "match_default", func);
     llvm::SwitchInst *sw =
         m_Builder.CreateSwitch(tagVal, defaultBB, expr->Arms.size());
 
-    for (const auto &arm : expr->Arms) {
+    for (size_t k = 0; k < expr->Arms.size(); ++k) {
+      const auto &arm = expr->Arms[k];
       // Find variant index for this arm
       int tag = -1;
       const ShapeMember *variant = nullptr;
@@ -1567,8 +1585,9 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
       // Simplified: Assume Decons pattern at top level
       for (size_t i = 0; i < sh->Members.size(); ++i) {
         std::string patName = arm->Pat->Name;
-        if (patName.find("::") != std::string::npos) {
-          patName = patName.substr(patName.find("::") + 2);
+        size_t scopePos = patName.rfind("::");
+        if (scopePos != std::string::npos) {
+          patName = patName.substr(scopePos + 2);
         }
         if (sh->Members[i].Name == patName) {
           tag = (sh->Members[i].TagValue == -1) ? (int)i
@@ -1581,7 +1600,10 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
       if (tag != -1) {
         llvm::BasicBlock *caseBB =
             llvm::BasicBlock::Create(m_Context, "case_" + variant->Name, func);
-        sw->addCase(m_Builder.getInt8(tag), caseBB);
+        // [Fix] Use correct type for Switch Case
+        sw->addCase(llvm::cast<llvm::ConstantInt>(
+                        llvm::ConstantInt::get(tagVal->getType(), tag)),
+                    caseBB);
         m_Builder.SetInsertPoint(caseBB);
 
         m_ScopeStack.push_back({});
@@ -1642,10 +1664,17 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
     }
 
     m_Builder.SetInsertPoint(defaultBB);
-    // Find Wildcard arm if any
+    // Find Wildcard OR Variable arm if any
     for (const auto &arm : expr->Arms) {
-      if (arm->Pat->PatternKind == MatchArm::Pattern::Wildcard) {
+      if (arm->Pat->PatternKind == MatchArm::Pattern::Wildcard ||
+          arm->Pat->PatternKind == MatchArm::Pattern::Variable) {
         m_ScopeStack.push_back({});
+
+        // [Fix] Bind Variable Pattern if needed
+        if (arm->Pat->PatternKind == MatchArm::Pattern::Variable) {
+          genPatternBinding(arm->Pat.get(), targetAddr, targetType);
+        }
+
         m_CFStack.push_back(
             {"", mergeBB, nullptr, resultAddr, m_ScopeStack.size()});
         genStmt(arm->Body.get());
@@ -1657,7 +1686,13 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
     if (m_Builder.GetInsertBlock() &&
         !m_Builder.GetInsertBlock()->getTerminator())
       m_Builder.CreateBr(mergeBB);
+
+    // [Fix] Explicitly finish the if block logic (though 'else' follows)
+    // We don't want to fall through to General Match logic in any weird edge
+    // case. The C++ control flow jumps to 'else' boundary, so it's fine.
   } else {
+    std::cerr << "DEBUG: genMatchExpr FALLTHROUGH to General Match. shapeName='"
+              << shapeName << "'\n";
     // General pattern matching (Sequence of Ifs)
     for (const auto &arm : expr->Arms) {
       llvm::BasicBlock *armBB =
@@ -1668,8 +1703,21 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
       // 1. Check Pattern
       llvm::Value *cond = nullptr;
       if (arm->Pat->PatternKind == MatchArm::Pattern::Literal) {
-        cond = m_Builder.CreateICmpEQ(targetVal,
-                                      m_Builder.getInt32(arm->Pat->LiteralVal));
+        std::cerr << "CRITICAL: Creating ICmpEQ for Literal Pattern in General "
+                     "Match! TargetTyID: "
+                  << targetType->getTypeID() << "\n";
+        targetType->print(llvm::errs());
+        llvm::errs() << "\n";
+        if (targetType->isIntOrIntVectorTy() ||
+            targetType->isPtrOrPtrVectorTy()) {
+          cond = m_Builder.CreateICmpEQ(
+              targetVal, m_Builder.getInt32(arm->Pat->LiteralVal));
+        } else {
+          std::cerr << "Error: Cannot match literal pattern against non-scalar "
+                       "type (Struct/Array).\n";
+          // Fail safely (match nothing)
+          cond = m_Builder.getInt1(false);
+        }
       } else if (arm->Pat->PatternKind == MatchArm::Pattern::Wildcard ||
                  arm->Pat->PatternKind == MatchArm::Pattern::Variable) {
         cond = m_Builder.getInt1(true);
@@ -1736,7 +1784,13 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
   }
 
   m_Builder.SetInsertPoint(mergeBB);
-  return m_Builder.CreateLoad(resultType, resultAddr, "match_result");
+  if (!resultAddr) {
+    // Void result
+    return PhysEntity(nullptr, "", llvm::Type::getVoidTy(m_Context), false);
+  }
+  return PhysEntity(
+      m_Builder.CreateLoad(resultType, resultAddr, "match_result"), "",
+      resultType, false);
 }
 
 PhysEntity CodeGen::genIfExpr(const IfExpr *ie) {
@@ -1752,6 +1806,8 @@ PhysEntity CodeGen::genIfExpr(const IfExpr *ie) {
   if (!cond)
     return nullptr;
   if (!cond->getType()->isIntegerTy(1)) {
+    std::cerr << "DEBUG: genIfExpr CreateICmpNE. CondTypeID: "
+              << cond->getType()->getTypeID() << "\n";
     cond = m_Builder.CreateICmpNE(
         cond, llvm::ConstantInt::get(cond->getType(), 0), "ifcond");
   }

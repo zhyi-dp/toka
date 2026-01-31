@@ -54,12 +54,12 @@ fn main() -> i32 {
     auto counter# = 0
     auto audit# = 0
     while counter < 5 {
-        counter# += 1
+        counter += 1
         if counter == 3 {
             println("Counter is 3, continuing...\n")
             continue
         }
-        audit# += 10
+        audit += 10
         println("Counter: {}, Audit: {}", counter, audit)
     }
     println("Final Counter: {} (expected 5)", counter)

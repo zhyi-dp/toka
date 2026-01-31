@@ -1,0 +1,42 @@
+import core/option::Option
+import core/result::Result
+import std/io::println
+import core/libc
+
+fn main() -> i32 {
+    // Test Option
+    auto some_val = Option<i32>::Some(42)
+    auto none_val = Option<i32>::None
+
+    if !some_val.is_some() { return 1 }
+    if some_val.is_none() { 
+        println("Err: some is none")
+        return 2 
+    }
+    if !none_val.is_none() { 
+        println("Err: none is not none")
+        return 3 
+    }
+    if none_val.is_some() { return 4 }
+
+    // if some_val.unwrap() != 42 { return 5 }
+    // if some_val.unwrap_or(0) != 42 { return 6 }
+    // if none_val.unwrap_or(100) != 100 { return 7 }
+
+    /*
+    // Test Result
+    auto ok_res = Result<i32, i32>::Ok(10)
+    auto err_res = Result<i32, i32>::Err(-1)
+
+    if !ok_res.is_ok() { return 8 }
+    if ok_res.is_err() { return 9 }
+    if !err_res.is_err() { return 10 }
+    if err_res.is_ok() { return 11 }
+
+    if ok_res.unwrap() != 10 { return 12 }
+    if err_res.unwrap_err() != -1 { return 13 }
+    */
+
+    println("Option basic tests passed")
+    return 0
+}
