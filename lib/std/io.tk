@@ -14,61 +14,22 @@
 import core/types::{usize, char, ADDR0}
 import std/string::{String}
 import core/libc::*
+import core/result::{Result}
 
 // Intrinsic
 // Intrinsic
 extern fn println(fmt: str, ...) -> void
 
-// Specific Result Types to avoid Generic Instantiation Bugs
+// Specific Result Types to avoid Generic Instantiation B
 pub shape File (
     *handle: void, // FILE*
     opened: bool,
     owned: bool
 )
 
-pub shape FileResult(
-    Ok(File) |
-    Err(String)
-)
-
-pub shape StringResult(
-    Ok(String) |
-    Err(String)
-)
-
-impl FileResult {
-    pub fn unwrap(self) -> File {
-        match self {
-            Ok(f) => { return f }
-            Err(e) => {
-                println("Panic: FileResult Unwrap on Err: {}", e.c_str())
-                unsafe { libc_abort() }
-                return File(handle=ADDR0 as *void, opened=false, owned=false)
-            }
-        }
-    }
-    pub fn is_ok(self) -> bool {
-        match self { Ok(_) => { return true } _ => { return false } }
-    }
-}
-
-impl StringResult {
-    pub fn unwrap(self) -> String {
-        match self {
-            Ok(s) => { return s }
-            Err(e) => {
-                println("Panic: StringResult Unwrap on Err: {}", e.c_str())
-                unsafe { libc_abort() }
-                return String::from("")
-            }
-        }
-    }
-    pub fn is_ok(self) -> bool {
-        match self { Ok(_) => { return true } _ => { return false } }
-    }
-}
-
-
+// Convenience Aliases for Generic Instantiation
+alias IoResult = Result<File, String>
+alias IoStringResult = Result<String, String>
 
 impl File@encap {
     pub *
@@ -84,13 +45,13 @@ impl File@encap {
 }
 
 impl File {
-    pub fn open(path: String, mode: String) -> FileResult {
+    pub fn open(path: String, mode: String) -> Result<File, String> {
         unsafe {
             auto *p = libc_fopen(path.c_str(), mode.c_str())
             if *p == (ADDR0 as *void) {
-                return FileResult::Err(String::from("Failed to open file"))
+                return IoResult::Err(String::from("Failed to open file"))
             }
-            return FileResult::Ok(File(
+            return IoResult::Ok(File(
                 *handle = *p,
                 opened = true,
                 owned = true
@@ -108,10 +69,10 @@ impl File {
         }
     }
     
-    pub fn read_to_string(self) -> StringResult {
+    pub fn read_to_string(self) -> Result<String, String> {
         unsafe {
             if !self.opened { 
-                return StringResult::Err(String::from("File not open"))
+                return IoStringResult::Err(String::from("File not open"))
             }
             
             // Get size
@@ -120,7 +81,7 @@ impl File {
             libc_rewind(self.*handle)
             
             if size <= 0 { 
-                return StringResult::Ok(String::from(""))
+                return IoStringResult::Ok(String::from(""))
             }
             
             // Alloc temp buffer using libc_malloc
@@ -136,7 +97,7 @@ impl File {
             // Free temp
             libc_free(*buf as *void)
             
-            return StringResult::Ok(s)
+            return IoStringResult::Ok(s)
         }
     }
     
@@ -153,10 +114,10 @@ impl File {
         }
     }
 
-    pub fn read_line(self) -> StringResult {
+    pub fn read_line(self) -> Result<String, String> {
         unsafe {
             if !self.opened { 
-                 return StringResult::Err(String::from("File not open"))
+                 return IoStringResult::Err(String::from("File not open"))
             }
             
             auto s# = String::from("")
@@ -179,7 +140,7 @@ impl File {
                 }
             }
             
-            return StringResult::Ok(s)
+            return IoStringResult::Ok(s)
         }
     }
 

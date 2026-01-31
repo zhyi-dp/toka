@@ -1,8 +1,9 @@
 #!/bin/bash
+# tool/test_pass.sh - Parallel Test Runner
 
 # --- Configuration ---
 TOKAC="./build/src/tokac"
-LLI=$(which lli || which lli-17 || echo "/usr/local/Cellar/llvm@17/17.0.6/bin/lli")
+LLI=$(which lli || which lli-17 || echo "/usr/local/opt/llvm@17/bin/lli")
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -10,71 +11,42 @@ YELLOW='\033[0;33m'
 NC='\033[0m'
 GRAY='\033[0;90m'
 
-pass_count=0
-fail_count=0
-
-# --- Helper Functions ---
-
-# Print log context (Panic line or last few lines), called only once per file
-print_log_context() {
-    local log_file="$1"
-    local exit_code="$2"
-    
-    if [ -f "$log_file" ]; then
-        # Try to capture the critical Panic line
-        local panic_line=$(grep "runtime error: Panic with" "$log_file" | head -n 1)
-        
-        echo -e "${GRAY}    --------------------------------------------------${NC}"
-        if [ -n "$panic_line" ]; then
-             echo -e "    | Exit Code: $exit_code"
-             echo -e "    | $panic_line"
-        else
-             # If not a standard Panic (e.g. Segfault), show the last 3 lines
-             echo -e "    | Exit Code: $exit_code (No panic info found)"
-             echo -e "    | Last logs:"
-             tail -n 3 "$log_file" | sed 's/^/    | /'
-        fi
-        echo -e "${GRAY}    --------------------------------------------------${NC}"
-    fi
-}
-
-# --- Main Logic ---
-
-# Ensure compiler builds first
-make -C build -j8 > /dev/null || { echo "Compiler Build Failed"; exit 1; }
-
-echo "Starting Toka 'PASS' Test Suite..."
-echo "---------------------------------"
-
-for test_path in tests/pass/*.tk; do
-    [ -e "$test_path" ] || continue
+# --- Worker Logic ---
+run_worker() {
+    test_path="$1"
+    [ -e "$test_path" ] || exit 0
     
     file_name=$(basename "$test_path")
     ll_file="${file_name}.ll"
     log_file="${file_name}.log"
     
-    # Array to collect all errors for the current file
-    errors=()
-
+    # Capture output in a buffer to ensure atomic printing
+    OUTPUT=""
+    
+    append() {
+        OUTPUT="${OUTPUT}$1\n"
+    }
+    
     # Step 1: Compile
     if ! "$TOKAC" "$test_path" > "$ll_file" 2> "$log_file"; then
-        printf "[FAIL] %-35s\n" "$file_name"
-        echo -e "    ${RED}$test_path:1: error: Compilation failed${NC}"
-        # Print tail of log to help debug syntax errors
-        tail -n 5 "$log_file" | sed 's/^/    | /'
-        ((fail_count++))
-        continue
+        append "$(printf "[${RED}FAIL${NC}] %-35s" "$file_name")"
+        append "    ${RED}$test_path:1: error: Compilation failed${NC}"
+        # Tail logs
+        LOGS=$(tail -n 5 "$log_file" | sed 's/^/    | /')
+        append "$LOGS"
+        echo -ne "$OUTPUT"
+        rm -f "$log_file" "$ll_file"
+        exit 1
     fi
 
     # Step 2: Run
-    # Trick: Use { ... } 2>&1 to capture output, and pipe to grep -v to silence 
-    # the shell's "Abort trap" message (common on macOS).
-    # We use PIPESTATUS to get the exit code of lli, not grep.
     { "$LLI" "$ll_file" >> "$log_file" 2>&1; } 2>&1 | grep -v "Abort trap"
     exit_code=${PIPESTATUS[0]}
 
-    # Step 3: Extract Info
-    # Extract actual Panic line number and message
+    # Step 3: Extract & Verify
+    errors=()
+    
+    # Extract panic info
     panic_log_line=$(grep "runtime error: Panic with" "$log_file" | head -n 1)
     if [ -n "$panic_log_line" ]; then
         actual_line=$(echo "$panic_log_line" | grep -oE ":[0-9]+ runtime" | grep -oE "[0-9]+")
@@ -84,75 +56,106 @@ for test_path in tests/pass/*.tk; do
         actual_msg=""
     fi
     
-    # Get all expected line numbers
     all_expected_lines=$(grep -n "// EXPECT_PANIC" "$test_path" | cut -d: -f1 | tr '\n' ' ')
 
-    # Step 4: Verification
-    
-    # --- Case A: Program finished successfully (Exit 0) ---
     if [ $exit_code -eq 0 ]; then
         for exp_line in $all_expected_lines; do
-            errors+=("${RED}$test_path:$exp_line: error: Expected panic did not trigger (program finished successfully).${NC}")
+            errors+=("${RED}$test_path:$exp_line: error: Expected panic did not trigger.${NC}")
         done
-
-    # --- Case B: Program crashed (Exit != 0) ---
     else
         if [ -n "$actual_line" ]; then
-            
-            # 1. Check for MISSED expected panics (lines before the crash)
-            for exp_line in $all_expected_lines; do
+             # Check execution flow
+             for exp_line in $all_expected_lines; do
                 if [ "$exp_line" -lt "$actual_line" ]; then
-                    errors+=("${RED}$test_path:$exp_line: error: Expected panic did not trigger (execution passed this line).${NC}")
+                    errors+=("${RED}$test_path:$exp_line: error: Expected panic missed (passed check).${NC}")
                 fi
-            done
-
-            # 2. Check the CRASH location
-            # Read the source code of the crashed line
-            crashed_source_code=$(sed "${actual_line}q;d" "$test_path")
-            
-            # Sub-check: Is this an ASSERTION failure?
-            # Asserts are logical bugs and should FAIL even if marked with EXPECT_PANIC.
-            if [[ "$crashed_source_code" == *"assert"* ]]; then
-                 errors+=("${RED}$test_path:$actual_line: error: Assertion failed: \"$actual_msg\" ${NC}")
-            
-            # Sub-check: Is this an UNEXPECTED runtime panic?
-            else
-                # Check if the line has the marker
-                is_actual_expected=$(echo "$crashed_source_code" | grep "// EXPECT_PANIC")
-                
-                if [ -z "$is_actual_expected" ]; then
-                    errors+=("${RED}$test_path:$actual_line: error: Unexpected panic: \"$actual_msg\"${NC}")
-                fi
-            fi
-
+             done
+             
+             # Check crash location
+             crashed_source=$(sed "${actual_line}q;d" "$test_path")
+             if [[ "$crashed_source" == *"assert"* ]]; then
+                 errors+=("${RED}$test_path:$actual_line: error: Assertion failed: \"$actual_msg\"${NC}")
+             else
+                 is_exp=$(echo "$crashed_source" | grep "// EXPECT_PANIC")
+                 if [ -z "$is_exp" ]; then
+                     errors+=("${RED}$test_path:$actual_line: error: Unexpected panic: \"$actual_msg\"${NC}")
+                 fi
+             fi
         else
-            # Runtime crash without standard panic info (e.g. Segfault)
-            errors+=("${RED}$test_path:1: error: Runtime crash ($exit_code) without standard panic info.${NC}")
+             errors+=("${RED}$test_path:1: error: Runtime crash ($exit_code) without panic info.${NC}")
         fi
     fi
 
-    # Step 5: Reporting
+    # Report
     if [ ${#errors[@]} -eq 0 ]; then
-        ((pass_count++))
-        
-        # If it passed BUT crashed (Expected Panic), show context for verification
         if [ $exit_code -ne 0 ]; then
-             printf "[${GREEN}PASS${NC} with Expected ${YELLOW}Panic${NC}] %-35s\n" "$file_name"
-             print_log_context "$log_file" "$exit_code"
+             append "$(printf "[${GREEN}PASS${NC} with Expected ${YELLOW}Panic${NC}] %-35s" "$file_name")"
+             # Context for crash
+             if [ -f "$log_file" ]; then
+                panic_line=$(grep "runtime error: Panic with" "$log_file" | head -n 1)
+                append "${GRAY}    --------------------------------------------------${NC}"
+                if [ -n "$panic_line" ]; then
+                     append "    | Exit Code: $exit_code"
+                     append "    | $panic_line"
+                else
+                     append "    | Exit Code: $exit_code (No panic info found)"
+                     append "    | Last logs:"
+                     append "$(tail -n 3 "$log_file" | sed 's/^/    | /')"
+                fi
+                append "${GRAY}    --------------------------------------------------${NC}"
+             fi
+        else
+             append "$(printf "[${GREEN}PASS${NC}] %-35s" "$file_name")"
+        fi
+        rm -f "$ll_file" "$log_file"
+        echo -ne "$OUTPUT"
+        exit 0
+    else
+        append "$(printf "[${RED}FAIL${NC}] %-35s" "$file_name")"
+        for err in "${errors[@]}"; do
+            append "    $err"
+        done
+        
+        # Context dump
+        if [ -f "$log_file" ]; then
+            append "${GRAY}    --------------------------------------------------${NC}"
+            append "    | Exit Code: $exit_code"
+            append "    | Last logs:"
+            append "$(tail -n 3 "$log_file" | sed 's/^/    | /')"
+            append "${GRAY}    --------------------------------------------------${NC}"
         fi
         
-        rm -f "$ll_file" "$log_file"
-    else
-        ((fail_count++))
-        printf "[${RED}FAIL${NC}] %-35s\n" "$file_name"
-        for err_msg in "${errors[@]}"; do
-            echo -e "    $err_msg"
-        done
-        print_log_context "$log_file" "$exit_code"
+        echo -ne "$OUTPUT"
+        rm -f "$ll_file" # Keep log? No, simplify cleanup.
+        exit 1
     fi
-done
+}
 
-# --- Report ---
+# --- Entry Point ---
+
+if [ "$1" == "--worker" ]; then
+    run_worker "$2"
+fi
+
+# Orchestrator
+make -C build -j8 > /dev/null || { echo "Compiler Build Failed"; exit 1; }
+
+echo "Starting Toka 'PASS' Test Suite (Parallel)..."
+echo "---------------------------------"
+
+RESULTS_FILE=$(mktemp)
+
+# Run parallel -P 8
+find tests/pass -name "*.tk" -print0 | xargs -0 -P 8 -n 1 "$0" --worker | tee "$RESULTS_FILE"
+
+# Stats
+# Strip ANSI codes for accurate counting
+# sed -r is GNU, sed -E is BSD/Mac. Use perl or simplified grep.
+pass_count=$(sed 's/\x1b\[[0-9;]*m//g' "$RESULTS_FILE" | grep -c "\[PASS")
+fail_count=$(sed 's/\x1b\[[0-9;]*m//g' "$RESULTS_FILE" | grep -c "\[FAIL")
+
+rm -f "$RESULTS_FILE"
+
 echo "---------------------------------"
 echo "Summary:"
 echo -e "  Passed: ${GREEN}$pass_count${NC}"

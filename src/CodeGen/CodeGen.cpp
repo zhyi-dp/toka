@@ -226,4 +226,33 @@ void CodeGen::error(const ASTNode *node, const std::string &message) {
   }
 }
 
+CodeGen::GenContext CodeGen::saveContext() {
+  GenContext ctx;
+  ctx.Symbols = m_Symbols;
+  ctx.NamedValues = m_NamedValues;
+  ctx.CurrentSelfType = m_CurrentSelfType;
+  ctx.CFStack = m_CFStack;
+  ctx.ScopeStack = m_ScopeStack;
+  ctx.InsertBlock = m_Builder.GetInsertBlock();
+  if (ctx.InsertBlock)
+    ctx.InsertPoint = m_Builder.GetInsertPoint();
+  return ctx;
+}
+
+void CodeGen::restoreContext(const GenContext &ctx) {
+  m_Symbols = ctx.Symbols;
+  m_NamedValues = ctx.NamedValues;
+  m_CurrentSelfType = ctx.CurrentSelfType;
+  m_CFStack = ctx.CFStack;
+  m_ScopeStack = ctx.ScopeStack;
+  if (ctx.InsertBlock) {
+    if (ctx.InsertPoint != ctx.InsertBlock->end())
+      m_Builder.SetInsertPoint(ctx.InsertBlock, ctx.InsertPoint);
+    else
+      m_Builder.SetInsertPoint(ctx.InsertBlock);
+  } else {
+    m_Builder.ClearInsertionPoint();
+  }
+}
+
 } // namespace toka

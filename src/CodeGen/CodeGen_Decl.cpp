@@ -30,6 +30,18 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     return nullptr;
 
   std::string funcName = overrideName.empty() ? func->Name : overrideName;
+
+  // [Fix] Context Guard: Save/Restore symbol table to prevent corruption during
+  // recursive generation
+  struct GenContextGuard {
+    CodeGen &CG;
+    GenContext Ctx;
+    std::string Name;
+    GenContextGuard(CodeGen &cg, std::string n)
+        : CG(cg), Ctx(cg.saveContext()), Name(n) {}
+    ~GenContextGuard() { CG.restoreContext(Ctx); }
+  } guard(*this, funcName);
+
   m_Functions[funcName] = func;
   m_Symbols.clear();
 
@@ -147,6 +159,11 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
     f = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, funcName,
                                m_Module.get());
   }
+
+  // [Fix] Prevent double generation of function bodies (e.g. from multiple
+  // imports)
+  if (!f->empty())
+    return f;
 
   if (declOnly)
     return f;

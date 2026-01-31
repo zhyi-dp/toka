@@ -241,6 +241,19 @@ private:
   llvm::Value *genUnreachableStmt(const UnreachableStmt *stmt);
   llvm::Value *genNullCheck(llvm::Value *val, const ASTNode *node,
                             const std::string &msg = "panic: null access");
+
+  struct GenContext {
+    std::map<std::string, TokaSymbol> Symbols;
+    std::map<std::string, llvm::Value *> NamedValues;
+    std::string CurrentSelfType;
+    std::vector<CFInfo> CFStack;
+    std::vector<std::vector<VariableScopeInfo>> ScopeStack;
+    llvm::BasicBlock *InsertBlock;
+    llvm::BasicBlock::iterator InsertPoint;
+  };
+
+  GenContext saveContext();
+  void restoreContext(const GenContext &ctx);
 };
 
 } // namespace toka
