@@ -1,0 +1,46 @@
+import std/io::println
+import std/vec::{Vec}
+import core/option::{Option}
+
+
+alias OptI32 = Option<i32>
+
+fn main() -> i32 {
+    // 1. Create a Vector
+    auto v# = Vec<i32>::new()
+    v#.push(10)
+    v#.push(20)
+    v#.push(30)
+    
+    // 2. Get Iterator
+    auto it# = v.iter()
+    
+    // 3. Loop manually
+    auto sum# = 0
+    auto done# = false
+    
+    while !done {
+        auto opt = it#.next()
+        
+        // Match on Option
+        match opt {
+            auto OptI32::Some(val) => {
+                println("Got: {}", val)
+                sum += val
+            }
+            auto OptI32::None => {
+                println("Iterator finished")
+                done = true
+            }
+        }
+    }
+    
+    // 4. Verify Sum
+    if sum != 60 {
+        println("Err: Sum should be 60, got {}", sum)
+        return 1
+    }
+    
+    println("Iterator Test Passed!")
+    return 0
+}

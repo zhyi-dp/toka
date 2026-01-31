@@ -18,6 +18,7 @@ import core/libc::*
 import std/io::println
 import core/option::{Option}
 
+
 // Helper for mutable iteration
 shape Counter(val: usize)
 impl Counter {
@@ -160,6 +161,38 @@ impl<T> Vec<T> {
                 self.*buf = *new_buf
                 self.cap = new_cap
             }
+        }
+    }
+
+    // Create Iterator
+    pub fn iter(self) -> VecIterator<T> {
+        unsafe {
+            return VecIterator<T>(
+                *buf = self.*buf,
+                len = self.len,
+                pos = 0
+            )
+        }
+    }
+}
+
+pub shape VecIterator<T> (
+    *!buf : T,
+    len : usize,
+    pos : usize
+)
+
+// Concrete Implementation
+impl<T> VecIterator<T> {
+    pub fn next(self#) -> Option<T> {
+        unsafe {
+            if self.pos >= self.len {
+                return Option<T>::None
+            }
+            
+            auto val = self.buf[self.pos]
+            self.pos += 1
+            return Option<T>::Some(val)
         }
     }
 }
