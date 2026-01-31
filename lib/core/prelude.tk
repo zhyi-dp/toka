@@ -14,6 +14,8 @@
 
 // core/prelude.tk
 pub import core/types::*
+pub import core/option::*
+pub import core/result::*
 
 import core/internal/runtime::__toka_panic_handler;
 
