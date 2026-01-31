@@ -1,0 +1,25 @@
+import core/result::{Result}
+import core/traits::{ @encap }
+import core/types::{ ADDR0 }
+
+shape MyFile(
+    *h: void
+)
+
+shape Wrapper(val: i32)
+
+impl MyFile@encap {
+    pub *
+    fn drop(self#) {}
+}
+
+impl MyFile {
+    fn test(self) -> Result<Wrapper, Wrapper> {
+        auto *p = self.*h 
+        return Result<Wrapper, Wrapper>::Ok(Wrapper(val=0))
+    }
+}
+
+fn main() -> i32 {
+    return 0
+}

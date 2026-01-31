@@ -16,13 +16,59 @@ import std/string::{String}
 import core/libc::*
 
 // Intrinsic
+// Intrinsic
 extern fn println(fmt: str, ...) -> void
 
+// Specific Result Types to avoid Generic Instantiation Bugs
 pub shape File (
     *handle: void, // FILE*
     opened: bool,
     owned: bool
 )
+
+pub shape FileResult(
+    Ok(File) |
+    Err(String)
+)
+
+pub shape StringResult(
+    Ok(String) |
+    Err(String)
+)
+
+impl FileResult {
+    pub fn unwrap(self) -> File {
+        match self {
+            Ok(f) => { return f }
+            Err(e) => {
+                println("Panic: FileResult Unwrap on Err: {}", e.c_str())
+                unsafe { libc_abort() }
+                return File(handle=ADDR0 as *void, opened=false, owned=false)
+            }
+        }
+    }
+    pub fn is_ok(self) -> bool {
+        match self { Ok(_) => { return true } _ => { return false } }
+    }
+}
+
+impl StringResult {
+    pub fn unwrap(self) -> String {
+        match self {
+            Ok(s) => { return s }
+            Err(e) => {
+                println("Panic: StringResult Unwrap on Err: {}", e.c_str())
+                unsafe { libc_abort() }
+                return String::from("")
+            }
+        }
+    }
+    pub fn is_ok(self) -> bool {
+        match self { Ok(_) => { return true } _ => { return false } }
+    }
+}
+
+
 
 impl File@encap {
     pub *
@@ -38,18 +84,17 @@ impl File@encap {
 }
 
 impl File {
-    pub fn open(path: String, mode: String) -> File {
+    pub fn open(path: String, mode: String) -> FileResult {
         unsafe {
             auto *p = libc_fopen(path.c_str(), mode.c_str())
-            auto valid# = true
             if *p == (ADDR0 as *void) {
-                valid = false
+                return FileResult::Err(String::from("Failed to open file"))
             }
-            return File(
+            return FileResult::Ok(File(
                 *handle = *p,
-                opened = valid,
+                opened = true,
                 owned = true
-            )
+            ))
         }
     }
     
@@ -63,16 +108,20 @@ impl File {
         }
     }
     
-    pub fn read_to_string(self) -> String {
+    pub fn read_to_string(self) -> StringResult {
         unsafe {
-            if !self.opened { return String::from("") }
+            if !self.opened { 
+                return StringResult::Err(String::from("File not open"))
+            }
             
             // Get size
             libc_fseek(self.*handle, 0, 2) // SEEK_END
             auto size = libc_ftell(self.*handle)
             libc_rewind(self.*handle)
             
-            if size <= 0 { return String::from("") }
+            if size <= 0 { 
+                return StringResult::Ok(String::from(""))
+            }
             
             // Alloc temp buffer using libc_malloc
             auto *buf# = libc_malloc((size + 1) as usize) as *char
@@ -87,7 +136,7 @@ impl File {
             // Free temp
             libc_free(*buf as *void)
             
-            return s
+            return StringResult::Ok(s)
         }
     }
     
@@ -104,9 +153,11 @@ impl File {
         }
     }
 
-    pub fn read_line(self) -> String {
+    pub fn read_line(self) -> StringResult {
         unsafe {
-            if !self.opened { return String::from("") }
+            if !self.opened { 
+                 return StringResult::Err(String::from("File not open"))
+            }
             
             auto s# = String::from("")
             // Loop char by char
@@ -121,14 +172,14 @@ impl File {
                     done = true
                 } else {
                     auto ch = c as char
-                    s#.push_char(ch)
+                    s#.push_char(ch) // Appends to String
                     if ch == 10 as char { // \n
                         done = true
                     }
                 }
             }
             
-            return s
+            return StringResult::Ok(s)
         }
     }
 

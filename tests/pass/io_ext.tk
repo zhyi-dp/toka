@@ -15,11 +15,8 @@ fn main() -> i32 {
     }
     
     // 3. Create file and test write/flush/seek/tell
-    auto f = File::open(path, String::from("w+"))
-    if !f.opened {
-        print(String::from("Error: failed to create test file\n"))
-        return 2
-    }
+    auto res = File::open(path, String::from("w+"))
+    auto f = res.unwrap()
     
     f.write(String::from("ABCDEF"))
     f.flush()

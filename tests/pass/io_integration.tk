@@ -1,21 +1,24 @@
 import std/io::{File, println, remove_file}
-import std/string::String
+import std/string::{String}
 
 fn main() -> i32 {
     auto path = String::from("test_raii_output.txt")
     
     // Scope 1: Write
     {
-        auto f = File::open(path.clone(), String::from("w"))
+        auto res = File::open(path.clone(), String::from("w"))
+        auto f = res.unwrap()
         f.write(String::from("Hello RAII\n"))
         // f drops here, should close
     }
     
     // Scope 2: Read
     {
-        auto f = File::open(path.clone(), String::from("r"))
-        auto s = f.read_line()
-        println("Read back: {}", s)
+        auto res = File::open(path.clone(), String::from("r"))
+        auto f = res.unwrap()
+        // read_line returns IoResult
+        auto s = f.read_line().unwrap()
+        println("Read back: {}", s.c_str())
         if s.eq(String::from("Hello RAII\n")) {
              println("Content matches!")
         } else {
