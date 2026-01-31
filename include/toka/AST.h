@@ -680,6 +680,18 @@ public:
       }
       return "";
     }
+
+    std::unique_ptr<ASTNode> clone() const override {
+      auto n = std::make_unique<Pattern>(PatternKind);
+      n->Name = Name;
+      n->LiteralVal = LiteralVal;
+      n->IsReference = IsReference;
+      n->IsValueMutable = IsValueMutable;
+      n->IsValueBlocked = IsValueBlocked;
+      n->SubPatterns = cloneVec(SubPatterns);
+      n->Loc = Loc;
+      return n;
+    }
   };
 
   std::unique_ptr<Pattern> Pat;

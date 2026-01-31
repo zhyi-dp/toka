@@ -1,0 +1,41 @@
+
+import std/io::println
+
+// Reproduction case:
+// 1. Generic Enum
+// 2. Explicit Discriminant (= 0)
+// 3. Unit Variant (BuggyVariant)
+pub shape BuggyEnum<T> (
+    Other(T) = 1 |
+    BuggyVariant = 0
+)
+
+
+impl<T> BuggyEnum<T> {
+    pub fn is_buggy(self) -> bool {
+        match self {
+            BuggyEnum<T>::BuggyVariant => return true
+            _ => return false
+        }
+    }
+}
+
+fn main() -> i32 {
+    // Instantiate with i32
+    auto unit_val = BuggyEnum<i32>::BuggyVariant
+    
+    match unit_val {
+        BuggyEnum<i32>::BuggyVariant => println("Matched BuggyVariant")
+        _ => {
+            println("Failed to match BuggyVariant")
+            return 1
+        }
+    }
+
+    if !unit_val.is_buggy() {
+        println("is_buggy failed")
+        return 2
+    }
+
+    return 0
+}
