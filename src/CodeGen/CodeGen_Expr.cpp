@@ -924,14 +924,22 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     }
 
     // Final check to avoid assertion
+    // Final check to avoid assertion
     if (!lhs->getType()->isIntOrIntVectorTy() &&
         !lhs->getType()->isPtrOrPtrVectorTy()) {
-      // If still struct (e.g. multi-field shape), comparison is invalid
-      // unless we implement deep comparison (not done yet)
-      // error(bin, "Cannot compare compound types");
-      // return llvm::ConstantInt::getFalse(m_Context);
-      // For now, let it fail or default
+      std::string ls;
+      llvm::raw_string_ostream los(ls);
+      lhs->getType()->print(los);
     }
+
+    // Debug print types
+    {
+      std::string ls, rs;
+      llvm::raw_string_ostream los(ls), ros(rs);
+      lhs->getType()->print(los);
+      rhs->getType()->print(ros);
+    }
+
     llvm::Value *cmp = m_Builder.CreateICmpEQ(lhs, rhs, "eq_tmp");
     if (bin->Op == "!=")
       return m_Builder.CreateNot(cmp, "ne_tmp");
@@ -982,7 +990,6 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 }
 
 PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
-  std::cerr << "DEBUG: genUnaryExpr op=" << (int)unary->Op << "\n";
   if (unary->Op == TokenType::PlusPlus || unary->Op == TokenType::MinusMinus) {
     llvm::Value *addr = genAddr(unary->RHS.get());
     if (!addr)
@@ -1529,8 +1536,6 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
   PhysEntity targetVal_ent = genExpr(expr->Target.get()).load(m_Builder);
   llvm::Value *targetVal = targetVal_ent.load(m_Builder);
   llvm::Type *targetType = targetVal->getType();
-  std::cerr << "DEBUG: genMatchExpr ENTRY. TypeID: " << targetType->getTypeID()
-            << "\n";
 
   std::string shapeName;
   if (targetType->isStructTy() && m_TypeToName.count(targetType)) {
@@ -1571,10 +1576,13 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
       m_Shapes[baseShapeName]->Kind == ShapeKind::Enum) {
     const ShapeDecl *sh = m_Shapes[baseShapeName];
     llvm::Value *tagVal = m_Builder.CreateExtractValue(targetVal, 0, "tag");
+
     llvm::BasicBlock *defaultBB =
         llvm::BasicBlock::Create(m_Context, "match_default", func);
     llvm::SwitchInst *sw =
         m_Builder.CreateSwitch(tagVal, defaultBB, expr->Arms.size());
+
+    std::vector<bool> handledArms(expr->Arms.size(), false);
 
     for (size_t k = 0; k < expr->Arms.size(); ++k) {
       const auto &arm = expr->Arms[k];
@@ -1598,17 +1606,34 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
       }
 
       if (tag != -1) {
+        handledArms[k] = true;
         llvm::BasicBlock *caseBB =
             llvm::BasicBlock::Create(m_Context, "case_" + variant->Name, func);
         // [Fix] Use correct type for Switch Case
         sw->addCase(llvm::cast<llvm::ConstantInt>(
                         llvm::ConstantInt::get(tagVal->getType(), tag)),
                     caseBB);
-        m_Builder.SetInsertPoint(caseBB);
 
+        m_Builder.SetInsertPoint(caseBB);
         m_ScopeStack.push_back({});
-        // Bind Payload if exists
-        if (!arm->Pat->SubPatterns.empty() && variant) {
+
+        // If pattern has sub-patterns (tuple/struct enum), bind them
+        // Cast target to payload type
+        if (!variant->SubMembers.empty() || !variant->Type.empty()) {
+          // GEP to payload (skip tag)
+          // Tag is i8 at offset 0. Payload is at offset 1 (aligned)
+          // We need to cast target pointer to struct { i8, Payload }*
+          // OR just GEP byte offset?
+          // For now, assume generic layout strategy: Tag | Padding | Payload
+
+          // Using targetAddr directly as it is the pointer to the alloca
+
+          // Better approach: Cast to the specific Variant Shape Struct
+          // which CodeGen_Type should have generated. But we use a single Union
+          // struct?
+          // Let's rely on manual pointer arithmetic for now or assume Tag is
+          // byte 0.
+
           llvm::Value *payloadAddr =
               m_Builder.CreateStructGEP(targetType, targetAddr, 1);
 
@@ -1660,12 +1685,18 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
         if (m_Builder.GetInsertBlock() &&
             !m_Builder.GetInsertBlock()->getTerminator())
           m_Builder.CreateBr(mergeBB);
+      } else {
+        // No match logic here intended, loop continues
       }
     }
 
     m_Builder.SetInsertPoint(defaultBB);
     // Find Wildcard OR Variable arm if any
-    for (const auto &arm : expr->Arms) {
+    for (size_t k = 0; k < expr->Arms.size(); ++k) {
+      if (handledArms[k])
+        continue;
+      const auto &arm = expr->Arms[k];
+
       if (arm->Pat->PatternKind == MatchArm::Pattern::Wildcard ||
           arm->Pat->PatternKind == MatchArm::Pattern::Variable) {
         m_ScopeStack.push_back({});
@@ -1691,8 +1722,6 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
     // We don't want to fall through to General Match logic in any weird edge
     // case. The C++ control flow jumps to 'else' boundary, so it's fine.
   } else {
-    std::cerr << "DEBUG: genMatchExpr FALLTHROUGH to General Match. shapeName='"
-              << shapeName << "'\n";
     // General pattern matching (Sequence of Ifs)
     for (const auto &arm : expr->Arms) {
       llvm::BasicBlock *armBB =
@@ -1703,18 +1732,11 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
       // 1. Check Pattern
       llvm::Value *cond = nullptr;
       if (arm->Pat->PatternKind == MatchArm::Pattern::Literal) {
-        std::cerr << "CRITICAL: Creating ICmpEQ for Literal Pattern in General "
-                     "Match! TargetTyID: "
-                  << targetType->getTypeID() << "\n";
-        targetType->print(llvm::errs());
-        llvm::errs() << "\n";
         if (targetType->isIntOrIntVectorTy() ||
             targetType->isPtrOrPtrVectorTy()) {
           cond = m_Builder.CreateICmpEQ(
               targetVal, m_Builder.getInt32(arm->Pat->LiteralVal));
         } else {
-          std::cerr << "Error: Cannot match literal pattern against non-scalar "
-                       "type (Struct/Array).\n";
           // Fail safely (match nothing)
           cond = m_Builder.getInt1(false);
         }
@@ -1806,8 +1828,6 @@ PhysEntity CodeGen::genIfExpr(const IfExpr *ie) {
   if (!cond)
     return nullptr;
   if (!cond->getType()->isIntegerTy(1)) {
-    std::cerr << "DEBUG: genIfExpr CreateICmpNE. CondTypeID: "
-              << cond->getType()->getTypeID() << "\n";
     cond = m_Builder.CreateICmpNE(
         cond, llvm::ConstantInt::get(cond->getType(), 0), "ifcond");
   }
@@ -2707,15 +2727,6 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         if (logicalTy && (logicalTy->isStructTy() || logicalTy->isArrayTy()))
           isCaptured = true;
       }
-    }
-
-    // [Debug] Arg detection
-    if (funcDecl && i < funcDecl->Args.size()) {
-      const auto &arg = funcDecl->Args[i];
-      std::cerr << "DEBUG: CallArg " << i << " Name=" << arg.Name
-                << " HasRef=" << arg.IsReference << " HasPtr=" << arg.HasPointer
-                << " IsUni=" << arg.IsUnique << " Cap=" << isCaptured
-                << " ShouldAddr=" << shouldPassAddr << "\n";
     }
 
     if (isCaptured || isRef) {

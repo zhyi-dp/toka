@@ -1401,27 +1401,37 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
                       true); // Return address as LValue
   }
   if (expr->Method == "unwrap") {
-    llvm::Value *objVal = genExpr(expr->Object.get()).load(m_Builder);
-    if (!objVal)
-      return nullptr;
+    // [Fix] Only allow intrinsic 'unwrap' for Pointers (Nullable sugar).
+    // Do NOT hijack 'unwrap' method on Structs (like Option<T>).
+    bool isPointer = false;
+    if (expr->Object->ResolvedType) {
+      isPointer = expr->Object->ResolvedType->isPointer();
+    }
 
-    llvm::Value *nn = m_Builder.CreateIsNotNull(objVal, "unwrap.nn");
-    llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-    llvm::BasicBlock *okBB =
-        llvm::BasicBlock::Create(m_Context, "unwrap.ok", f);
-    llvm::BasicBlock *panicBB =
-        llvm::BasicBlock::Create(m_Context, "unwrap.panic", f);
-    m_Builder.CreateCondBr(nn, okBB, panicBB);
+    if (isPointer) {
+      llvm::Value *objVal = genExpr(expr->Object.get()).load(m_Builder);
+      if (!objVal)
+        return nullptr;
 
-    m_Builder.SetInsertPoint(panicBB);
-    // [TODO] Call __toka_panic properly. For now, trap or abort.
-    llvm::Function *trap =
-        llvm::Intrinsic::getDeclaration(m_Module.get(), llvm::Intrinsic::trap);
-    m_Builder.CreateCall(trap);
-    m_Builder.CreateUnreachable();
+      llvm::Value *nn = m_Builder.CreateIsNotNull(objVal, "unwrap.nn");
+      llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+      llvm::BasicBlock *okBB =
+          llvm::BasicBlock::Create(m_Context, "unwrap.ok", f);
+      llvm::BasicBlock *panicBB =
+          llvm::BasicBlock::Create(m_Context, "unwrap.panic", f);
+      m_Builder.CreateCondBr(nn, okBB, panicBB);
 
-    m_Builder.SetInsertPoint(okBB);
-    return objVal;
+      m_Builder.SetInsertPoint(panicBB);
+      // [TODO] Call __toka_panic properly. For now, trap or abort.
+      llvm::Function *trap = llvm::Intrinsic::getDeclaration(
+          m_Module.get(), llvm::Intrinsic::trap);
+      m_Builder.CreateCall(trap);
+      m_Builder.CreateUnreachable();
+
+      m_Builder.SetInsertPoint(okBB);
+      m_Builder.SetInsertPoint(okBB);
+      return objVal;
+    }
   }
 
   llvm::Value *objVal = genExpr(expr->Object.get()).load(m_Builder);

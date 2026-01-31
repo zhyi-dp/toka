@@ -111,6 +111,7 @@ llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
   }
 
   llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
+  llvm::errs() << "DEBUG: genReturnStmt cleanupScopes\n";
   cleanupScopes(0);
   if (retVal) {
     if (retVal->getType() != f->getReturnType()) {
