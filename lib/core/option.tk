@@ -1,7 +1,4 @@
-// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
-
-import core/prelude::*
-import std/io::println
+import core/prelude
 import core/libc::libc_exit
 
 pub shape Option<T> (
@@ -12,7 +9,7 @@ pub shape Option<T> (
 impl<T> Option<T> {
     pub fn is_some(self) -> bool {
         match self {
-            Option::Some(_) => return true
+            auto Option<T>::Some(_) => return true
             _ => return false
         }
     }
@@ -21,14 +18,12 @@ impl<T> Option<T> {
         return self.is_some() == false
     }
 
-/*
+    /*
     pub fn unwrap(self) -> T {
         match self {
-            auto Option::Some(val) => return val
+            auto Option<T>::Some(val) => return val
             _ => {
-                libc_printf("Called Option::unwrap() on a None value\n")
                 libc_exit(1)
-                // Unreachable but satisfy return
                 return self.unwrap() 
             }
         }
@@ -36,9 +31,9 @@ impl<T> Option<T> {
 
     pub fn unwrap_or(self, def_val: T) -> T {
         match self {
-            auto Option::Some(val) => return val
+            auto Option<T>::Some(val) => return val
             _ => return def_val
         }
     }
-*/
+    */
 }
