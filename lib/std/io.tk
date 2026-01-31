@@ -108,7 +108,7 @@ impl File {
         unsafe {
             if !self.opened { return String::from("") }
             
-            auto s = String::from("")
+            auto s# = String::from("")
             // Loop char by char
             // TODO: optimize with buffering later if needed
             
@@ -121,7 +121,7 @@ impl File {
                     done = true
                 } else {
                     auto ch = c as char
-                    s.push_char(ch)
+                    s#.push_char(ch)
                     if ch == 10 as char { // \n
                         done = true
                     }

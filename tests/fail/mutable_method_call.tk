@@ -1,0 +1,15 @@
+shape Foo(x: i32)
+
+impl Foo {
+    fn set(self#, v: i32) {
+        self.x = v
+    }
+}
+
+fn main() -> i32 {
+    auto f# = Foo(x=0)
+    // Error expected here: f.set(10)    // 违规调用：缺少 #
+    // EXPECT: Cannot modify immutable entity 'Method 'set' requires explicit mutable argument (use '#')'
+    f.set(10)
+    return 0
+}

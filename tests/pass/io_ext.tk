@@ -37,7 +37,7 @@ fn main() -> i32 {
         return 4
     }
     
-    f.close()
+    f#.close()
     
     // 4. Test exists (should be true)
     if !exists(path) {

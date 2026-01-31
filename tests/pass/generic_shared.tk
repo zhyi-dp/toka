@@ -69,7 +69,7 @@ impl<T> SharedPtr<T> {
         unsafe println("lhs wrapper:{} <- rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.data[0])
 
         // [逻辑修复]: 必须先释放旧值 (DecRef/Free)
-        self.xdrop() 
+        self#.xdrop() 
 
         // 接纳新值
         self.*wrapper = rhs.*wrapper

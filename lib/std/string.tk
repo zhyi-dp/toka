@@ -284,7 +284,12 @@ impl String {
     }
 
     pub fn clear(self#) {
-        self#.drop()
+        unsafe {
+            self.len = 0
+            if self.*buf != nullptr {
+                self.buf[0] = 0 as char
+            }
+        }
     }
     
     // === Utilities ===

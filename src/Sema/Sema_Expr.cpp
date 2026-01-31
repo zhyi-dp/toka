@@ -1479,10 +1479,6 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           MethodDecls[soulType].count(Met->Method)) {
         FunctionDecl *FD = MethodDecls[soulType][Met->Method];
         if (!FD->IsPub) {
-          // Check visibility (simplified: allows same-file access, needs
-          // expansion for crate)
-          // FIXME: This logic should match checkCallExpr's relaxed check
-          // (Same Module)
           bool sameModule = false;
           if (CurrentModule) {
             std::string modFile =
@@ -1494,7 +1490,6 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               sameModule = true;
             }
           }
-
           std::string metCallFile =
               DiagnosticEngine::SrcMgr->getFullSourceLoc(Met->Loc).FileName;
           std::string fdDeclFile =
@@ -1505,22 +1500,50 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                   getModuleName(CurrentModule));
           }
         }
-      }
 
-      // [Rule] Borrowing check for Method Call
-      if (auto *objVar = dynamic_cast<VariableExpr *>(Met->Object.get())) {
-        SymbolInfo *info = nullptr;
-        if (CurrentScope->findSymbol(objVar->Name, info)) {
-          if (info->IsMutablyBorrowed) {
-            DiagnosticEngine::report(getLoc(Met), DiagID::ERR_BORROW_MUT,
-                                     objVar->Name);
-            HasError = true;
+        // [Rule] Enforce Explicit Mutability for Method Calls
+        if (!FD->Args.empty() && FD->Args[0].Name == "self" &&
+            FD->Args[0].IsValueMutable) {
+          // std::cerr << "[DEBUG] MutCheck: Method=" << Met->Method <<
+          // std::endl;
+          bool isExplicitlyMutable = false;
+          // Case 1: Postfix '#' (Expression Wrapper)
+          if (auto *PE = dynamic_cast<PostfixExpr *>(Met->Object.get())) {
+            // std::cerr << "[DEBUG] Is PostfixExpr. Op=" << (int)PE->Op <<
+            // std::endl;
+            if (PE->Op == TokenType::TokenWrite)
+              isExplicitlyMutable = true;
+          }
+          // Case 2: Variable with Suffix (Lexer Fused Token)
+          else if (auto *VE = dynamic_cast<VariableExpr *>(Met->Object.get())) {
+            // std::cerr << "[DEBUG] Is VariableExpr. IsValueMutable=" <<
+            // VE->IsValueMutable << std::endl;
+            if (VE->IsValueMutable)
+              isExplicitlyMutable = true;
+          }
+          if (!isExplicitlyMutable) {
+            error(Met, DiagID::ERR_IMMUTABLE_MOD,
+                  "Method '" + Met->Method +
+                      "' requires explicit mutable argument (use '#')");
           }
         }
-      }
 
-      return toka::Type::fromString(MethodMap[soulType][Met->Method]);
+        // [Rule] Borrowing check for Method Call
+        if (auto *objVar = dynamic_cast<VariableExpr *>(Met->Object.get())) {
+          SymbolInfo *info = nullptr;
+          if (CurrentScope->findSymbol(objVar->Name, info)) {
+            if (info->IsMutablyBorrowed) {
+              DiagnosticEngine::report(getLoc(Met), DiagID::ERR_BORROW_MUT,
+                                       objVar->Name);
+              HasError = true;
+            }
+          }
+        }
+
+        return toka::Type::fromString(MethodMap[soulType][Met->Method]);
+      }
     }
+
     // Check with @encap suffix as fallback
     std::string encapType = soulType + "@encap";
     if (MethodMap.count(encapType) && MethodMap[encapType].count(Met->Method)) {
@@ -1542,8 +1565,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
     if (Met->Method == "unwrap") {
       if (!ObjTypeObj->IsNullable) {
-        // Warning or Silent - constitution says it's programmer's承担
-        // return type is already non-nullable?
+        // Warning or Silent
       }
       return ObjTypeObj->withAttributes(ObjTypeObj->IsWritable, false);
     }
@@ -1556,15 +1578,15 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return checkMemberExpr(Memb);
   } else if (auto *Post = dynamic_cast<PostfixExpr *>(E)) {
     // [Fix] Do NOT disable soul collapse.
-    // If the user wants the handle, they must use explicit prefix (e.g. ^ptr#).
-    // Otherwise `ptr#` means "Mutable Value".
+    // If the user wants the handle, they must use explicit prefix (e.g.
+    // ^ptr#). Otherwise `ptr#` means "Mutable Value".
     if (m_InIntermediatePath) {
       if (Post->Op == TokenType::TokenWrite ||
           Post->Op == TokenType::TokenNull) {
         if (!m_IsMemberBase) {
-          error(Post,
-                "Permission symbols (#, ?) are only allowed at the terminal "
-                "of an access chain");
+          error(Post, "Permission symbols (#, ?) are only allowed at "
+                      "the terminal "
+                      "of an access chain");
         }
       }
     }
@@ -1749,8 +1771,8 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
   // [FIX] Peeling for Semantic Access (Internal)
   std::shared_ptr<toka::Type> objTypeObj;
 
-  // Rule: Intermediate paths MUST NOT have explicit pointer sigils or write
-  // sigils Check if current Memb is intermediate or terminal
+  // Rule: Intermediate paths MUST NOT have explicit pointer sigils or
+  // write sigils Check if current Memb is intermediate or terminal
   bool isTerminal = m_IsAssignmentTarget; // Only terminals can have # or ~^*&
 
   bool savedDisable = m_DisableSoulCollapse;
@@ -1802,10 +1824,11 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
           // Shared pointers allow multiple immutable borrows
           // Mutable borrows are still exclusive
           if (EffectiveInfo->TypeObj->typeKind == toka::Type::SharedPtr) {
-            // If it's a shared pointer, immutable borrows are always allowed.
-            // Mutable borrows are still subject to exclusivity.
-            if (!m_IsAssignmentTarget) { // If not an assignment target, it's an
-                                         // immutable borrow
+            // If it's a shared pointer, immutable borrows are always
+            // allowed. Mutable borrows are still subject to
+            // exclusivity.
+            if (!m_IsAssignmentTarget) { // If not an assignment target,
+                                         // it's an immutable borrow
               authorized = true;
             }
           }
@@ -1854,8 +1877,8 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
 
   std::string ObjTypeFull = objTypeObj->toString();
 
-  // Visibility Check for Private Member (Robust check using EncapMap exists
-  // later in loop)
+  // Visibility Check for Private Member (Robust check using EncapMap
+  // exists later in loop)
 
   if (ObjTypeFull == "module") {
     // It's a module access
@@ -1875,7 +1898,8 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
     }
   }
 
-  // std::cerr << "DEBUG: checkMemberExpr Object=" << objTypeObj->toString()
+  // std::cerr << "DEBUG: checkMemberExpr Object=" <<
+  // objTypeObj->toString()
   //           << " IsNullable=" << objTypeObj->IsNullable
   //           << " isNarrowed=" << isNarrowed << "\n";
 
@@ -1888,8 +1912,8 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
   }
 
   // [Ch 5.5] Implicit Dereference for soul access
-  // If Object is a pointer but we use '.', we must treat it as accessing the
-  // soul. Exception: Identity properties or methods.
+  // If Object is a pointer but we use '.', we must treat it as
+  // accessing the soul. Exception: Identity properties or methods.
   if (objTypeObj->isPointer() || objTypeObj->isSmartPointer()) {
     objTypeObj = objTypeObj->getSoulType();
   }
@@ -1988,7 +2012,8 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
         std::shared_ptr<toka::Type> fieldType =
             toka::Type::fromString(fullType);
 
-        // [Ch 5.4] Insulation: Pointers physically break permission inheritance
+        // [Ch 5.4] Insulation: Pointers physically break permission
+        // inheritance
         bool isSoulInsulated = fieldType->isPointer() ||
                                fieldType->isSmartPointer() ||
                                fieldType->isReference();
@@ -2001,16 +2026,17 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
           finalSoulWritable = false;
         } else {
           // [Toka 1.3] Inheritance: Pointers usually block.
-          // EXCEPTION: If we are on the LHS, or if the usage explicitly showed
-          // # (handled via Postfix wrapper) Since checkMemberExpr doesn't see
-          // the Postfix wrapper easily, we rely on m_InLHS or
-          // m_IsAssignmentTarget.
+          // EXCEPTION: If we are on the LHS, or if the usage explicitly
+          // showed # (handled via Postfix wrapper) Since
+          // checkMemberExpr doesn't see the Postfix wrapper easily, we
+          // rely on m_InLHS or m_IsAssignmentTarget.
           bool permitInheritance = !isSoulInsulated;
           finalSoulWritable =
               permitInheritance ? objTypeObj->IsWritable : false;
         }
 
-        // [Toka 1.3] Unit Variant Support: Allow omission of parentheses
+        // [Toka 1.3] Unit Variant Support: Allow omission of
+        // parentheses
         if (SD->Kind == ShapeKind::Enum || SD->Kind == ShapeKind::Union) {
           bool isUnit = (Field.Type == "void" || Field.Type.empty());
           if (isUnit) {
@@ -2018,8 +2044,8 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
                 true; // Mark as static for CodeGen to generate constant
             // Use fieldType directly? No, fieldType is void.
             // We return the Object Type (The Enum Type) as the value.
-            // Ensure no writability or nullability permissions are blindly
-            // inherited for value.
+            // Ensure no writability or nullability permissions are
+            // blindly inherited for value.
             return objTypeObj->withAttributes(false, false);
           }
         }
@@ -2038,12 +2064,13 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
               finalSoulWritable, isNarrowed ? false : fieldType->IsNullable);
         } else {
           // Hatted Access (Identity Access)
-          // Use fieldType directly as the base (preserving its morphologies)
+          // Use fieldType directly as the base (preserving its
+          // morphologies)
           std::shared_ptr<toka::Type> result = fieldType;
 
           // [Toka 1.3] Handle Inheritance:
-          // The Identity pointer (Handle) inherits its own writable status from
-          // self#
+          // The Identity pointer (Handle) inherits its own writable
+          // status from self#
           if (!result->IsBlocked) {
             result->IsWritable = result->IsWritable || objTypeObj->IsWritable;
           }
@@ -2058,17 +2085,19 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
                              requestedPrefix.find('!') != std::string::npos;
           }
 
-          // If requested prefix exists, ensure morphology matches or wrap it
+          // If requested prefix exists, ensure morphology matches or
+          // wrap it
           if (!requestedPrefix.empty() && requestedPrefix != "??") {
             std::string baseMorph =
                 toka::Type::stripMorphology(requestedPrefix);
-            // If requestedPrefix was just attributes (like '??' or '#'),
-            // baseMorph is empty. But here requestedPrefix is like '*#' or '^'.
-            // Actually, stripMorphology(requestedPrefix) where requestedPrefix
-            // is '*#' returns empty string? Let's check Type.cpp
-            // stripMorphology. It strips all @$#!?*^~&. Wait, if
-            // requestedPrefix is '*#', stripMorphology returns "". That's not
-            // helpful. I need the base sigil.
+            // If requestedPrefix was just attributes (like '??' or
+            // '#'), baseMorph is empty. But here requestedPrefix is
+            // like '*#' or
+            // '^'. Actually, stripMorphology(requestedPrefix) where
+            // requestedPrefix is '*#' returns empty string? Let's check
+            // Type.cpp stripMorphology. It strips all @$#!?*^~&. Wait,
+            // if requestedPrefix is '*#', stripMorphology returns "".
+            // That's not helpful. I need the base sigil.
 
             char sigil = 0;
             for (char c : requestedPrefix) {
@@ -2123,7 +2152,8 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
           } else if (Field.IsRebindable) {
             finalHandleWritable = result->IsWritable;
           } else {
-            // Default: Inherit Handle Writability from Object Soul (Bloodline)
+            // Default: Inherit Handle Writability from Object Soul
+            // (Bloodline)
             finalHandleWritable = objTypeObj->IsWritable;
           }
 
@@ -2150,8 +2180,8 @@ std::shared_ptr<toka::Type> Sema::checkMemberExpr(MemberExpr *Memb) {
         if (idx >= 0 && idx < (int)TT->Elements.size()) {
           Memb->Index = idx; // Set index for CodeGen
           auto elemType = TT->Elements[idx];
-          // [Toka 1.3] Tuple Inheritance: Elements inherit writability from the
-          // tuple container
+          // [Toka 1.3] Tuple Inheritance: Elements inherit writability
+          // from the tuple container
           bool finalWritable = elemType->IsWritable || objTypeObj->IsWritable;
           return elemType->withAttributes(finalWritable, elemType->IsNullable);
         } else {
@@ -2187,25 +2217,26 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
     }
   }
 
-  // [Ch 5] Single Hat Principle: Intermediate paths MUST NOT have morphology
-  // sigils
+  // [Ch 5] Single Hat Principle: Intermediate paths MUST NOT have
+  // morphology sigils
   if (m_InIntermediatePath) {
     if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
         Unary->Op == TokenType::Tilde || Unary->Op == TokenType::Ampersand) {
-      error(Unary,
-            "Morphology symbols (^, *, ~, &) are only allowed at the terminal "
-            "of an access chain");
+      error(Unary, "Morphology symbols (^, *, ~, &) are only allowed at "
+                   "the terminal "
+                   "of an access chain");
     }
     if (Unary->IsRebindable || Unary->HasNull) {
       if (!m_IsMemberBase) {
-        error(Unary,
-              "Permission symbols (#, ?) are only allowed at the terminal "
-              "of an access chain");
+        error(Unary, "Permission symbols (#, ?) are only allowed at "
+                     "the terminal "
+                     "of an access chain");
       }
     }
   }
 
-  // [Fix] Disable soul collapse for pointer hats. Identity should be seen.
+  // [Fix] Disable soul collapse for pointer hats. Identity should be
+  // seen.
   bool savedDisable = m_DisableSoulCollapse;
   if (Unary->Op == TokenType::Star || Unary->Op == TokenType::Caret ||
       Unary->Op == TokenType::Tilde || Unary->Op == TokenType::Ampersand) {
@@ -2262,14 +2293,14 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
 
         // [Borrow Rule] Exclusive borrow logic refinement:
         // Rebinding (&!/&#) is ALWAYS exclusive.
-        // If soul is mutable, it's exclusive ONLY for unique-ownership or
-        // value-types. External manage shared pointers (~#) are SHARED borrows
-        // of the handle if handleMutable is false.
+        // If soul is mutable, it's exclusive ONLY for unique-ownership
+        // or value-types. External manage shared pointers (~#) are
+        // SHARED borrows of the handle if handleMutable is false.
         bool isExclusive = handleMutable;
         if (soulMutable) {
-          // Rule: Shared pointers (~), Raw pointers (*), and References (&)
-          // provide Internal Mutability (Aliasing). They are NOT exclusive
-          // unless explicitly rebindable (#).
+          // Rule: Shared pointers (~), Raw pointers (*), and References
+          // (&) provide Internal Mutability (Aliasing). They are NOT
+          // exclusive unless explicitly rebindable (#).
           if (physType &&
               !(physType->isSharedPtr() || physType->isRawPointer() ||
                 physType->isReference())) {
@@ -2441,8 +2472,8 @@ std::shared_ptr<toka::Type> Sema::checkUnaryExpr(UnaryExpr *Unary) {
 // Stage 5: Object-Oriented Binary Expression Check
 std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   // 1. Resolve Operands using New API
-  // [Toka 1.3] Evaluation Order: Check RHS first to avoid LHS borrows/moves
-  // blocking RHS usage (e.g. &#cursor = cursor.&next)
+  // [Toka 1.3] Evaluation Order: Check RHS first to avoid LHS
+  // borrows/moves blocking RHS usage (e.g. &#cursor = cursor.&next)
   Bin->RHS = foldGenericConstant(std::move(Bin->RHS));
   auto rhsType = checkExpr(Bin->RHS.get());
 
@@ -2489,8 +2520,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   std::string RHS = rhsType->toString();
 
   // [Optimization] Literal Adaptation
-  // Allow mixed comparison like (i64 < 2) by auto-casting the literal to
-  // the explicit type.
+  // Allow mixed comparison like (i64 < 2) by auto-casting the literal
+  // to the explicit type.
   Expr *lhsExpr = Bin->LHS.get();
   Expr *rhsExpr = Bin->RHS.get();
 
@@ -2517,8 +2548,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   }
 
   // Generic Implicit Dereference for Smart Pointers (Soul Interaction)
-  // If one side is Smart Pointer and other side matches its Pointee, decay
-  // Smart Pointer.
+  // If one side is Smart Pointer and other side matches its Pointee,
+  // decay Smart Pointer.
   if (lhsType->isUniquePtr() || lhsType->isSharedPtr()) {
     if (auto inner = lhsType->getPointeeType()) {
       if (isTypeCompatible(inner, rhsType)) {
@@ -2577,8 +2608,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         CurrentScope->markMoved(RHSVar->Name);
       }
     } else if (auto *Memb = dynamic_cast<MemberExpr *>(RHSExpr)) {
-      // [Move Restriction Rule] Prohibit moving member out of shape that
-      // has drop() Rule ONLY applies if we are moving a resource
+      // [Move Restriction Rule] Prohibit moving member out of shape
+      // that has drop() Rule ONLY applies if we are moving a resource
       // (UniquePtr)
       if (rhsType->isUniquePtr()) {
         auto objType = checkExpr(Memb->Object.get());
@@ -2603,8 +2634,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     // [Constitution] Reference Rebinding Detection
     // If the LHS resolved to a Reference type (due to explicit hatted
     // syntax
-    // &#z), then it's a rebinding. If it collapsed to the Soul (Hat-Off),
-    // it's Soul modification.
+    // &#z), then it's a rebinding. If it collapsed to the Soul
+    // (Hat-Off), it's Soul modification.
     if (lhsType->isReference()) {
       isRefAssign = true;
     }
@@ -2629,8 +2660,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     if (!isSmartNew && !isRefAssign &&
         (lhsType->isUniquePtr() || lhsType->isSharedPtr())) {
       auto inner = lhsType->getPointeeType();
-      // If RHS matches Inner, we are assigning to the Soul (implicit *s =
-      // val)
+      // If RHS matches Inner, we are assigning to the Soul (implicit *s
+      // = val)
       if (inner && isTypeCompatible(inner, rhsType)) {
         lhsType = inner; // Decay to Pointee Type for Writability Check
         isImplicitDerefAssign = true;
@@ -2752,7 +2783,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         // These are Rebindable handles or access handles.
         // If they are on the LHS without a deref, they are rebinds.
         if (isRebind) {
-          // Check if the UnaryExpr itself carries the rebind intent (# or
+          // Check if the UnaryExpr itself carries the rebind intent (#
+          // or
           // !)
           if (Un->IsRebindable) {
             isLHSWritable = true;
@@ -2773,8 +2805,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     }
 
     // [Constitution] Soul Permission Elevation Audit
-    // RHS soul must not exceed LHS soul's permissions if they share objects
-    // (Shared/Ref)
+    // RHS soul must not exceed LHS soul's permissions if they share
+    // objects (Shared/Ref)
     if (lhsType->isSharedPtr() || lhsType->isReference()) {
       auto lhsSoul = lhsType->getPointeeType();
       auto rhsSoul = rhsType->getPointeeType();
@@ -2783,14 +2815,14 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         // Writable
         // (#/!) -> Error
         if (!rhsSoul->IsWritable && lhsSoul->IsWritable) {
-          // [Identity Exemption] Fresh allocations from 'new' can satisfy
-          // writable souls.
+          // [Identity Exemption] Fresh allocations from 'new' can
+          // satisfy writable souls.
           if (dynamic_cast<NewExpr *>(Bin->RHS.get())) {
             // OK: Freshly baked bread is always warm.
           } else {
-            error(Bin,
-                  "Covenant Violation: Cannot elevate write permission from "
-                  "ReadOnly soul to Writable container.");
+            error(Bin, "Covenant Violation: Cannot elevate write "
+                       "permission from "
+                       "ReadOnly soul to Writable container.");
             HasError = true;
           }
         }
@@ -2798,8 +2830,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     }
 
     // [FIX] Unset Safety: Allow writing to immutable fields if they are
-    // unset [FIX] Unset Safety: Allow writing to immutable fields if they
-    // are unset
+    // unset [FIX] Unset Safety: Allow writing to immutable fields if
+    // they are unset
     bool isLHSUnset = false;
     if (auto *M = dynamic_cast<MemberExpr *>(Bin->LHS.get())) {
       Expr *Traverse = M->Object.get();
@@ -2852,8 +2884,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       }
     }
 
-    // Constitution 1.3: Only elevate soul permission if it's a Mutation,
-    // not a Reseat (Rebind).
+    // Constitution 1.3: Only elevate soul permission if it's a
+    // Mutation, not a Reseat (Rebind).
     if (!isRebind && (isLHSWritable || isLHSUnset))
       lhsType =
           lhsType->withAttributes(true, lhsType->IsNullable); // Valid Mutation
@@ -2922,8 +2954,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
     // Strict Pointer Morphology Check
     if (!isRefAssign) {
-      // Skip check if LHS is explicit dereference (*p = val) which targets
-      // Value, not Pointer Identity.
+      // Skip check if LHS is explicit dereference (*p = val) which
+      // targets Value, not Pointer Identity.
       bool isDerefAssign = false;
       if (auto *Un = dynamic_cast<UnaryExpr *>(Bin->LHS.get())) {
         if (Un->Op == TokenType::Star)
@@ -2941,13 +2973,13 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         // (handled in checkVariableDecl). But this is assignment to
         // existing variable. If LHS is 'p' (VariableExpr) and p is a
         // pointer type, Morph is None (hidden). If p is pointer,
-        // targetMorph=None. SourceMorph check... User rule: "auto ^p = x"
-        // (Invalid). "auto p = ^x" (Invalid). "p = q" (Hidden = Hidden)?
-        // "Strict explicit morphology matching".
-        // If LHS has no sigil, but is a pointer type?
-        // "auto p = ^x". p is pointer. LHS sigil None. RHS sigil Unique.
-        // Mismatch. Correct. So `getSyntacticMorphology` returning None for
-        // VariableExpr is correct.
+        // targetMorph=None. SourceMorph check... User rule: "auto ^p =
+        // x" (Invalid). "auto p = ^x" (Invalid). "p = q" (Hidden =
+        // Hidden)? "Strict explicit morphology matching". If LHS has no
+        // sigil, but is a pointer type? "auto p = ^x". p is pointer.
+        // LHS sigil None. RHS sigil Unique. Mismatch. Correct. So
+        // `getSyntacticMorphology` returning None for VariableExpr is
+        // correct.
 
         MorphKind sourceMorph = getSyntacticMorphology(Bin->RHS.get());
         checkStrictMorphology(Bin, targetMorph, sourceMorph, LHS);
@@ -2975,7 +3007,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
         if (!CurrentScope->findSymbol(current, Sym))
           break;
 
-        // Update the symbol itself (if it's the source or a ref in chain)
+        // Update the symbol itself (if it's the source or a ref in
+        // chain)
         if (Sym->IsReference()) {
           if (isPartial)
             Sym->DirtyReferentMask |= updateBits;
@@ -3070,7 +3103,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
   if (lhsType->isPointer() && (Bin->Op == "+" || Bin->Op == "-")) {
     if (!m_InUnsafeContext) {
-      error(Bin, DiagID::ERR_UNSAFE_ALLOC_CTX); // Reuse for ptr arithmetic
+      error(Bin,
+            DiagID::ERR_UNSAFE_ALLOC_CTX); // Reuse for ptr arithmetic
     }
     return lhsType->withAttributes(false, lhsType->IsNullable);
   }
@@ -3117,8 +3151,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   }
 
   if (Bin->Op == "is" || Bin->Op == "is!") {
-    // [Fix] Disable soul collapse for the LHS of 'is' so we can check the
-    // the pointer/handle itself.
+    // [Fix] Disable soul collapse for the LHS of 'is' so we can check
+    // the the pointer/handle itself.
     bool oldDisable = m_DisableSoulCollapse;
     m_DisableSoulCollapse = true;
     auto lhsType = checkExpr(Bin->LHS.get());
@@ -3127,8 +3161,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     auto rhsType = checkExpr(Bin->RHS.get());
     // Basic validation for 'is' / 'is!'
     if (auto *rhsVar = dynamic_cast<VariableExpr *>(Bin->RHS.get())) {
-      // If RHS is just a Shape name, it's NOT a valid pattern (should be a
-      // variable or variant)
+      // If RHS is just a Shape name, it's NOT a valid pattern (should
+      // be a variable or variant)
       if (ShapeMap.count(rhsVar->Name)) {
         error(Bin->RHS.get(), "'" + rhsVar->Name +
                                   "' is a shape, not a valid pattern for 'is'");
@@ -3334,8 +3368,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
   ShapeDecl *Sh = nullptr; // Constructor
 
   // [NEW] Generic Constructor Pre-Check
-  // If CallName looks like a generic type "Box<i32>", try to resolve it as
-  // a Type. This triggers monomorphization in resolveType.
+  // If CallName looks like a generic type "Box<i32>", try to resolve it
+  // as a Type. This triggers monomorphization in resolveType.
   if (CallName.find('<') != std::string::npos) {
     auto possibleType = toka::Type::fromString(CallName);
     if (possibleType && !possibleType->isUnknown()) {
@@ -3343,23 +3377,25 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       if (auto shapeT = std::dynamic_pointer_cast<toka::ShapeType>(resolved)) {
         if (shapeT->Decl) {
           Sh = shapeT->Decl;
-          Call->Callee =
-              shapeT->Name; // Update Call Name to Mangled Name for CodeGen!
-          CallName =
-              shapeT->Name; // Update local var for verification logic below
+          Call->Callee = shapeT->Name; // Update Call Name to Mangled
+                                       // Name for CodeGen!
+          CallName = shapeT->Name;     // Update local var for verification
+                                       // logic below
 
           // [NEW] Union Constructor: Check member name if provided
           if (Sh->Kind == ShapeKind::Union) {
             if (Call->Args.size() == 1) {
               // Check if the argument is a named argument
-              // Actually the Parser produces named args as BinaryExpr with
+              // Actually the Parser produces named args as BinaryExpr
+              // with
               // "="? Wait, Toka syntax for named args is `Func(name =
-              // val)`. In CallExpr::Args, this is parsed as BinaryExpr("=",
-              // Var(name), Val). But checkCallExpr usually iterates args
-              // and checks them. We need to peek at the arg structure.
+              // val)`. In CallExpr::Args, this is parsed as
+              // BinaryExpr("=", Var(name), Val). But checkCallExpr
+              // usually iterates args and checks them. We need to peek
+              // at the arg structure.
 
-              // Moved logic to "4. Regular Function Lookup" section below
-              // because Sh might be found there too.
+              // Moved logic to "4. Regular Function Lookup" section
+              // below because Sh might be found there too.
             }
           }
         }
@@ -3486,7 +3522,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
       for (size_t i = 0; i < Call->GenericArgs.size(); ++i) {
         std::string argStr = Call->GenericArgs[i];
         if (Fn->GenericParams[i].IsConst) {
-          // Pass the literal value directly as the "Type" name for mangling
+          // Pass the literal value directly as the "Type" name for
+          // mangling
           TypeArgs.push_back(toka::Type::fromString(argStr));
         } else {
           TypeArgs.push_back(toka::Type::fromString(resolveType(argStr)));
@@ -3509,8 +3546,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
 
         const auto &Param = Fn->Args[i];
         std::string PType = Param.Type;
-        // [FIX] Parse Sigils from PType string (since Parser might leave
-        // them in string)
+        // [FIX] Parse Sigils from PType string (since Parser might
+        // leave them in string)
         bool locHasPointer = Param.HasPointer;
         bool locIsUnique = Param.IsUnique;
         bool locIsShared = Param.IsShared;
@@ -3553,8 +3590,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
           if (locHasPointer) {
             if (candidate->isRawPointer())
               candidate = candidate->getPointeeType();
-            else if (candidate->isReference()) // Allow &T -> *T decay for
-                                               // deduction
+            else if (candidate->isReference()) // Allow &T -> *T decay
+                                               // for deduction
               candidate = candidate->getPointeeType();
             else
               continue; // Mismatch handled later
@@ -3612,7 +3649,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         return toka::Type::fromString("unknown");
 
       // [FIX] Update the Call AST to point to the mangled instance name
-      // otherwise CodeGen will attempt to call the generic template name
+      // otherwise CodeGen will attempt to call the generic template
+      // name
       Call->Callee = Fn->Name;
     } else {
       HasError = true;
@@ -3724,8 +3762,8 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
         if (isNamed) {
           bool found = false;
           for (auto &M : Sh->Members) {
-            // [Constitution] Initialization Exemption: Normalize field name
-            // for comparison
+            // [Constitution] Initialization Exemption: Normalize field
+            // name for comparison
             std::string normalizedFieldName = fieldName;
             while (!normalizedFieldName.empty() &&
                    (normalizedFieldName.back() == '#' ||
@@ -4080,15 +4118,15 @@ void Sema::checkPattern(MatchArm::Pattern *Pat, const std::string &TargetType,
   case MatchArm::Pattern::Variable: {
     SymbolInfo Info;
     // Type Migration Stage 1: Coexistence
-    // Construct type string to parse object. Pattern bindings infer type T.
-    // If Reference, it is &T.
+    // Construct type string to parse object. Pattern bindings infer
+    // type T. If Reference, it is &T.
     std::string fullType = "";
     if (Pat->IsReference)
       fullType = "&";
     fullType += T;
-    // Patterns usually don't have rebind/nullable sigils unless explicit?
-    // In match arms, we trust the inferred type T.
-    // But wait, T comes from resolveType(TargetType).
+    // Patterns usually don't have rebind/nullable sigils unless
+    // explicit? In match arms, we trust the inferred type T. But wait,
+    // T comes from resolveType(TargetType).
     Info.TypeObj = toka::Type::fromString(fullType);
 
     CurrentScope->define(Pat->Name, Info);

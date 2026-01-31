@@ -23,7 +23,7 @@ fn main() -> i32 {
     println("{}", s.c_str())
     // Address-of method call (implicit passing of pointer to self?)
     // String::push_str takes self#. 
-    s.push_str(" World")
+    s#.push_str(" World")
     
     // println uses copy or we should implement borrow?
     // s is value. 
@@ -34,17 +34,17 @@ fn main() -> i32 {
     
     // s.clone()? No clone yet.
     // s2 = s => Shallow copy.
-    // s2.push_str("!") => realloc self.buf (same buf).
+    // s2#.push_str("!") => realloc self.buf (same buf).
     // s.buf is now dangling.
     // So we must NOT use s and s2 together without copy semantics.
     // Testing mutation on s directly.
     
-    s.push_str("!")
+    s#.push_str("!")
     println("Appended: {}", s.c_str())
 
     assert(s.len() == 9, "s.len mismatch")
 
-    s.clear()
+    s#.clear()
     println("Clear: len:{}, capacity:{}", s.len(), s.capacity())
     assert(s.len() == 0, "s.len mismatch")
     //assert(s.capacity() == 13, "s.capacity mismatch")

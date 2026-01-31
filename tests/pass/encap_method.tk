@@ -18,7 +18,7 @@ fn main() -> i32 {
     auto s = String::from("Hello")
     println("s:{} s.cap: {}", s, s.cap)
     
-    s.clear()
+    s#.clear()
 
     println("s:{} s.cap: {}", s, s.cap)
     

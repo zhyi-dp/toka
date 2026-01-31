@@ -26,7 +26,7 @@ fn main() -> i32 {
         return 1
     }
     f1.write(content)
-    f1.close()
+    f1#.close()
     
     // Read Line by Line
     auto f2 = File::open(path, String::from("r"))
@@ -62,7 +62,7 @@ fn main() -> i32 {
         return 1
     }
     
-    f2.close()
+    f2#.close()
     
     println("IO Line Test Passed")
     return 0

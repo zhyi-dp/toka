@@ -20,11 +20,11 @@ import core/types::{char, Addr}
  */
 
 pub fn join(base: String, sub: String) -> String {
-    auto res = String::from(base.c_str())
+    auto res# = String::from(base.c_str())
     if res.len() > 0 {
         auto last = res.at(res.len() - 1)
         if last != 47:char { // '/'
-            res.push_char(47:char)
+            res#.push_char(47:char)
         }
     }
     
@@ -40,7 +40,7 @@ pub fn join(base: String, sub: String) -> String {
         auto *p = sub.c_str()
         auto addr = *p as Addr
         auto *sub_p = (addr + sub_start as Addr) as *char
-        res.push_str(*sub_p)
+        res#.push_str(*sub_p)
     }
     
     return res

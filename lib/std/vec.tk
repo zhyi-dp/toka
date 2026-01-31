@@ -79,7 +79,7 @@ impl<T> Vec<T> {
     pub fn push(self#, val: T) {
         unsafe {
             if self.len == self.cap {
-                self.grow()
+                self#.grow()
             }
             
             // Pointer indexing handles
@@ -143,7 +143,7 @@ impl<T> Vec<T> {
                 auto ctr# = Counter(val=0)
                 while ctr.val < self.len {
                     new_buf[ctr.val] = self.buf[ctr.val]
-                    ctr.inc()
+                    ctr#.inc()
                 }
                 
                 // Free old buffer

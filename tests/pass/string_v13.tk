@@ -28,14 +28,14 @@ fn main() -> i32 {
     assert(s.len() == 5, "Initial length mismatch")
 
     // 2. Growth via push_str
-    s.push_str(" Toka")
+    s#.push_str(" Toka")
     println("Modified string: {}", s.c_str())
     println("New Length: {} (expected 10)", s.len())
     
     assert(s.len() == 10, "Modified length mismatch")
 
     // 3. Repeated growth to trigger realloc
-    s.push_str("! This is a long string to trigger realloc.")
+    s#.push_str("! This is a long string to trigger realloc.")
     println("Final string: {}", s.c_str())
     println("Final Length: {}", s.len())
     println("Final Capacity: {}", s.capacity())

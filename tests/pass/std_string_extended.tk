@@ -20,11 +20,11 @@ fn main() -> i32 {
 
     // 1. Test push_char
     auto s = String::from("")
-    s.push_char(72 as char) // 'H'
-    s.push_char(101 as char) // 'e'
-    s.push_char(108 as char) // 'l'
-    s.push_char(108 as char) // 'l'
-    s.push_char(111 as char) // 'o'
+    s#.push_char(72 as char) // 'H'
+    s#.push_char(101 as char) // 'e'
+    s#.push_char(108 as char) // 'l'
+    s#.push_char(108 as char) // 'l'
+    s#.push_char(111 as char) // 'o'
     
     println("Built string: {}, len: {}", s.c_str(), s.len())
     assert(s.len() == 5, "Len mismatch after push_char")
