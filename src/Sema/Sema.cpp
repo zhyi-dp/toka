@@ -257,6 +257,11 @@ void Sema::registerGlobals(Module &M) {
         // redundant. But for strictness, we report redefined.
         DiagnosticEngine::report(getLoc(Imp.get()),
                                  DiagID::ERR_SYMBOL_REDEFINED, modName);
+        if (Imp->IsImplicit) {
+          DiagnosticEngine::report(getLoc(Imp.get()),
+                                   DiagID::NOTE_IMPLICIT_PRELUDE_CONFLICT,
+                                   modName);
+        }
         HasError = true;
       } else {
         CurrentScope->define(modName, info);
@@ -273,6 +278,11 @@ void Sema::registerGlobals(Module &M) {
               DiagnosticEngine::report(getLoc(Imp.get()),
                                        DiagID::ERR_SYMBOL_REDEFINED,
                                        item.Alias.empty() ? name : item.Alias);
+              if (Imp->IsImplicit) {
+                DiagnosticEngine::report(
+                    getLoc(Imp.get()), DiagID::NOTE_IMPLICIT_PRELUDE_CONFLICT,
+                    item.Alias.empty() ? name : item.Alias);
+              }
               HasError = true;
             } else {
               CurrentScope->define(item.Alias.empty() ? name : item.Alias,
@@ -299,6 +309,11 @@ void Sema::registerGlobals(Module &M) {
             if (CurrentScope->Symbols.count(name)) {
               DiagnosticEngine::report(getLoc(Imp.get()),
                                        DiagID::ERR_SYMBOL_REDEFINED, name);
+              if (Imp->IsImplicit) {
+                DiagnosticEngine::report(getLoc(Imp.get()),
+                                         DiagID::NOTE_IMPLICIT_PRELUDE_CONFLICT,
+                                         name);
+              }
               HasError = true;
             } else {
               CurrentScope->define(name, {toka::Type::fromString("extern")});
@@ -333,6 +348,11 @@ void Sema::registerGlobals(Module &M) {
               DiagnosticEngine::report(getLoc(Imp.get()),
                                        DiagID::ERR_SYMBOL_REDEFINED,
                                        item.Alias.empty() ? name : item.Alias);
+              if (Imp->IsImplicit) {
+                DiagnosticEngine::report(
+                    getLoc(Imp.get()), DiagID::NOTE_IMPLICIT_PRELUDE_CONFLICT,
+                    item.Alias.empty() ? name : item.Alias);
+              }
               HasError = true;
             } else {
               CurrentScope->define(item.Alias.empty() ? name : item.Alias,
@@ -354,6 +374,11 @@ void Sema::registerGlobals(Module &M) {
             if (CurrentScope->Symbols.count(name)) {
               DiagnosticEngine::report(getLoc(Imp.get()),
                                        DiagID::ERR_SYMBOL_REDEFINED, name);
+              if (Imp->IsImplicit) {
+                DiagnosticEngine::report(getLoc(Imp.get()),
+                                         DiagID::NOTE_IMPLICIT_PRELUDE_CONFLICT,
+                                         name);
+              }
               HasError = true;
             } else {
               CurrentScope->define(name, {toka::Type::fromString("fn")});
@@ -374,6 +399,11 @@ void Sema::registerGlobals(Module &M) {
             if (CurrentScope->Symbols.count(name)) {
               DiagnosticEngine::report(getLoc(Imp.get()),
                                        DiagID::ERR_SYMBOL_REDEFINED, name);
+              if (Imp->IsImplicit) {
+                DiagnosticEngine::report(getLoc(Imp.get()),
+                                         DiagID::NOTE_IMPLICIT_PRELUDE_CONFLICT,
+                                         name);
+              }
               HasError = true;
             } else {
               CurrentScope->define(name, {toka::Type::fromString("extern")});
@@ -406,6 +436,11 @@ void Sema::registerGlobals(Module &M) {
             if (CurrentScope->Symbols.count(name)) {
               DiagnosticEngine::report(getLoc(Imp.get()),
                                        DiagID::ERR_SYMBOL_REDEFINED, name);
+              if (Imp->IsImplicit) {
+                DiagnosticEngine::report(getLoc(Imp.get()),
+                                         DiagID::NOTE_IMPLICIT_PRELUDE_CONFLICT,
+                                         name);
+              }
               HasError = true;
             } else {
               CurrentScope->define(name, globalInfo);

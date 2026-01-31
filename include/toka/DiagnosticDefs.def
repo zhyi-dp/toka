@@ -23,6 +23,7 @@ DIAG(ERR_SYMBOL_NOT_FOUND,   Error, "E0404", "Symbol '{}' not found in module '{
 DIAG(ERR_PRIVATE_TYPE,       Error, "E0405", "Shape '{}' is private and cannot be accessed from module '{}'")
 DIAG(ERR_UNDEFINED_TYPE,     Error, "E0405", "Type '{}' is undefined")
 DIAG(NOTE_GENERIC_IMPL_HINT, Note,  "N0003", "If '{}' is intended to be a generic parameter, declare it in the impl: 'impl<{}> {} ...'")
+DIAG(NOTE_IMPLICIT_PRELUDE_CONFLICT, Note, "N0004", "Symbol '{}' conflicts with implicit import from Prelude")
 
 DIAG(ERR_GENERIC_SEMA,       Error, "E0406", "{}")
 DIAG(ERR_OPERAND_TYPE_MISMATCH, Error, "E0407", "Operand of '{}' must be {}, got '{}'")
