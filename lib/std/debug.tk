@@ -1,8 +1,9 @@
 import core/types::SourceLoc
 import std/memory::__toka_panic
 
-pub fn assert(condition: bool, message: str, loc: SourceLoc = __LOC__) {
-    if !condition {
-        __toka_panic(message, loc.file, loc.line)
-    }
-}
+// assert is now in core/prelude
+// pub fn assert(condition: bool, message: str, loc: SourceLoc = __LOC__) {
+//    if !condition {
+//        __toka_panic(message, loc.file, loc.line)
+//    }
+//}

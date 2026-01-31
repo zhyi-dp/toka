@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import std/io::println
-import std/io::println
-import std/debug::assert
 import std/memory::*
 
 shape Point (x: i32, y: i32)

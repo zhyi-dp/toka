@@ -1171,6 +1171,8 @@ public:
       : IsPub(isPub), PhysicalPath(path), Alias(alias),
         Items(std::move(items)) {}
 
+  bool IsImplicit = false;
+
   std::string toString() const override {
     std::string s = IsPub ? "PubImport(" : "Import(";
     s += PhysicalPath;

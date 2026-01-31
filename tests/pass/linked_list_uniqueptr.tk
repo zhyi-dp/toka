@@ -1,6 +1,5 @@
 
 import std/io::println
-import std/debug::assert
 import std/memory
 import core/traits::{@encap}
 import core/types::{OAddr}

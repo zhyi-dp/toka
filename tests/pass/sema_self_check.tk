@@ -1,5 +1,4 @@
 import std/io::println
-import std/debug::assert
 
 shape Rect(width: i32, height: i32)
 

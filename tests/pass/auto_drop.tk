@@ -15,7 +15,8 @@
 import std/io::println
 import std/memory
 import core/traits::{@encap}
-import std/release::assert
+// import std/release::assert // Now in prelude
+
 
 shape Point(
     x:i32, 

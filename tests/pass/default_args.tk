@@ -1,4 +1,4 @@
-import std/debug::{assert}
+// import std/debug::{assert}
 import core/types::SourceLoc
 
 fn get_line(line: i32 = __LINE__) -> i32 { return line }

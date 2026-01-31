@@ -1,4 +1,3 @@
-import std/debug::assert
 
 shape Box<T> (
     val: T

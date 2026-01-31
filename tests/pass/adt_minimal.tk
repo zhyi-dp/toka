@@ -1,0 +1,31 @@
+import std/io::println
+
+shape State (
+    On |
+    Off |
+    ErrCode(i32)
+)
+
+fn main() -> i32 {
+    auto s = State::On()
+    
+    // First match
+    match s {
+        State::On => {
+            println("Matched On!\n")
+            // assert(true, "Matched On") // Commented out to see if match alone causes it
+        }
+        _ => {}
+    }
+    
+    // Second match with failing assert
+    auto e = State::ErrCode(404)
+    match e {
+        auto ErrCode(code) => {
+            println("Matched ErrCode: {}", code)
+            assert(code == 404, "ErrCode mismatch")
+        }
+        _ => {}
+    }
+    return 0
+}

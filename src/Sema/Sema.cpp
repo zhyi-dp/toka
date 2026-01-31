@@ -245,19 +245,40 @@ void Sema::registerGlobals(Module &M) {
 
     if (Imp->Items.empty()) {
       // 1. Simple Import: import std/io
+      // [Fix] Check for conflict using lookup to catch prelude clashes
       SymbolInfo info;
       info.TypeObj = toka::Type::fromString("module");
       info.ReferencedModule = target;
       std::string modName = Imp->Alias.empty() ? target->Name : Imp->Alias;
-      CurrentScope->define(modName, info);
+
+      SymbolInfo existing;
+      if (CurrentScope->lookup(modName, existing)) {
+        // Allow if it's the exact same module? No, duplicate import is usually
+        // redundant. But for strictness, we report redefined.
+        DiagnosticEngine::report(getLoc(Imp.get()),
+                                 DiagID::ERR_SYMBOL_REDEFINED, modName);
+        HasError = true;
+      } else {
+        CurrentScope->define(modName, info);
+      }
     } else {
       // 2. Specific Import: import std/io::println
       for (auto &item : Imp->Items) {
         if (item.Symbol == "*") {
           // Import all functions
-          for (auto const &[name, fn] : target->Functions)
-            CurrentScope->define(item.Alias.empty() ? name : item.Alias,
-                                 {toka::Type::fromString("fn")});
+          for (auto const &[name, fn] : target->Functions) {
+            SymbolInfo *existing = nullptr;
+            if (CurrentScope->Symbols.count(item.Alias.empty() ? name
+                                                               : item.Alias)) {
+              DiagnosticEngine::report(getLoc(Imp.get()),
+                                       DiagID::ERR_SYMBOL_REDEFINED,
+                                       item.Alias.empty() ? name : item.Alias);
+              HasError = true;
+            } else {
+              CurrentScope->define(item.Alias.empty() ? name : item.Alias,
+                                   {toka::Type::fromString("fn")});
+            }
+          }
           // Import all shapes
           for (auto const &[name, sh] : target->Shapes) {
             ShapeMap[name] =
@@ -274,7 +295,14 @@ void Sema::registerGlobals(Module &M) {
           // Import all externs
           for (auto const &[name, ext] : target->Externs) {
             ExternMap[name] = ext;
-            CurrentScope->define(name, {toka::Type::fromString("extern")});
+            SymbolInfo *existing = nullptr;
+            if (CurrentScope->Symbols.count(name)) {
+              DiagnosticEngine::report(getLoc(Imp.get()),
+                                       DiagID::ERR_SYMBOL_REDEFINED, name);
+              HasError = true;
+            } else {
+              CurrentScope->define(name, {toka::Type::fromString("extern")});
+            }
           }
           // Import all globals (constants)
           for (auto const &[name, v] : target->Globals) {
@@ -299,8 +327,17 @@ void Sema::registerGlobals(Module &M) {
             SymbolInfo globalInfo;
             globalInfo.TypeObj = toka::Type::fromString(fullType);
             globalInfo.IsRebindable = v->IsRebindable;
-            CurrentScope->define(item.Alias.empty() ? name : item.Alias,
-                                 globalInfo);
+            SymbolInfo *existing = nullptr;
+            if (CurrentScope->Symbols.count(item.Alias.empty() ? name
+                                                               : item.Alias)) {
+              DiagnosticEngine::report(getLoc(Imp.get()),
+                                       DiagID::ERR_SYMBOL_REDEFINED,
+                                       item.Alias.empty() ? name : item.Alias);
+              HasError = true;
+            } else {
+              CurrentScope->define(item.Alias.empty() ? name : item.Alias,
+                                   globalInfo);
+            }
           }
         } else {
           // Import specific
@@ -313,7 +350,14 @@ void Sema::registerGlobals(Module &M) {
           }
 
           if (target->Functions.count(item.Symbol)) {
-            CurrentScope->define(name, {toka::Type::fromString("fn")});
+            SymbolInfo *existing = nullptr;
+            if (CurrentScope->Symbols.count(name)) {
+              DiagnosticEngine::report(getLoc(Imp.get()),
+                                       DiagID::ERR_SYMBOL_REDEFINED, name);
+              HasError = true;
+            } else {
+              CurrentScope->define(name, {toka::Type::fromString("fn")});
+            }
             found = true;
           } else if (target->Shapes.count(item.Symbol)) {
             ShapeMap[name] = target->Shapes[item.Symbol];
@@ -326,7 +370,14 @@ void Sema::registerGlobals(Module &M) {
             found = true;
           } else if (target->Externs.count(item.Symbol)) {
             ExternMap[name] = target->Externs[item.Symbol];
-            CurrentScope->define(name, {toka::Type::fromString("extern")});
+            SymbolInfo *existing = nullptr;
+            if (CurrentScope->Symbols.count(name)) {
+              DiagnosticEngine::report(getLoc(Imp.get()),
+                                       DiagID::ERR_SYMBOL_REDEFINED, name);
+              HasError = true;
+            } else {
+              CurrentScope->define(name, {toka::Type::fromString("extern")});
+            }
             found = true;
           } else if (target->Globals.count(item.Symbol)) {
             auto *v = target->Globals[item.Symbol];
@@ -351,7 +402,14 @@ void Sema::registerGlobals(Module &M) {
             SymbolInfo globalInfo;
             globalInfo.TypeObj = toka::Type::fromString(fullType);
             globalInfo.IsRebindable = v->IsRebindable;
-            CurrentScope->define(name, globalInfo);
+            SymbolInfo *existing = nullptr;
+            if (CurrentScope->Symbols.count(name)) {
+              DiagnosticEngine::report(getLoc(Imp.get()),
+                                       DiagID::ERR_SYMBOL_REDEFINED, name);
+              HasError = true;
+            } else {
+              CurrentScope->define(name, globalInfo);
+            }
             found = true;
           }
 

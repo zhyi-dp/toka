@@ -183,6 +183,24 @@ std::unique_ptr<Module> Parser::parseModule() {
     module->Loc = peek().Loc;
   }
 
+  // [NEW] Inject implicit prelude import
+  // Exclude core library files to prevent circular dependencies (e.g. types.tk,
+  // traits.tk)
+  bool isCoreLib =
+      m_CurrentFile.find("lib/core/") != std::string::npos ||
+      m_CurrentFile.find("core/") == 0; // if relative path starts with core/
+
+  if (!isCoreLib && m_CurrentFile.find("prelude.tk") == std::string::npos) {
+    // import core/prelude::{*}
+    std::vector<ImportItem> items;
+    items.push_back({"*", ""});
+    auto preludeImp =
+        std::make_unique<ImportDecl>(false, "core/prelude", "", items);
+    preludeImp->Loc = module->Loc;
+    preludeImp->IsImplicit = true;
+    module->Imports.push_back(std::move(preludeImp));
+  }
+
   while (peek().Kind != TokenType::EndOfFile) {
     std::cerr << "Parsing Top Level: " << peek().toString() << " at line "
               << peek().Line << "\n";

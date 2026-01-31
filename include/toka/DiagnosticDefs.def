@@ -16,6 +16,7 @@
 
 // --- Sema: Scope & Identifiers ---
 DIAG(ERR_VAR_REDECLARED,     Error, "E0401", "Variable '{}' is already declared in this scope")
+DIAG(ERR_SYMBOL_REDEFINED,   Error, "E0401", "Symbol '{}' is already defined in this scope")
 DIAG(ERR_UNDECLARED,         Error, "E0402", "Use of undeclared identifier '{}'")
 DIAG(ERR_MODULE_NOT_FOUND,   Error, "E0403", "Module '{}' not found")
 DIAG(ERR_SYMBOL_NOT_FOUND,   Error, "E0404", "Symbol '{}' not found in module '{}'")

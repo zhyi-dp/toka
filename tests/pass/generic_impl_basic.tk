@@ -1,5 +1,4 @@
 import std/io::println
-import std/debug::assert
 
 // 1. Define generic struct
 shape Box<T>(val: T)

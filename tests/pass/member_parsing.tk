@@ -1,7 +1,6 @@
 import std/io::println
 import std/memory
 import core/traits::{@encap}
-import std/debug::assert
 
 
 shape Point(

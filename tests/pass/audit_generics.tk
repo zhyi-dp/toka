@@ -1,5 +1,4 @@
 import std/io::println
-import std/debug::assert
 // 1. Nested Generics for Mangling Check
 shape Inner<T>(
     val: T

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import std/io::println
-import std/debug::assert
 import core/types::LIMITS
 
 shape Point (x :i32, y :i32)

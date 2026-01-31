@@ -1,4 +1,3 @@
-import std/debug::assert
 import std/io::println
 
 shape MyOption<T> (

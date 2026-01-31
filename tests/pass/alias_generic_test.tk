@@ -1,6 +1,5 @@
 
 import std/io::println
-import std/debug::assert
 
 shape GenericNode<T>(
     val: T

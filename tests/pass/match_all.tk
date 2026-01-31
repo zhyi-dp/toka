@@ -13,7 +13,6 @@
 // limitations under the License.
 import std/io::println
 import std/memory
-import std/debug::assert
 
 fn main() -> i32 {
     for auto x in [10,20,30] {

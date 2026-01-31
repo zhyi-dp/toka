@@ -2,5 +2,6 @@ import std/memory::__toka_panic
 import core/types::SourceLoc
 
 // TODO: __FILE__ and __LINE__
-pub fn assert(condition: bool, message: str, loc: SourceLoc = __LOC__) {
-}
+// assert is implicitly provided by prelude now
+// pub fn assert(condition: bool, message: str, loc: SourceLoc = __LOC__) {
+// }

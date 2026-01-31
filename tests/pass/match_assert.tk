@@ -1,0 +1,18 @@
+import std/io::println
+
+shape MyState (
+    Code(i32) |
+    None
+)
+
+fn main() -> i32 {
+    auto s = MyState::Code(404)
+    match s {
+        auto Code(code) => {
+            println("Matched: {}", code)
+            assert(code == 404, "Mismatch!")
+        }
+        _ => {}
+    }
+    return 0
+}

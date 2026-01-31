@@ -1,5 +1,6 @@
 import std/io::println
-import std/debug::assert
+import std/memory
+
 
 shape Point(x: i32, y: i32)
 shape Container(^p!: Point, val: i32, immut$: i32)

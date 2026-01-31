@@ -1,6 +1,5 @@
 
 import std/io::println
-import std/debug::assert
 
 fn check(arr: [i32; 4]) {
     println("Array: {}, {}, {}, {}", arr[0], arr[1], arr[2], arr[3]);

@@ -1,0 +1,13 @@
+
+// This test uses 'assert' and 'println' without strict imports
+// It should PASS if prelude is auto-imported correctly
+
+fn main() -> i32 {
+    // println("Hello from implicit prelude!")
+    // assert(true, "Implicit assertion")
+    // Wait, println might not be in prelude yet if I didn't check prelude content carefully.
+    // Prelude has: panic, assert. Types (u64 etc).
+    
+    assert(true, "Implicit assertion works")
+    return 0
+}

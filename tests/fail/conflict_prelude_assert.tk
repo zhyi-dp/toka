@@ -1,0 +1,12 @@
+
+// This test attempts to define 'assert' which is now in the prelude
+// It should fail with ERR_SYMBOL_REDEFINED
+
+fn assert(cond: bool, msg: str) {
+    // shadow/conflict
+}
+
+fn main() -> i32 {
+    assert(true, "This should not compile due to conflict")
+    return 0
+}

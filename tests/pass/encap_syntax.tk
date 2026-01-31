@@ -15,7 +15,6 @@
 // This file serves as a syntax specification for the @encap system.
 
 import std/io::println
-import std/debug::assert
 import core/traits::{@encap}
 
 // 1. Physical Layout
