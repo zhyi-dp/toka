@@ -167,7 +167,7 @@ std::unique_ptr<Expr> Parser::parseExpr(int minPrec) {
               check(TokenType::LBrace) || check(TokenType::EndOfFile) ||
               check(TokenType::Plus) || check(TokenType::Minus) ||
               check(TokenType::Slash) || check(TokenType::And) ||
-              check(TokenType::Or)) {
+              check(TokenType::Percent) || check(TokenType::Or)) {
             shouldBreak = true;
           }
 

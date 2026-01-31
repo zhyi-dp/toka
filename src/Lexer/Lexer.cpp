@@ -410,6 +410,12 @@ Token Lexer::punctuation() {
       return Token{TokenType::SlashEqual, "/=", line, col};
     }
     return Token{TokenType::Slash, "/", line, col};
+  case '%':
+    if (peek() == '=') {
+      advance();
+      return Token{TokenType::PercentEqual, "%=", line, col};
+    }
+    return Token{TokenType::Percent, "%", line, col};
   case '=':
     if (peek() == '=') {
       advance();

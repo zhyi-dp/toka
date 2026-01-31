@@ -139,12 +139,14 @@ enum class TokenType {
   Minus,
   Star,
   Slash,
+  Percent,
   Equal,
   DoubleEqual,
   PlusEqual,
   MinusEqual,
   StarEqual,
   SlashEqual,
+  PercentEqual,
   Bang,
   Neq,
   Less,
@@ -216,6 +218,7 @@ inline int getPrecedence(TokenType T) {
     return 10;
   case TokenType::Star:
   case TokenType::Slash:
+  case TokenType::Percent:
     return 20;
   case TokenType::Equal:
   case TokenType::PlusEqual:

@@ -377,8 +377,9 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
 
 PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   const BinaryExpr *bin = expr;
+  // fprintf(stderr, "DEBUG: genBinaryExpr Op=%s\n", bin->Op.c_str());
   if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" || bin->Op == "*=" ||
-      bin->Op == "/=") {
+      bin->Op == "/=" || bin->Op == "%=") {
 
     if (bin->Op == "=") {
       return emitAssignment(bin->LHS.get(), bin->RHS.get());
@@ -473,6 +474,24 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
         res = m_Builder.CreateMul(lhsVal, rhsVal);
       else if (bin->Op == "/=")
         res = m_Builder.CreateSDiv(lhsVal, rhsVal);
+      else if (bin->Op == "%=") {
+        std::cerr << "DEBUG: Generating Modulo Assign %=" << std::endl;
+        bool isUnsigned = false;
+        if (lhsTy->isIntegerTy()) {
+          if (bin->LHS && bin->LHS->ResolvedType) {
+            std::string lty = bin->LHS->ResolvedType->toString();
+            if (lty.size() >= 1 && lty[0] == 'u')
+              isUnsigned = true;
+          }
+        } else {
+          std::cerr << "FATAL: LHS of %= is not integer!" << std::endl;
+        }
+
+        if (isUnsigned)
+          res = m_Builder.CreateURem(lhsVal, rhsVal);
+        else
+          res = m_Builder.CreateSRem(lhsVal, rhsVal);
+      }
     }
 
     m_Builder.CreateStore(res, soulAddr);
@@ -881,6 +900,26 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     return m_Builder.CreateMul(lhs, rhs, "multmp");
   if (bin->Op == "/")
     return m_Builder.CreateSDiv(lhs, rhs, "divtmp");
+  if (bin->Op == "%") {
+    bool isUnsigned = false;
+    // Check resolved type for signedness using robust type check
+    if (bin->LHS && bin->LHS->ResolvedType) {
+      if (bin->LHS->ResolvedType->isInteger() &&
+          !bin->LHS->ResolvedType->isSignedInteger()) {
+        isUnsigned = true;
+      }
+    }
+
+    if (!lhs->getType()->isIntegerTy() || !rhs->getType()->isIntegerTy()) {
+      std::cerr << "FATAL: Operands of % are not integers!" << std::endl;
+      return llvm::ConstantInt::get(lhs->getType(), 0);
+    }
+
+    if (isUnsigned)
+      return m_Builder.CreateURem(lhs, rhs, "urem");
+    return m_Builder.CreateSRem(lhs, rhs, "srem");
+  }
+
   if (bin->Op == "<") {
     lhs = unwrapHandle(lhs);
     rhs = unwrapHandle(rhs);

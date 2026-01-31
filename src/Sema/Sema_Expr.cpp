@@ -2478,7 +2478,7 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
   auto rhsType = checkExpr(Bin->RHS.get());
 
   bool isAssign = (Bin->Op == "=" || Bin->Op == "+=" || Bin->Op == "-=" ||
-                   Bin->Op == "*=" || Bin->Op == "/=");
+                   Bin->Op == "*=" || Bin->Op == "/=" || Bin->Op == "%=");
   bool oldLHS = m_InLHS;
   m_InLHS = isAssign;
 
@@ -3128,11 +3128,16 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
     return toka::Type::fromString("bool");
   }
 
-  if (Bin->Op == "+" || Bin->Op == "-" || Bin->Op == "*" || Bin->Op == "/") {
+  if (Bin->Op == "+" || Bin->Op == "-" || Bin->Op == "*" || Bin->Op == "/" ||
+      Bin->Op == "%") {
     bool isValid = false;
     auto lRes = resolveType(lhsType, true);
-    if (lRes->isInteger() || lRes->isFloatingPoint())
+    if (lRes->isInteger() || lRes->isFloatingPoint()) {
+      if (Bin->Op == "%" && lRes->isFloatingPoint()) {
+        error(Bin, "operand of '%' must be integer, got float");
+      }
       isValid = true;
+    }
 
     if (!isValid) {
       error(Bin,
