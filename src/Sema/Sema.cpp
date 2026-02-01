@@ -595,8 +595,13 @@ void Sema::registerImpl(ImplDecl *Impl) {
           MethodMap[resolvedTypeName][Method->Name] = Method->ReturnType;
           MethodDecls[resolvedTypeName][Method->Name] = Method.get();
         } else {
+          // [Fix] Optional methods for 'encap'
+          if (Impl->TraitName == "encap" || Impl->TraitName == "@encap") {
+            continue;
+          }
+
           DiagnosticEngine::report(getLoc(Impl), DiagID::ERR_MISSING_IMPL,
-                                   Method->Name, Impl->TraitName);
+                                   Impl->TraitName, Method->Name);
           HasError = true;
         }
       }
@@ -783,6 +788,18 @@ void Sema::checkShapeSovereignty() {
 
         if (!hasDropImpl) {
           DiagnosticEngine::report(getLoc(decl), DiagID::ERR_SHAPE_NO_DROP,
+                                   name);
+          HasError = true;
+        }
+
+        // [New] Must have 'clone' method as well (Auto-Clone Enforcement)
+        bool hasCloneImpl = false;
+        if (MethodMap.count(name) && MethodMap[name].count("clone")) {
+          hasCloneImpl = true;
+        }
+
+        if (!hasCloneImpl) {
+          DiagnosticEngine::report(getLoc(decl), DiagID::ERR_SHAPE_NO_CLONE,
                                    name);
           HasError = true;
         }

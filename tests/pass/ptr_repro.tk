@@ -6,6 +6,13 @@ shape Wrapper(
     sz: i32
 )
 
+impl Wrapper@encap {
+    fn clone(self#) -> Wrapper {
+        return Wrapper(*buf = self.*buf, sz = self.sz)
+    }
+    fn drop(self#) {}
+}
+
 impl Wrapper {
     // Immutable self
     fn get(self, i: i32) -> i32 {
@@ -20,8 +27,6 @@ impl Wrapper {
             return self.buf[i]
         }
     }
-    
-    fn drop(self#) {}
 }
 
 fn main() -> i32 {

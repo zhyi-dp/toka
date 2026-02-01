@@ -33,6 +33,10 @@ pub shape String (
 
 impl String@encap {
     pub cap
+    fn clone(self) -> String {
+        return String::from_with_len(self.c_str(), self.len)
+    }
+
     fn drop(self#) {
         unsafe {
             if self.*buf != nullptr {
@@ -59,6 +63,15 @@ pub shape SplitIterator (
 impl SplitIterator@encap {
     fn drop(self#) {
         // Observer only, no resource to free
+    }
+    
+    fn clone(self) -> SplitIterator {
+        return SplitIterator(
+             *source = self.*source,
+             source_len = self.source_len,
+             current_pos = self.current_pos,
+             delimiter = self.delimiter
+        )
     }
 }
 
@@ -174,9 +187,9 @@ impl String {
         }
     }
 
-    pub fn clone(self) -> String {
-        return String::from_with_len(self.c_str(), self.len)
-    }
+    // pub fn clone(self) -> String {
+    //     return String::from_with_len(self.c_str(), self.len)
+    // }
 
     pub fn from_int(val: i32) -> String {
         unsafe {

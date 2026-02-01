@@ -12,6 +12,9 @@ shape S (
 )
 
 impl S@encap {
+    fn clone(self#) -> S {
+        return S(*ptr = self.*ptr, *buf = self.*buf, len = self.len, outmut = self.outmut, *rebind = self.*rebind)
+    }
     fn drop(self#) {
         println("drop")
         unsafe free self.*ptr

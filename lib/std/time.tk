@@ -43,6 +43,9 @@ pub shape DateTime (
 )
 
 impl DateTime@encap {
+    fn clone(self#) -> DateTime {
+        return self
+    }
     fn drop(self#) {
         // Observer only, no resource to free
     }

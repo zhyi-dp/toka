@@ -76,6 +76,7 @@ DIAG(ERR_BORROW_MUT,         Error, "E0441", "Cannot access '{}' while it is mut
 DIAG(ERR_BORROW_IMMUT,       Error, "E0442", "Cannot mutably borrow immutable entity '{}'")
 DIAG(ERR_IMMUTABLE_MOD,      Error, "E0443", "Cannot modify immutable entity '{}'")
 DIAG(ERR_SHAPE_NO_DROP,      Error, "E0444", "Shape '{}' manages resources but does not implement 'drop'")
+DIAG(ERR_SHAPE_NO_CLONE,     Error, "E0458", "Shape '{}' manages resources (raw pointers) but does not implement 'clone'")
 DIAG(ERR_UNSAFE_RAW_PTR,     Error, "E0445", "Shape '{}' manages raw pointers but does not implement 'drop'")
 DIAG(ERR_UNSAFE_RESOURCE,    Error, "E0446", "Shape '{}' contains managed resources but does not implement 'drop'")
 DIAG(ERR_NULL_ACCESS,        Error, "E0447", "Accessing member of nullable type '{}' requires explicit 'is' check")

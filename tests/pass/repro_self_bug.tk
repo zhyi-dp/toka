@@ -10,6 +10,9 @@ shape Wrapper(val: i32)
 
 impl MyFile@encap {
     pub *
+    fn clone(self) -> MyFile {
+        return MyFile(*h=self.*h)
+    }
     fn drop(self#) {}
 }
 

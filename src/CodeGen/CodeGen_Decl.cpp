@@ -1370,6 +1370,10 @@ void toka::CodeGen::genImpl(const toka::ImplDecl *decl, bool declOnly) {
               decl->TraitName + "_" + decl->TypeName + "_" + method->Name;
           genFunction(method.get(), mangledName, declOnly);
         } else {
+          // [Fix] Optional methods for 'encap'
+          if (decl->TraitName == "encap" || decl->TraitName == "@encap") {
+            continue;
+          }
           error(decl, "Missing implementation for method '" + method->Name +
                           "' of trait '" + decl->TraitName + "'");
         }

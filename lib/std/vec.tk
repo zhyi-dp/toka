@@ -45,6 +45,29 @@ impl<T> Vec<T>@encap {
             }
         }
     }
+
+    fn clone(self) -> Vec<T> {
+        // Deep clone of the vector structure
+        // Note: Elements are copied via assignment. 
+        // Once compiler supports auto-clone on assign, this becomes deep copy for elements too.
+        unsafe {
+            if self.cap == 0 {
+                // Avoid calling new() to prevent circular instantiation loop in compiler
+                return Vec<T>(*!buf=nullptr, len=0, cap=0)
+            }
+            // alloc array
+            auto *new_buf# = unsafe alloc [self.cap] T
+            
+            // Copy elements
+            auto ctr# = Counter(val=0)
+            while ctr.val < self.len {
+                new_buf[ctr.val] = self.buf[ctr.val]
+                ctr#.inc()
+            }
+            
+            return Vec<T>(*buf=*new_buf, len=self.len, cap=self.cap)
+        }
+    }
 }
 
 impl<T> Vec<T> {
@@ -244,6 +267,17 @@ pub shape VecIterator<T> (
     len : usize,
     pos# : usize
 )
+
+impl<T> VecIterator<T>@encap {
+    fn drop(self#) {}
+    fn clone(self) -> VecIterator<T> {
+        return VecIterator<T>(
+             *buf = self.*buf,
+             len = self.len,
+             pos = self.pos
+        )
+    }
+}
 
 // Concrete Implementation
 impl<T> VecIterator<T> {

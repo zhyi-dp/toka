@@ -20,6 +20,9 @@ shape Hero (
 
 impl Hero@encap {
     pub *
+    fn clone(self#) -> Hero {
+        return Hero(*buf = self.*buf)
+    }
     fn drop(self#) {
         
     }
