@@ -291,6 +291,10 @@ void Sema::checkStmt(Stmt *S) {
     std::shared_ptr<toka::Type> InitTypeObj = nullptr;
     if (Var->Init) {
       Var->Init = foldGenericConstant(std::move(Var->Init));
+      // [Auto-Clone]
+      if (!Var->IsReference) {
+        tryInjectAutoClone(Var->Init);
+      }
       if (Var->IsReference)
         m_AllowUnsetUsage = true;
       m_ControlFlowStack.push_back({Var->Name, "void", false, true});

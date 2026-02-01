@@ -1452,6 +1452,8 @@ int Sema::getScopeDepth(const std::string &Name) {
 }
 
 bool Sema::checkVisibility(ASTNode *Node, ShapeDecl *SD) {
+  if (m_DisableVisibilityCheck)
+    return true;
   if (!SD)
     return true;
 

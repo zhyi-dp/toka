@@ -44,7 +44,7 @@ static std::string getStringifyPath(Expr *E) {
   return "";
 }
 
-static bool isLValue(const Expr *expr) {
+bool Sema::isLValue(const Expr *expr) {
   if (dynamic_cast<const VariableExpr *>(expr))
     return true;
   if (auto *me = dynamic_cast<const MemberExpr *>(expr))
@@ -54,12 +54,6 @@ static bool isLValue(const Expr *expr) {
   if (auto *ue = dynamic_cast<const UnaryExpr *>(expr)) {
     if (ue->Op == TokenType::Star)
       return true;
-  }
-  if (auto *met = dynamic_cast<const MethodCallExpr *>(expr)) {
-    // [Intrinsic] unset() and unwrap() can be L-values if their object is
-    if (met->Method == "unset" || met->Method == "unwrap") {
-      return isLValue(met->Object.get());
-    }
   }
   return false;
 }
@@ -2590,6 +2584,13 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
   // Assignment Logic
   if (Bin->Op == "=") {
+    // [Auto-Clone] Inject clone() if RHS is L-Value and has clone
+    tryInjectAutoClone(Bin->RHS);
+    // Update cached type/ptr after potential injection
+    rhsType = Bin->RHS->ResolvedType;
+    rhsExpr = Bin->RHS.get();
+    RHS = rhsType->toString();
+
     // Move Logic
     Expr *RHSExpr = Bin->RHS.get();
     if (auto *Unary = dynamic_cast<UnaryExpr *>(RHSExpr)) {
@@ -4581,3 +4582,79 @@ Sema::checkUnionInit(InitStructExpr *Init, ShapeDecl *SD,
 }
 
 } // namespace toka
+
+// Implementation of tryInjectAutoClone
+void toka::Sema::tryInjectAutoClone(std::unique_ptr<Expr> &expr) {
+  if (!expr)
+    return;
+
+  // Guard: Not if inside clone method (infinite recursion prevention)
+  // Check strict name "clone" or namespaced "::clone"
+  if (CurrentFunction) {
+    if (CurrentFunction->Name == "clone")
+      return;
+    if (CurrentFunction->Name.size() >= 7 &&
+        CurrentFunction->Name.compare(CurrentFunction->Name.size() - 7, 7,
+                                      "::clone") == 0) {
+      return;
+    }
+  }
+
+  // 1. Must be L-Value
+  if (!isLValue(expr.get()))
+    return;
+
+  // 2. Resolve Type
+  auto type = expr->ResolvedType;
+  if (!type) {
+    // Should not happen in typical check* flow, but safe fallback
+    type = checkExpr(expr.get());
+  }
+
+  // 3. Filter Types
+  if (type->isPointer() || type->isReference())
+    return; // Pointers/Refs copy identity
+  if (!type->isShape())
+    return; // Only Shapes can have clone
+
+  // 4. Check for 'clone' method existence
+  std::string typeName = type->getSoulName();
+  bool hasClone = false;
+
+  // Inherent methods
+  if (MethodDecls.count(typeName) && MethodDecls[typeName].count("clone")) {
+    hasClone = true;
+  }
+  // Trait methods (specifically @encap or similar)
+  if (!hasClone) {
+    // Check @encap (most common)
+    if (ImplMap.count(typeName + "@encap") &&
+        ImplMap[typeName + "@encap"].count("clone")) {
+      hasClone = true;
+    }
+    // Check potential @Clone trait if added in future
+    else if (ImplMap.count(typeName + "@Clone") &&
+             ImplMap[typeName + "@Clone"].count("clone")) {
+      hasClone = true;
+    }
+  }
+
+  // 5. Inject
+  if (hasClone) {
+    auto loc = expr->Loc;
+    std::vector<std::unique_ptr<Expr>> args;
+    auto cloneCall = std::make_unique<MethodCallExpr>(std::move(expr), "clone",
+                                                      std::move(args));
+    cloneCall->Loc = loc;
+    // Arguments are empty for clone()
+
+    // Replace expression
+    expr = std::move(cloneCall);
+
+    // Re-check to resolve types of the new MethodCall
+    bool prevVis = m_DisableVisibilityCheck;
+    m_DisableVisibilityCheck = true; // Allow calling private clone()
+    checkExpr(expr.get());
+    m_DisableVisibilityCheck = prevVis;
+  }
+}
