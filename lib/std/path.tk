@@ -115,3 +115,62 @@ pub fn dirname(path: String) -> String {
         return String::from_with_len(*p, last_slash)
     }
 }
+
+pub fn is_absolute(path: String) -> bool {
+    if path.len() > 0 {
+        if path.at(0) == 47:char { return true } // '/'
+    }
+    return false
+}
+
+pub fn file_stem(path: String) -> String {
+    auto base = basename(path)
+    auto ext_idx = base.find_char(46:char) // '.'
+    if ext_idx == -1 {
+        return base
+    }
+    if ext_idx == 0 {
+        return base // ".hidden"
+    }
+    
+    unsafe {
+        return String::from_with_len(base.c_str(), ext_idx)
+    }
+}
+
+pub fn with_extension(path: String, ext: String) -> String {
+    auto stem_path# = path
+    
+    // Remove existing extension if any
+    auto ext_idx = path.find_char(46:char)
+    if ext_idx != -1 {
+        unsafe {
+            stem_path = String::from_with_len(path.c_str(), ext_idx)
+        }
+    }
+    
+    // Append new
+    auto res# = stem_path
+    
+    // Check if ext is empty
+    if ext.len() == 0 {
+        return res
+    }
+    
+    res#.push_char(46:char)
+    
+    // Skip leading dot in ext if present
+    auto ext_start# = 0
+    if ext.at(0) == 46:char {
+        ext_start = 1
+    }
+    
+    unsafe {
+        auto *p = ext.c_str()
+        auto addr = *p as Addr
+        auto *sub_p = (addr + ext_start as Addr) as *char
+        res#.push_str(*sub_p)
+    }
+    
+    return res
+}

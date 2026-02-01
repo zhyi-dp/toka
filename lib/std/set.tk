@@ -1,0 +1,43 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+
+import core/types::{usize}
+import std/map::{HashMap}
+import core/traits::{@Hash, @PartialEq, @encap}
+import core/option::{Option}
+
+pub shape HashSet<T>(
+    map: HashMap<T, bool>
+)
+
+impl<T> HashSet<T>@encap {
+    fn drop(self#) {
+        // Map drops automatically
+    }
+}
+
+impl<T> HashSet<T> {
+    pub fn new() -> HashSet<T> {
+        return HashSet<T>(
+            map = HashMap<T, bool>::new()
+        )
+    }
+
+    pub fn insert(self#, val: T) {
+        self.map#.insert(val, true)
+    }
+
+    pub fn contains(self, val: T) -> bool {
+        match self.map.get(val) {
+            auto Option<bool>::Some(_) => return true
+            auto Option<bool>::None => return false
+        }
+    }
+
+    pub fn len(self) -> usize {
+        return self.map.len
+    }
+
+    pub fn is_empty(self) -> bool {
+        return self.map.len == 0
+    }
+}

@@ -1,0 +1,78 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+
+import core/types::{char}
+import core/option::{Option}
+
+// Extensions for char primitive
+impl char {
+    pub fn is_digit(self) -> bool {
+        // '0'=48, '9'=57
+        return self >= 48:char && self <= 57:char
+    }
+
+    pub fn is_alphabetic(self) -> bool {
+        // 'a'=97, 'z'=122
+        if self >= 97:char && self <= 122:char { return true }
+        // 'A'=65, 'Z'=90
+        if self >= 65:char && self <= 90:char { return true }
+        return false
+    }
+
+    pub fn is_alphanumeric(self) -> bool {
+        return self.is_digit() || self.is_alphabetic()
+    }
+
+    pub fn is_whitespace(self) -> bool {
+        // ' '=32, '\t'=9, '\n'=10, '\r'=13
+        if self == 32:char { return true }
+        if self == 9:char { return true }
+        if self == 10:char { return true }
+        if self == 13:char { return true }
+        return false
+    }
+
+    pub fn to_digit(self, radix: u32) -> Option<u32> {
+        if radix > 36 { return Option<u32>::None }
+        
+        auto val#: u32 = 0
+        auto valid# = false
+        auto c = self
+        
+        // 0-9
+        if c >= 48:char && c <= 57:char {
+            val = (c as i32 - 48) as u32
+            valid = true
+        } else {
+            // a-z
+            if c >= 97:char && c <= 122:char {
+                 val = (c as i32 - 97 + 10) as u32
+                 valid = true
+            } else {
+                 // A-Z
+                 if c >= 65:char && c <= 90:char {
+                     val = (c as i32 - 65 + 10) as u32
+                     valid = true
+                 }
+            }
+        }
+        
+        if valid && val < radix {
+            return Option<u32>::Some(val)
+        }
+        return Option<u32>::None
+    }
+
+    pub fn to_upper(self) -> char {
+        if self >= 97:char && self <= 122:char {
+            return (self as i32 - 32) as char
+        }
+        return self
+    }
+
+    pub fn to_lower(self) -> char {
+        if self >= 65:char && self <= 90:char {
+            return (self as i32 + 32) as char
+        }
+        return self
+    }
+}
