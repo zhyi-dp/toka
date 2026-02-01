@@ -30,6 +30,7 @@ extern fn libc_memcmp(*s1: void, *s2: void, n: usize) -> i32
 // I/O (Low level)
 extern fn libc_read(fd: i32, *buf: u8, count: i64) -> i64
 extern fn libc_write(fd: i32, *buf: u8, count: i64) -> i64
+extern fn libc_close(fd: i32) -> i32
 
 // I/O (FILE*)
 extern fn libc_fopen(*filename: char, *mode: char) -> *void
@@ -109,3 +110,16 @@ extern fn libc_getenv(*name: char) -> *char // Returns raw pointer (borrow)
 extern fn libc_setenv(*name: char, *value: char, overwrite: i32) -> i32
 extern fn libc_unsetenv(*name: char) -> i32
 extern fn libc_access(*path: char, mode: i32) -> i32
+
+// Networking (Sockets)
+extern fn libc_socket(domain: i32, kind: i32, protocol: i32) -> i32
+extern fn libc_bind(sockfd: i32, *addr: void, addrlen: u32) -> i32
+extern fn libc_listen(sockfd: i32, backlog: i32) -> i32
+extern fn libc_accept(sockfd: i32, *addr: void, *addrlen: u32) -> i32
+extern fn libc_connect(sockfd: i32, *addr: void, addrlen: u32) -> i32
+extern fn libc_setsockopt(sockfd: i32, level: i32, optname: i32, *optval: void, optlen: u32) -> i32
+extern fn libc_shutdown(sockfd: i32, how: i32) -> i32
+extern fn libc_inet_pton(af: i32, *src: char, *dst: void) -> i32
+extern fn libc_htons(hostshort: u16) -> u16
+extern fn libc_recv(sockfd: i32, *buf: void, len: usize, flags: i32) -> i64
+extern fn libc_send(sockfd: i32, *buf: void, len: usize, flags: i32) -> i64

@@ -1,16 +1,4 @@
 // Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 import core/types::{char, usize, Addr, ADDR0}
 import std/string::{String}
 import core/libc::*
@@ -45,14 +33,6 @@ pub fn get_arg_impl(i: i32) -> String {
 }
 
 // === File System ===
-
-// struct dirent layout on macOS (inode64):
-// u64 d_ino      (0-8)
-// u64 d_seekoff  (8-16)
-// u16 d_reclen   (16-18)
-// u16 d_namlen   (18-20)
-// u8  d_type     (20-21)
-// char d_name[]  (21-...)
 
 pub fn opendir_impl(path: String) -> Addr {
     unsafe {
@@ -105,9 +85,6 @@ pub fn path_exists(path: String) -> bool {
 
 pub fn getcwd_impl() -> String {
     unsafe {
-        // libc_write(2, "DEBUG: getcwd_impl returning dummy\n" as *u8, 31)
-        // return String::from("test_cwd_dummy")
-        
         // Real implementation using getcwd
         auto *buf = libc_malloc(1024) as *char
         auto res_addr = libc_getcwd(*buf, 1024:usize)
@@ -155,4 +132,188 @@ pub fn unsetenv_impl(name: String) -> bool {
 pub fn __toka_panic_handler(msg: str) {
     // macOS 特有的实现：写 stderr + 退出
     libc_abort()
+}
+
+// === Networking ===
+
+// Constants for macOS
+// AF_INET = 2
+// SOCK_STREAM = 1
+// SOL_SOCKET = 0xffff (65535)
+// SO_REUSEADDR = 0x0004
+
+extern fn __error() -> *i32
+
+pub fn get_last_error() -> i32 {
+    unsafe {
+        auto *ptr = __error()
+        return ptr
+    }
+}
+
+pub fn net_socket_impl() -> i32 {
+    unsafe {
+        return libc_socket(2, 1, 0)
+    }
+}
+
+pub fn net_setsockopt_reuse_impl(fd: i32) -> i32 {
+    unsafe {
+        auto *opt# = libc_malloc(4) as *i32
+        opt[0] = 1
+        auto res = libc_setsockopt(fd, 65535, 4, *opt as *void, 4)
+        libc_free(*opt as *void)
+        return res
+    }
+}
+
+// Helper to fill sockaddr_in (IPv4)
+// dest must be a pointer to at least 16 bytes.
+// Toka: *addr_buf: char declares addr_buf as *char
+// Helper to fill sockaddr_in (IPv4)
+// dest must be a pointer to at least 16 bytes.
+// Toka: *addr_buf: char declares addr_buf as *char
+// Helper to fill sockaddr_in (IPv4)
+// dest must be a pointer to at least 16 bytes.
+// Toka: *addr_buf: char declares addr_buf as *char (Handle is *addr_buf, Value is addr_buf)
+// Helper to fill sockaddr_in (IPv4)
+// dest must be a pointer to at least 16 bytes.
+// Toka: *addr_buf: char declares addr_buf as *char (Handle is *addr_buf, Value is addr_buf)
+fn fill_sockaddr_in(*addr_buf: char, ip: usize, port: i32) -> bool {
+    // Capture handle safely outside unsafe block? No, access to handle is permitted.
+    // We use unsafe block for pointer arithmetic and raw writes.
+    unsafe {
+        // addr_buf (no hat) would be the char value (read from memory).
+        // *addr_buf (with hat) is the pointer handle.
+        
+        // Copy the handle to a local variable for arithmetic
+        // Mark as mutable (#) so we can write to the memory it points to (rebind value)
+        auto *base_ptr# = *addr_buf
+        
+        // Offset 0: len = 16
+        // Write to memory at base_ptr. 
+        // In Toka, 'base_ptr' (no hat) refers to the pointed value (memory).
+        // So assignment writes to memory.
+        base_ptr = 16 as char
+        
+        // Offset 1: family = 2
+        // Arithmetic on handle (*base_ptr)
+        // Cast to usize, add 1, cast back to *char
+        auto *p1# = (*base_ptr as usize + 1) as *char
+        p1 = 2 as char
+        
+        // Offset 2: port (u16)
+        auto nport: u16 = libc_htons(port as u16)
+        auto *p_port# = (*base_ptr as usize + 2) as *u16
+        p_port = nport
+        
+        // Offset 4: addr (u32, via inet_pton)
+        auto *p_addr = (*base_ptr as usize + 4) as *void
+        // Pass HANDLE (*p_addr) to external function
+        auto *ip_ptr# = ip as *char
+        auto res = libc_inet_pton(2, *ip_ptr, *p_addr)
+        
+        if res != 1 {
+             return false
+        }
+        
+        // Offset 8..16: Zero
+        auto i# = 8
+        while i < 16 {
+            auto *p_z# = (*base_ptr as usize + i) as *char
+            p_z = 0 as char
+            i += 1
+        }
+        return true
+    }
+}
+
+// Redeclare syscalls to ensure correct pointer sizes (avoiding libc.tk potential issues)
+extern fn bind(fd: i32, *addr: void, len: u32) -> i32
+extern fn connect(fd: i32, *addr: void, len: u32) -> i32
+extern fn accept(fd: i32, *addr: void, *len: u32) -> i32
+extern fn listen(fd: i32, backlog: i32) -> i32
+extern fn setsockopt(fd: i32, level: i32, optname: i32, *optval: void, optlen: u32) -> i32
+
+pub fn net_bind_impl(fd: i32, host: usize, port: i32) -> i32 {
+    unsafe {
+        // Allocate 32 bytes to be safe
+        auto *addr_buf# = libc_malloc(32) as *char
+        
+        if *addr_buf as usize == 0 {
+             return -1
+        }
+        
+        if !fill_sockaddr_in(*addr_buf, host, port) {
+            libc_free(*addr_buf as *void)
+            return -1
+        }
+        
+        // Use bind
+        auto res = bind(fd, *addr_buf as *void, 16)
+        libc_free(*addr_buf as *void)
+        return res
+    }
+}
+
+pub fn net_listen_impl(fd: i32) -> i32 {
+    unsafe {
+        // Backlog 128
+        return libc_listen(fd, 128)
+    }
+}
+
+pub fn net_connect_impl(fd: i32, host: usize, port: i32) -> i32 {
+    unsafe {
+        auto *addr_buf# = libc_malloc(32) as *char
+        
+        if *addr_buf as usize == 0 {
+             return -2
+        }
+
+        if !fill_sockaddr_in(*addr_buf, host, port) {
+            libc_free(*addr_buf as *void)
+            return -3
+        }
+        
+        // Use connect with correct handle
+        auto res = connect(fd, *addr_buf as *void, 16)
+        libc_free(*addr_buf as *void)
+        return res
+    }
+}
+
+pub fn net_accept_impl(fd: i32) -> i32 {
+    unsafe {
+        // We ignore the peer address for now in this impl
+        auto *addr_len_ptr# = libc_malloc(4) as *u32
+        addr_len_ptr[0] = 16
+        auto *addr_buf# = libc_malloc(16) as *void
+        
+        auto res = libc_accept(fd, *addr_buf, *addr_len_ptr)
+        
+        libc_free(*addr_len_ptr as *void)
+        libc_free(*addr_buf)
+        return res
+    }
+}
+
+pub fn net_close_impl(fd: i32) {
+    unsafe {
+        libc_close(fd)
+    }
+}
+
+pub fn net_read_impl(fd: i32, *buf: u8, len: usize) -> i64 {
+    unsafe {
+        // Pass *buf (pointer) to libc_read
+        return libc_read(fd, *buf, len as i64)
+    }
+}
+
+pub fn net_write_impl(fd: i32, *buf: u8, len: usize) -> i64 {
+    unsafe {
+        // Pass *buf (pointer) to libc_write
+        return libc_write(fd, *buf, len as i64)
+    }
 }

@@ -6,11 +6,8 @@ import std/vec::{Vec}
 import core/libc::*
 
 fn main() -> i32 {
-    println("=== Word Frequency Demo ===")
-    
     // 1. Read File
     auto filename = String::from("demos/data.txt")
-    println("Opening file {}", filename)
     auto f_res = File::open(filename, String::from("r"))
     if f_res.is_err() {
         println("Error: Could not open file")
@@ -37,11 +34,6 @@ fn main() -> i32 {
             // Trim whitespace just in case (though split by space handles most)
             auto clean_word = word.trim()
             if clean_word.len() > 0 {
-                // Check if exists
-                // We need to clone usage for the key in get() if needed?
-                // Map::get takes key by value (copy/move). String is Move type.
-                // So we pass a clone to check existence.
-                
                 auto entry = counts.get(clean_word)
                 if entry.is_some() {
                     // Update: overwrite with +1
@@ -57,7 +49,6 @@ fn main() -> i32 {
     }
     
     // 3. Print Results
-    println("Word Frequencies:")
     auto map_iter = counts.iter()
     while true {
         auto res = map_iter.next()
@@ -67,7 +58,7 @@ fn main() -> i32 {
         auto entry = res.unwrap()
         unsafe {
             // entry.key is String, entry.val is i32
-            println("{} : {}", entry.key.c_str(), entry.val)
+            println("{} \t: {}", entry.key.c_str(), entry.val)
         }
     }
     

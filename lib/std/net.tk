@@ -1,0 +1,177 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+
+import core/types::{usize, char, ADDR0}
+import std/string::{String}
+import core/libc::*
+import core/result::{Result}
+import core/option::{Option}
+import std/sys/macos as sys 
+import std/io 
+
+// Error type for network operations
+alias NetResult<T> = Result<T, String>
+
+// ==========================================
+// TcpStream
+// ==========================================
+
+pub shape TcpStream (
+    fd: i32,
+    closed: bool
+)
+
+impl TcpStream@encap {
+    fn drop(self#) {
+        unsafe {
+            if !self.closed {
+                sys::net_close_impl(self.fd)
+                self.closed = true
+            }
+        }
+    }
+    
+    fn clone(self) -> TcpStream {
+        // Move semantics preferred
+        return TcpStream(fd = -1, closed = true)
+    }
+}
+
+impl TcpStream {
+    pub fn connect(addr: String, port: i32) -> TcpStream {
+        unsafe {
+            auto fd = sys::net_socket_impl()
+            if fd < 0 {
+                return TcpStream(fd=-1, closed=true)
+            }
+            
+            auto *addr_ptr# = addr.c_str()
+            auto res = sys::net_connect_impl(fd, *addr_ptr as usize, port)
+            if res != 0 {
+                auto err = sys::get_last_error()
+                io::println("TcpStream::connect: connect failed with res={}, errno={}", res, err)
+                sys::net_close_impl(fd)
+                return TcpStream(fd=-1, closed=true)
+            }
+            
+            return TcpStream(fd=fd, closed=false)
+        }
+    }
+    
+    pub fn read(self, *buf: u8, len: usize) -> isize {
+        unsafe {
+            auto my_fd = self.fd
+            if self.closed {
+                return -1 as isize
+            }
+            // Pass *buf to sys impl which expects *u8
+            auto n: i64 = sys::net_read_impl(my_fd, *buf, len)
+            return n as isize
+        }
+    }
+    
+    pub fn write(self, *buf: u8, len: usize) -> isize {
+        unsafe {
+            auto my_fd = self.fd
+            if self.closed {
+                return -1 as isize
+            }
+            auto n: i64 = sys::net_write_impl(my_fd, *buf, len)
+            return n as isize
+        }
+    }
+    
+    // Helper to write string
+    pub fn write_string(self, s: String) -> isize {
+        // s.c_str() returns *char. Cast to *u8.
+        auto *ptr = s.c_str() as *u8
+        return self.write(*ptr, s.len() as usize)
+    }
+    
+    pub fn close(self#) {
+        unsafe {
+            if !self.closed {
+                sys::net_close_impl(self.fd)
+                self.closed = true
+            }
+        }
+    }
+    pub fn is_valid(self) -> bool {
+        return self.fd >= 0
+    }
+}
+
+// ==========================================
+// TcpListener
+// ==========================================
+
+pub shape TcpListener (
+    fd: i32,
+    closed: bool
+)
+
+impl TcpListener@encap {
+    fn drop(self#) {
+        unsafe {
+            if !self.closed {
+                sys::net_close_impl(self.fd)
+                self.closed = true
+            }
+        }
+    }
+    
+    fn clone(self) -> TcpListener {
+        return TcpListener(fd = -1, closed = true)
+    }
+}
+
+impl TcpListener {
+    pub fn bind(addr: String, port: i32) -> TcpListener {
+        unsafe {
+            auto fd = sys::net_socket_impl()
+            if fd < 0 {
+                io::println("TcpListener::bind: socket failed")
+                return TcpListener(fd=-1, closed=true)
+            }
+            
+            // SO_REUSEADDR
+            sys::net_setsockopt_reuse_impl(fd)
+            
+            auto *addr_ptr# = addr.c_str()
+            auto res = sys::net_bind_impl(fd, *addr_ptr as usize, port)
+            if res != 0 {
+                auto err = sys::get_last_error()
+                io::println("TcpListener::bind: bind failed with res={}, errno={}", res, err)
+                sys::net_close_impl(fd)
+                return TcpListener(fd=-1, closed=true)
+            }
+            
+            auto lres = sys::net_listen_impl(fd)
+            if lres != 0 {
+                io::println("TcpListener::bind: listen failed")
+                sys::net_close_impl(fd)
+                return TcpListener(fd=-1, closed=true)
+            }
+            
+            return TcpListener(fd=fd, closed=false)
+        }
+    }
+    
+    pub fn accept(self) -> TcpStream {
+        unsafe {
+            if self.closed {
+                 return TcpStream(fd=-1, closed=true)
+            }
+            
+            auto client_fd = sys::net_accept_impl(self.fd)
+            if client_fd < 0 {
+                 return TcpStream(fd=-1, closed=true)
+            }
+            
+            return TcpStream(fd=client_fd, closed=false)
+        }
+    }
+    
+    pub fn is_valid(self) -> bool {
+        return self.fd >= 0
+    }
+}
