@@ -1,0 +1,84 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+
+import std/vec::Vec
+import std/string::String
+import core/libc::*
+import core/types::{Addr, ADDR0, char, usize}
+
+pub shape Child(pid: i32)
+
+impl Child {
+    pub fn wait(self#) -> i32 {
+        unsafe {
+            // Allocate 4 bytes for status
+            // Pass null for status to ignore it for now
+            libc_waitpid(self.pid, 0 as *i32, 0)
+            return 0
+        }
+    }
+}
+
+
+pub shape Command(
+    program: String,
+    args: Vec<String>
+)
+
+impl Command {
+    pub fn new(program: String) -> Command {
+        auto args# = Vec::new()
+        // Standard convention: argv[0] is the program name
+        args#.push(program.clone())
+        
+        Command(
+            program=program,
+            args=args
+        )
+    }
+    
+    pub fn arg(self#, arg: String) {
+        self.args.push(arg)
+    }
+    
+    pub fn args(self#, args: Vec<String>) {
+        auto iter = args.iter()
+        while iter.next() is val {
+            self.args.push(val.clone())
+        }
+    }
+    
+    pub fn spawn(self#) -> Child {
+        unsafe {
+            auto pid = libc_fork()
+            if pid < 0 {
+                // Fork failed
+                return Child(pid=-1)
+            }
+            
+            if pid == 0 {
+                // Child process
+                self#.do_exec()
+                // If exec returns, it failed
+                libc_exit(127) 
+            }
+            
+            // Parent process
+            return Child(pid=pid)
+        }
+    }
+    
+    // Helper to setup argv and call execvp
+    fn do_exec(self#) {
+        unsafe {
+             libc_exit(127)
+        }
+    }
+    
+    pub fn status(self#) -> i32 {
+        auto child# = self#.spawn()
+        if child.pid == -1 {
+            return -1
+        }
+        return child#.wait()
+    }
+}

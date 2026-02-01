@@ -82,6 +82,12 @@ extern fn libc_fabs(x: f64) -> f64
 extern fn libc_exit(status: i32) -> void
 extern fn libc_abort() -> void
 extern fn libc_system(*command: char) -> i32
+extern fn libc_fork() -> i32
+extern fn libc_execvp(*file: char, *argv: void) -> i32
+extern fn libc_waitpid(pid: i32, *status: i32, options: i32) -> i32
+extern fn libc_pipe(*pipefd: i32) -> i32
+extern fn libc_dup2(oldfd: i32, newfd: i32) -> i32
+extern fn libc_kill(pid: i32, sig: i32) -> i32
 extern fn libc_getenv(*name: char) -> *char
 extern fn libc_time(*tloc: i64) -> i64
 extern fn libc_localtime(*timer: i64) -> *void // tm struct pointer

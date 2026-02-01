@@ -25,6 +25,9 @@
             "include": "#operators"
         },
         {
+            "include": "#function-definitions"
+        },
+        {
             "include": "#functions"
         }
     ],
@@ -272,6 +275,28 @@
                             "name": "entity.name.function.toka"
                         }
                     }
+                }
+            ]
+        },
+        "function-definitions": {
+            "name": "meta.function.definition.toka",
+            "begin": "\\b(fn)\\s+",
+            "beginCaptures": {
+                "1": {
+                    "name": "storage.type.toka"
+                }
+            },
+            "end": "(?=\\{|;|$)",
+            "patterns": [
+                {
+                    "name": "entity.name.function.toka",
+                    "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b"
+                },
+                {
+                    "include": "#operators"
+                },
+                {
+                    "include": "#types"
                 }
             ]
         }

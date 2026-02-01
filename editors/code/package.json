@@ -1,7 +1,7 @@
 {
   "name": "toka-vscode",
   "displayName": "Toka Language Support",
-  "description": "Syntax highlighting for the Toka programming language",
+  "description": "Syntax highlighting and language support for Toka",
   "version": "0.1.0",
   "publisher": "zhyi",
   "engines": {
@@ -9,6 +9,10 @@
   },
   "categories": [
     "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:toka"
   ],
   "contributes": {
     "languages": [
