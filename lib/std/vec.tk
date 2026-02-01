@@ -104,7 +104,7 @@ impl<T> Vec<T> {
         }
     }
     
-    // Get element at index
+    // Get element at index (Returns Copy/Move)
     pub fn get(self, index: usize) -> T {
         unsafe {
              if index >= self.len {
@@ -112,6 +112,22 @@ impl<T> Vec<T> {
              }
              auto val = self.buf[index]
              return val
+        }
+    }
+    
+    // Alias to get
+    pub fn at(self, index: usize) -> T {
+        return self.get(index)
+    }
+
+    // Unsafe Reference Get (Returns Pointer/Handle)
+    // Used to peek without copying/moving.
+    pub fn get_ref(self, index: usize) -> *T {
+        unsafe {
+             if index >= self.len {
+                 return nullptr
+             }
+             return *self.buf[index]
         }
     }
 
@@ -182,6 +198,33 @@ impl<T> Vec<T> {
                 self.*buf = *new_buf
                 self.cap = new_cap
             }
+        }
+    }
+
+    // Resize vector (fill with value)
+    pub fn resize(self#, new_len: usize, val: T) {
+        unsafe {
+            if new_len > self.cap {
+                 while self.cap < new_len {
+                     self#.grow()
+                 }
+            }
+            // Fill from old_len to new_len
+            auto i# = self.len
+            while i < new_len {
+                self.buf[i] = val
+                i += 1
+            }
+            self.len = new_len
+        }
+    }
+
+    // Set value at index
+    pub fn set(self#, index: usize, val: T) {
+        unsafe {
+             if index < self.len {
+                 self.buf[index] = val
+             }
         }
     }
 
