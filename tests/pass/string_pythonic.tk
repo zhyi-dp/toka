@@ -1,0 +1,63 @@
+// assert is in prelude
+import std/io::{println, print}
+import std/string::{String}
+
+fn main() -> i32 {
+    println("Testing Pythonic String extensions...")
+
+    // 1. Utilities
+    auto s0 = String::from("")
+    assert(s0.is_empty(), "Empty string should return true")
+    auto s1 = String::from("hello")
+    assert(!s1.is_empty(), "Non-empty string should return false")
+    
+    // 2. Substring
+    auto sub1 = s1.substring(1, 4) // "ell"
+    assert(sub1.eq(String::from("ell")), "Substring(1,4) failed")
+    
+    // Negative indices
+    auto sub2 = s1.substring(-2, 5) // "lo" (indices 3, 5)
+    print(sub2)
+    println("")
+    assert(sub2.eq(String::from("lo")), "Substring(-2,5) failed")
+    
+    // Clamping
+    auto sub3 = s1.substring(-10, 100)
+    assert(sub3.eq(s1), "Substring clamping failed")
+    
+    // 3. Trim
+    auto s_trim = String::from("  foo  ")
+    auto trimmed_start = s_trim.trim_start()
+    auto trimmed_end = s_trim.trim_end()
+    assert(trimmed_start.eq(String::from("foo  ")), "trim_start failed")
+    assert(trimmed_end.eq(String::from("  foo")), "trim_end failed")
+    
+    // 4. Find
+    auto s_find = String::from("hello world")
+    assert(s_find.find_str(String::from("world")) == 6, "find_str 'world' failed")
+    assert(s_find.find_str(String::from("xyz")) == -1, "find_str 'xyz' failed")
+    
+    // 5. Replace
+    auto s_rep = String::from("banana")
+    auto s_rep_res = s_rep.replace_str(String::from("ana"), String::from("123"))
+    // Expected: "b" + "123" + "na" -> "b123na"
+    print(s_rep_res)
+    println("")
+    assert(s_rep_res.eq(String::from("b123na")), "replace_str failed")
+    
+    auto s_rep2 = String::from("aaaa")
+    auto s_rep2_res = s_rep2.replace_str(String::from("aa"), String::from("b"))
+    // Expected: "bb"
+    assert(s_rep2_res.eq(String::from("bb")), "replace_str greedy failed")
+
+    // 6. Repeat
+    auto s_mul = String::from("ab")
+    assert(s_mul.repeat(3).eq(String::from("ababab")), "repeat failed")
+    
+    // 7. Reverse
+    auto s_rev = String::from("abc")
+    assert(s_rev.reverse().eq(String::from("cba")), "reverse failed")
+    
+    println("All pythonic string tests passed!")
+    return 0
+}

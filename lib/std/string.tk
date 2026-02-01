@@ -359,6 +359,70 @@ impl String {
         }
     }
     
+    // === Extended Utilities (Python-like) ===
+
+    pub fn is_empty(self) -> bool {
+        return self.len == 0
+    }
+
+    pub fn substring(self, start: i32, end: i32) -> String {
+        unsafe {
+            auto s# = start
+            auto e# = end
+            
+            // Handle negative indices
+            if s < 0 { s = self.len + s }
+            if e < 0 { e = self.len + e }
+            
+            // Clamp
+            if s < 0 { s = 0 }
+            if s > self.len { s = self.len }
+            if e < 0 { e = 0 }
+            if e > self.len { e = self.len }
+            
+            if s >= e {
+                return String::from("")
+            }
+            
+            auto new_len = e - s
+            auto *start_ptr = (self.c_str() as usize + s as usize) as *char
+            return String::from_with_len(*start_ptr, new_len)
+        }
+    }
+
+    pub fn trim_start(self) -> String {
+        unsafe {
+            auto start# = 0
+            auto *raw = self.c_str()
+            while start < self.len {
+                if !String::is_whitespace(raw[start]) { break }
+                start = start + 1
+            }
+            
+            if start >= self.len { return String::from("") }
+            
+            auto new_len = self.len - start
+            auto *p = (self.c_str() as usize + start as usize) as *char
+            return String::from_with_len(*p, new_len)
+        }
+    }
+
+    pub fn trim_end(self) -> String {
+        unsafe {
+            auto end# = self.len - 1
+            auto *raw = self.c_str()
+            while end >= 0 {
+                if !String::is_whitespace(raw[end]) { break }
+                end = end - 1
+            }
+            
+            auto new_len = end + 1
+            if new_len <= 0 { return String::from("") }
+            
+            return String::from_with_len(*raw, new_len)
+        }
+    }
+
     // delim as i32 to avoid ABI char passing issues
     pub fn split(self, delim: i32) -> SplitIterator {
         return SplitIterator(
@@ -376,15 +440,17 @@ impl String {
             return 0 as char
         }
         unsafe {
-            return self.buf[index]
+            auto *b = self.c_str()
+            return b[index]
         }
     }
 
     pub fn find_char(self, c: char) -> i32 {
         unsafe {
             auto i# = 0
+            auto *b = self.c_str()
             while i < self.len {
-                if self.buf[i] == c {
+                if b[i] == c {
                     return i
                 }
                 i = i + 1
@@ -435,10 +501,11 @@ impl String {
         auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0
+            auto *b# = (res.c_str() as usize) as *char
             while i < res.len {
-                auto c = res.buf[i]
+                auto c = b[i]
                 if c >= 97:char && c <= 122:char { // 'a'-'z'
-                    res.buf[i] = (c as i32 - 32) as char
+                    b[i] = (c as i32 - 32) as char
                 }
                 i = i + 1
             }
@@ -450,10 +517,11 @@ impl String {
         auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0
+            auto *b# = (res.c_str() as usize) as *char
             while i < res.len {
-                auto c = res.buf[i]
+                auto c = b[i]
                 if c >= 65:char && c <= 90:char { // 'A'-'Z'
-                    res.buf[i] = (c as i32 + 32) as char
+                    b[i] = (c as i32 + 32) as char
                 }
                 i = i + 1
             }
@@ -465,14 +533,91 @@ impl String {
         auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0
+            auto *b# = (res.c_str() as usize) as *char
             while i < res.len {
-                if res.buf[i] == old_c {
-                    res.buf[i] = new_c
+                if b[i] == old_c {
+                    b[i] = new_c
                 }
                 i = i + 1
             }
         }
         return res
+    }
+
+    pub fn find_str(self, needle: String) -> i32 {
+        unsafe {
+            if needle.len() == 0 { return 0 }
+            auto *res = libc_strstr(self.c_str(), needle.c_str())
+            if *res == (0 as *char) { return -1 }
+            auto offset = (*res as usize) - (self.c_str() as usize)
+            return offset as i32
+        }
+    }
+
+    pub fn replace_str(self, old_s: String, new_s: String) -> String {
+        if old_s.len() == 0 { return self.clone() }
+        
+        auto res# = String::from("")
+        unsafe {
+             auto i# = 0
+             // Get pointers to buffers
+             auto *s_buf = self.c_str()
+             auto *old_buf = old_s.c_str()
+             
+             while i < self.len {
+                 auto is_match# = true
+                 if i + old_s.len() > self.len {
+                     is_match = false
+                 } else {
+                     auto j# = 0
+                     while j < old_s.len() {
+                         // Direct buffer access for speed inside unsafe
+                         auto idx = i + j
+                         if s_buf[idx] != old_buf[j] {
+                             is_match = false
+                             break
+                         }
+                         j = j + 1
+                     }
+                 }
+                 
+                 if is_match {
+                     res#.push_str(new_s.c_str())
+                     i = i + old_s.len()
+                 } else {
+                     res#.push_char(s_buf[i])
+                     i = i + 1
+                 }
+             }
+        }
+        return res
+    }
+    
+    pub fn repeat(self, n: i32) -> String {
+        if n <= 0 { return String::from("") }
+        auto res# = String::from("")
+        // Pre-reserve could be optimization todo
+        auto i# = 0
+        while i < n {
+            res#.push_str(self.c_str())
+            i = i + 1
+        }
+        return res
+    }
+    
+    pub fn reverse(self) -> String {
+        if self.len <= 1 { return self.clone() }
+        unsafe {
+            auto res# = String::from_with_len(self.c_str(), self.len)
+            auto i# = 0
+            auto *dest# = (res.c_str() as usize) as *char
+            auto *src = self.c_str()
+            while i < self.len {
+                dest[i] = src[self.len - 1 - i]
+                i = i + 1
+            }
+            return res
+        }
     }
 }
 impl String@Hash {
@@ -480,8 +625,9 @@ impl String@Hash {
         unsafe {
             auto hash#: u64 = 5381
             auto i# = 0
+            auto *b = self.c_str()
             while i < self.len {
-                auto c = self.buf[i] as u64
+                auto c = b[i] as u64
                 hash = ((hash bshl 5) + hash) + c
                 i = i + 1
             }
