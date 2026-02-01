@@ -16,7 +16,32 @@ pub shape HashMap<K, V> (
 )
 
 impl<K, V> HashMap<K, V>@encap {
-    fn drop(self#) {}
+    fn drop(self#) {
+        unsafe {
+            // 1. Drop elements
+            auto i#: usize = 0
+            while i < self.cap {
+                 auto *m = self.meta.unsafe_get(i)
+                 if m == (1 as u8) {
+                     // Drop key
+                     auto *ptr_k = self.keys.unsafe_get(i)
+                     {
+                         auto k = ptr_k // Copy/Move out
+                     }
+                     
+                     // Drop val
+                     auto *ptr_v = self.vals.unsafe_get(i)
+                     {
+                         auto v = ptr_v
+                     }
+                 }
+                 i += 1
+            }
+            // 2. Vecs (keys, vals, meta) will drop automatically when HashMap drops.
+            // Since their len=0, they won't re-drop the elements (garbage or already dropped).
+            // They will just free the buffers. Correct.
+        }
+    }
 }
 
 impl<K, V> HashMap<K, V> {
@@ -65,11 +90,9 @@ impl<K, V> HashMap<K, V> {
             }
              
             // For keys/vals, we leave len=0 but cap=16. 
-            // We will access them unsafely.
-            // But we must NOT drop them if they contain garbage?
-            // If T is i32, drop is no-op. If String, drop is substantial.
-            // If we have garbage data in buffer and we drop Vec, it iterates 0..len.
-            // Since len=0, it won't drop garbage. Good.
+            // We will access them unsafely for efficiency.
+            // Since len=0, Vec's own drop won't touch elements (which might be garbage).
+            // This is correct behavior for us.
             
             auto map = HashMap<K, V>(
                 keys = k,
@@ -79,7 +102,7 @@ impl<K, V> HashMap<K, V> {
                 cap = init_cap
             )
             
-            // Steal ownership of buffers
+            // Transfer ownership: forget local vecs so they don't drop the buffer.
             k#.unsafe_forget()
             v#.unsafe_forget()
             m#.unsafe_forget()
@@ -165,5 +188,59 @@ impl<K, V> HashMap<K, V> {
              }
          }
          return Option<V>::None
+    }
+
+
+    pub fn iter(self) -> HashMapIterator<K, V> {
+        unsafe {
+             return HashMapIterator<K, V>(
+                 keys_ptr = self.keys.unsafe_get(0),
+                 vals_ptr = self.vals.unsafe_get(0),
+                 meta_ptr = self.meta.unsafe_get(0),
+                 cap  = self.cap,
+                 pos  = 0
+             )
+        }
+    }
+}
+
+pub shape Entry<K, V> (
+    key: K,
+    val: V
+)
+
+alias MapResult<K, V> = Option<Entry<K, V>>
+
+pub shape HashMapIterator<K, V> (
+    keys_ptr#: *K,
+    vals_ptr#: *V,
+    meta_ptr#: *u8,
+    cap: usize,
+    pos: usize
+)
+
+impl<K, V> HashMapIterator<K, V> {
+    pub fn next(self#) -> MapResult<K, V> {
+        unsafe {
+            // Acquire pointers locally
+            // auto *p: T declares p as *T.
+            // self.*ptr returns Handle (*T).
+            auto *m_buf: u8 = self.*meta_ptr
+            auto *k_buf: K = self.*keys_ptr
+            auto *v_buf: V = self.*vals_ptr
+            
+            while self.pos < self.cap {
+                // Index unhatted -> Value
+                if m_buf[self.pos] == (1 as u8) {
+                    auto k = k_buf[self.pos]
+                    auto v = v_buf[self.pos] // Copy value
+                    
+                    self.pos += 1
+                    return MapResult<K, V>::Some(Entry<K, V>(key=k, val=v))
+                }
+                self.pos += 1
+            }
+            return MapResult<K, V>::None
+        }
     }
 }

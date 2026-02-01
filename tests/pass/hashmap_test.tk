@@ -5,41 +5,44 @@ import core/option::{Option}
 fn main() -> i32 {
     auto map# = HashMap<i32, i32>::new()
     
-    println("Inserting 1->10")
-    map#.insert(1, 10)
+    // Insert
+    map#.insert(1, 100)
+    map#.insert(2, 200)
+    map#.insert(3, 300)
     
-    println("Inserting 2->20")
-    map#.insert(2, 20)
+    // Verify Get
+    if map.get(1).unwrap() != 100 { return 101 }
+    if map.get(2).unwrap() != 200 { return 102 }
+    if map.get(3).unwrap() != 300 { return 103 }
     
-    println("Getting 1...")
-    auto res1 = map.get(1)
+    // Verify Iterator
+    auto iter# = map.iter()
+    auto count# = 0
+    auto sum_k# = 0
+    auto sum_v# = 0
     
-    // Match check
-    match res1 {
-        auto Option<i32>::Some(v) => {
-            if v != 10 {
-                println("Fail: Expected 10, got {}", v)
-                return 1
+    while true {
+        auto res = iter#.next()
+        match res {
+            auto MapResult<i32,i32>::Some(entry) => {
+                count += 1
+                sum_k += entry.key
+                sum_v += entry.val
             }
-        }
-        auto Option<i32>::None => {
-            println("Fail: Key 1 not found")
-            return 1
+            auto MapResult<i32,i32>::None => {
+                break
+            }
         }
     }
     
-    println("Getting 2...")
-    auto res2 = map.get(2)
-    match res2 {
-        auto Option<i32>::Some(v) => {
-             if v != 20 {
-                println("Fail: Expected 20, got {}", v)
-                return 1
-            }
-        }
-        _ => return 1
+    if count != 3 {
+         println("Count mismatch") 
+         return 201 
     }
-
-    println("HashMap Test Passed!")
+    if sum_k != 6 { return 202 } // 1+2+3
+    if sum_v != 600 { return 203 } // 100+200+300
+    
+    // Cleanup Check (Use After Free/Double Free implicitly tested by destructor)
+    println("HashMap Test Passed")
     return 0
 }
