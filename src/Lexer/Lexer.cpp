@@ -475,9 +475,52 @@ Token Lexer::punctuation() {
 
   case '"':
     return string(); // Call string handler
+  case '\'':
+    return charLiteral();
   default:
     return Token{TokenType::EndOfFile, "UNEXPECTED", line, col};
   }
+}
+
+Token Lexer::charLiteral() {
+  std::string text = "";
+  char c = advance();
+  if (c == '\\') {
+    char next = advance();
+    switch (next) {
+    case 'n':
+      text += '\n';
+      break;
+    case 't':
+      text += '\t';
+      break;
+    case 'r':
+      text += '\r';
+      break;
+    case '0':
+      text += '\0';
+      break;
+    case '\\':
+      text += '\\';
+      break;
+    case '\'':
+      text += '\'';
+      break;
+    case '"':
+      text += '"';
+      break;
+    default:
+      text += next;
+      break;
+    }
+  } else {
+    text += c;
+  }
+
+  if (peek() == '\'')
+    advance();
+
+  return Token{TokenType::CharLiteral, text, m_Line, m_Column};
 }
 
 Token Lexer::string() {

@@ -201,6 +201,21 @@ public:
   }
 };
 
+class CharLiteralExpr : public Expr {
+public:
+  char Value;
+  CharLiteralExpr(char val) : Value(val) {}
+  std::string toString() const override {
+    return "Char('" + std::string(1, Value) + "')";
+  }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<CharLiteralExpr>(Value);
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
+};
+
 class DereferenceExpr : public Expr {
 public:
   std::unique_ptr<Expr> Expression;

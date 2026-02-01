@@ -281,6 +281,10 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     return toka::Type::fromString("void");
   }
 
+  if (dynamic_cast<CharLiteralExpr *>(E)) {
+    return toka::Type::fromString("char");
+  }
+
   if (auto *Num = dynamic_cast<NumberExpr *>(E)) {
     if (Num->Value > 9223372036854775807ULL)
       return toka::Type::fromString("u64");

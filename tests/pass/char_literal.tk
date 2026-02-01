@@ -1,0 +1,26 @@
+import std/io::println
+
+fn main() -> i32 {
+    auto c = 'a'
+    auto n = '\n'
+    auto q = '\''
+    auto b = '\\'
+    
+    if c as i32 == 97 {
+        println("a is 97")
+    }
+
+    if n as i32 == 10 {
+        println("newline is 10")
+    }
+
+    if q as i32 == 39 {
+         println("quote is 39")
+    }
+
+    if b as i32 == 92 {
+         println("backslash is 92")
+    }
+
+    return 0
+}

@@ -30,6 +30,7 @@ enum class TokenType {
   Integer,
   Float,
   String,
+  CharLiteral,
 
   // Keywords
   KwLet,

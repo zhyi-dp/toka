@@ -40,6 +40,7 @@ private:
   Token identifier();
   Token number();
   Token string();
+  Token charLiteral();
   Token punctuation();
 
   char peek() const { return *m_Current; }

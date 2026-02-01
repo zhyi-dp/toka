@@ -1504,6 +1504,9 @@ PhysEntity CodeGen::genLiteralExpr(const Expr *expr) {
   if (auto *str = dynamic_cast<const StringExpr *>(expr)) {
     return m_Builder.CreateGlobalStringPtr(str->Value);
   }
+  if (auto *chr = dynamic_cast<const CharLiteralExpr *>(expr)) {
+    return llvm::ConstantInt::get(llvm::Type::getInt8Ty(m_Context), chr->Value);
+  }
   return nullptr;
 }
 
