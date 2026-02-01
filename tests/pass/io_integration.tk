@@ -6,18 +6,19 @@ fn main() -> i32 {
     
     // Scope 1: Write
     {
-        auto res = File::open(path.clone(), String::from("w"))
-        auto f = res.unwrap()
+        auto res# = File::open(path.clone(), String::from("w"))
+        auto f = res#.unwrap()
         f.write(String::from("Hello RAII\n"))
         // f drops here, should close
     }
     
     // Scope 2: Read
     {
-        auto res = File::open(path.clone(), String::from("r"))
-        auto f = res.unwrap()
+        auto res# = File::open(path.clone(), String::from("r"))
+        auto f = res#.unwrap()
         // read_line returns IoResult
-        auto s = f.read_line().unwrap()
+        auto tmp# = f.read_line()
+        auto s = tmp#.unwrap()
         println("Read back: {}", s.c_str())
         if s.eq(String::from("Hello RAII\n")) {
              println("Content matches!")

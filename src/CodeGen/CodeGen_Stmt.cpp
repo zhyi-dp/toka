@@ -108,6 +108,34 @@ llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
         }
       }
     }
+
+    // [Fix] Move Semantics on Return
+    // If we are returning a local variable by value (Identity), we must
+    // SUPPRESS its drop in the current scope because ownership is being
+    // transferred to the caller.
+    if (auto *ve = dynamic_cast<const VariableExpr *>(inner)) {
+      std::string varName = Type::stripMorphology(ve->Name);
+
+      // Find in ScopeStack and disable Drop
+      // We search from inner-most scope out
+      bool found = false;
+      for (int i = (int)m_ScopeStack.size() - 1; i >= 0; --i) {
+        auto &scope = m_ScopeStack[i];
+        for (auto &entry : scope) {
+          if (Type::stripMorphology(entry.Name) == varName) {
+            // Found the variable!
+            if (entry.HasDrop) {
+              // DISABLE DROP -> MANIFEST MOVE
+              entry.HasDrop = false;
+            }
+            found = true;
+            break;
+          }
+        }
+        if (found)
+          break;
+      }
+    }
   }
 
   llvm::Function *f = m_Builder.GetInsertBlock()->getParent();

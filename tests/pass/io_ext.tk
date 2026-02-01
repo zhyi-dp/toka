@@ -15,11 +15,11 @@ fn main() -> i32 {
     }
     
     // 3. Create file and test write/flush/seek/tell
-    auto res = File::open(path, String::from("w+"))
-    auto f = res.unwrap()
+    auto res# = File::open(path, String::from("w+"))
+    auto f# = res#.unwrap()
     
-    f.write(String::from("ABCDEF"))
-    f.flush()
+    f#.write(String::from("ABCDEF"))
+    f#.flush()
     
     auto pos = f.tell()
     if pos != 6:i64 {

@@ -1,0 +1,43 @@
+import std/io::println
+import core/libc::*
+
+shape Wrapper(
+    *buf: i32,
+    sz: i32
+)
+
+impl Wrapper {
+    // Immutable self
+    fn get(self, i: i32) -> i32 {
+        unsafe {
+            return self.buf[i]
+        }
+    }
+    
+    // Mutable self
+    fn get_mut(self#, i: i32) -> i32 {
+        unsafe {
+            return self.buf[i]
+        }
+    }
+    
+    fn drop(self#) {}
+}
+
+fn main() -> i32 {
+    unsafe {
+        auto *ptr# = libc_malloc(16) as *i32
+        ptr[0] = 100
+        ptr[1] = 200
+        
+        auto w = Wrapper(*buf = *ptr, sz=2)
+        if w.get(0) != 100 { return 1 }
+        
+        // get_mut requires mutable object
+        auto w_mut# = Wrapper(*buf = *ptr, sz=2)
+        if w_mut#.get_mut(1) != 200 { return 2 }
+        
+        println("Repro check passed")
+    }
+    return 0
+}

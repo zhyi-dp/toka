@@ -16,23 +16,23 @@ import std/string
 import std/io::{println, File}
 
 fn main() -> i32 {
-    auto path = String::from("test_io.txt")
     auto content = String::from("Hello File IO!\nLine 2")
     
     // Write
-    auto res1 = File::open(path, String::from("w"))
-    auto f1 = res1.unwrap()
+    auto res1# = File::open(String::from("test_io.txt"), String::from("w"))
+    auto f1 = res1#.unwrap()
     f1.write(content)
     f1#.close()
     
     // Read
-    auto res2 = File::open(path, String::from("r"))
-    auto f2 = res2.unwrap()
+    auto res2# = File::open(String::from("test_io.txt"), String::from("r"))
+    auto f2 = res2#.unwrap()
     
     println("Reading lines:")
     
     // Line 1
-    auto l1 = f2.read_line().unwrap()
+    auto tmp1# = f2.read_line()
+    auto l1 = tmp1#.unwrap()
     println("Line 1: {}", l1.c_str())
     if !l1.eq(String::from("Hello File IO!\n")) {
          println("Line 1 mismatch")
@@ -40,7 +40,8 @@ fn main() -> i32 {
     }
 
     // Line 2
-    auto l2 = f2.read_line().unwrap()
+    auto tmp2# = f2.read_line()
+    auto l2 = tmp2#.unwrap()
     println("Line 2: {}", l2.c_str())
      if !l2.eq(String::from("Line 2")) {
          println("Line 2 mismatch")
@@ -50,7 +51,8 @@ fn main() -> i32 {
     }
     
     // EOF Check - read_line OK("")
-    auto l3 = f2.read_line().unwrap()
+    auto tmp3# = f2.read_line()
+    auto l3 = tmp3#.unwrap()
     if l3.len() != 0 {
         println("Expected EOF/Empty, got len {}", l3.len())
         return 1

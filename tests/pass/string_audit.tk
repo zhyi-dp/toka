@@ -1,0 +1,36 @@
+import std/string
+import std/io::println
+
+fn main() -> i32 {
+    auto s = String::from("Hello World")
+    
+    // Test trim (suspected Line 335 error)
+    // "   Hello   ".trim()
+    auto t = String::from("   Hello   ")
+    auto trimmed = t.trim()
+    if !trimmed.eq(String::from("Hello")) {
+        println("Trim failed")
+        return 1
+    }
+    
+    // Test at
+    auto target = 101 as char // 'e'
+    if s.at(1) != target {
+         println("At failed")
+         return 2
+    }
+    
+    // Test to_upper (suspected Line 417 error)
+    auto up = s.to_upper()
+    if !up.eq(String::from("HELLO WORLD")) {
+        println("Upper failed")
+        return 3
+    }
+    
+    // Test hash (suspected Line 462 error)
+    auto h = s.hash()
+    if h == 0 { return 4 }
+    
+    println("String Audit Passed")
+    return 0
+}

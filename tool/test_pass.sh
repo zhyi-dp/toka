@@ -105,7 +105,7 @@ run_worker() {
                 append "${GRAY}    --------------------------------------------------${NC}"
              fi
         else
-             append "$(printf "[${GREEN}PASS${NC}] %-35s" "$file_name")"
+            append "$(printf "[${GREEN}PASS${NC}] %-35s" "$file_name")"
         fi
         rm -f "$ll_file" "$log_file"
         echo -ne "$OUTPUT"

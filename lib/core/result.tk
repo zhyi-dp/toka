@@ -4,7 +4,8 @@ import core/libc::libc_exit
 
 pub shape Result<T, E> (
     Ok(T) = 1 |
-    Err(E) = 0
+    Err(E) = 0 |
+    Moved(i32) = 2
 )
 
 impl<T, E> Result<T, E> {
@@ -19,22 +20,37 @@ impl<T, E> Result<T, E> {
         return self.is_ok() == false
     }
 
-    pub fn unwrap(self) -> T {
+    pub fn unwrap(self#) -> T {
         match self {
-            auto Result<T, E>::Ok(val) => return val
+            auto Result<T, E>::Ok(val) => {
+                unsafe {
+                    // Manual Destructive Move: Set descriminant to 2 (Moved)
+                    // *self returns the address of self (Retro-Hatting)
+                    // ptr is the value (dereferenced view)
+                    auto *ptr# = *self as *i32
+                    ptr = 2 
+                }
+                return val
+            }
             _ => {
                 libc_exit(1)
-                return self.unwrap()
+                return self#.unwrap()
             }
         }
     }
 
-    pub fn unwrap_err(self) -> E {
+    pub fn unwrap_err(self#) -> E {
         match self {
-            auto Result<T, E>::Err(e) => return e
+            auto Result<T, E>::Err(e) => {
+                 unsafe {
+                    auto *ptr# = *self as *i32
+                    ptr = 2
+                 }
+                 return e
+            }
             _ => {
                 libc_exit(1)
-                return self.unwrap_err()
+                return self#.unwrap_err()
             }
         }
     }
