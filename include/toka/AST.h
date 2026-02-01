@@ -572,6 +572,7 @@ public:
   std::unique_ptr<Expr> Object;
   std::string Method;
   std::vector<std::unique_ptr<Expr>> Args;
+  bool IsCompilerInternal = false; // [Auto-Clone] Bypass visibility
 
   MethodCallExpr(std::unique_ptr<Expr> obj, const std::string &method,
                  std::vector<std::unique_ptr<Expr>> args)
@@ -583,6 +584,7 @@ public:
                                               cloneVec(Args));
     n->Loc = Loc;
     n->ResolvedType = ResolvedType;
+    n->IsCompilerInternal = IsCompilerInternal;
     return n;
   }
 };

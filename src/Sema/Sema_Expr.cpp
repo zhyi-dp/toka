@@ -1426,7 +1426,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
                   DiagnosticEngine::SrcMgr->getFullSourceLoc(Met->Loc).FileName;
               std::string tdDeclFile =
                   DiagnosticEngine::SrcMgr->getFullSourceLoc(TD->Loc).FileName;
-              if (metCallFile != tdDeclFile && !sameModule) {
+              if (metCallFile != tdDeclFile && !sameModule &&
+                  !Met->IsCompilerInternal) {
                 error(Met, DiagID::ERR_METHOD_PRIVATE, Met->Method,
                       "trait " + traitName, getModuleName(CurrentModule));
               }
@@ -1489,7 +1490,8 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           std::string fdDeclFile =
               DiagnosticEngine::SrcMgr->getFullSourceLoc(FD->Loc).FileName;
 
-          if (metCallFile != fdDeclFile && !sameModule) {
+          if (metCallFile != fdDeclFile && !sameModule &&
+              !Met->IsCompilerInternal) {
             error(Met, DiagID::ERR_METHOD_PRIVATE, Met->Method, soulType,
                   getModuleName(CurrentModule));
           }
@@ -4646,15 +4648,14 @@ void toka::Sema::tryInjectAutoClone(std::unique_ptr<Expr> &expr) {
     auto cloneCall = std::make_unique<MethodCallExpr>(std::move(expr), "clone",
                                                       std::move(args));
     cloneCall->Loc = loc;
+    cloneCall->IsCompilerInternal =
+        true; // [Auto-Clone] Mark as internal for priv access
     // Arguments are empty for clone()
 
     // Replace expression
     expr = std::move(cloneCall);
 
     // Re-check to resolve types of the new MethodCall
-    bool prevVis = m_DisableVisibilityCheck;
-    m_DisableVisibilityCheck = true; // Allow calling private clone()
     checkExpr(expr.get());
-    m_DisableVisibilityCheck = prevVis;
   }
 }
