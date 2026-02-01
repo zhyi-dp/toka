@@ -42,9 +42,9 @@ fn main() -> i32 {
     println("to_lower: {}", lower.c_str())
     if !lower.eq(String::from("hello toka world!")) { return 7 }
     
-    // Test replace_char
-    auto replaced = s.replace_char(32:char, 45:char) // '-'
-    println("replace_char: {}", replaced.c_str())
+    // Test replace
+    auto replaced = s.replace(32:char, 45:char) // '-'
+    println("replace: {}", replaced.c_str())
     if !replaced.eq(String::from("Hello-Toka-World!")) { return 8 }
 
     println("String extension test passed!")

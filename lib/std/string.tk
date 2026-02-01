@@ -52,7 +52,7 @@ impl String@encap {
 pub shape SplitIterator (
     *source: char,
     source_len: i32,
-    current_pos: i32,
+    current_pos#: i32,
     delimiter: char
 )
 
@@ -63,9 +63,10 @@ impl SplitIterator@encap {
 }
 
 impl SplitIterator {
-    pub fn next(self#) -> String {
+    pub fn next(self) -> String {
         unsafe {
              if self.current_pos >= self.source_len {
+                 self.current_pos = self.source_len + 1
                  return String::from("") 
              }
              
@@ -291,6 +292,14 @@ impl String {
             }
         }
     }
+
+    pub fn unsafe_forget(self#) {
+        unsafe {
+            self.*buf = nullptr
+            self.len = 0
+            self.cap = 0
+        }
+    }
     
     // === Utilities ===
     
@@ -439,7 +448,7 @@ impl String {
         return res
     }
 
-    pub fn replace_char(self, old_c: char, new_c: char) -> String {
+    pub fn replace(self, old_c: char, new_c: char) -> String {
         auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0

@@ -37,7 +37,6 @@ pub shape Vec<T> (
 
 impl<T> Vec<T>@encap {
     fn drop(self#) {
-        println("drop Vec<T>")
         unsafe {
             if self.*buf != nullptr {
                 unsafe free [self.cap]self.*#buf
@@ -243,12 +242,12 @@ impl<T> Vec<T> {
 pub shape VecIterator<T> (
     *!buf : T,
     len : usize,
-    pos : usize
+    pos# : usize
 )
 
 // Concrete Implementation
 impl<T> VecIterator<T> {
-    pub fn next(self#) -> Option<T> {
+    pub fn next(self) -> Option<T> {
         unsafe {
             if self.pos >= self.len {
                 return Option<T>::None

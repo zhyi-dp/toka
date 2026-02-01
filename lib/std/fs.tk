@@ -41,11 +41,11 @@ fn call_rmdir(path: String) -> bool {
 
 pub shape ReadDir (
     handle: Addr,
-    finished: bool
+    finished#: bool
 )
 
 impl ReadDir {
-    pub fn next(self#) -> String {
+    pub fn next(self) -> String {
         unsafe {
             if self.finished {
                 return String::from("")
