@@ -44,7 +44,7 @@ impl File@encap {
     }
     
     // Non-owning clone (Weak Reference) to satisfy strict pointer rules
-    fn clone(self) -> File {
+    pub fn clone(self) -> File {
         return File(
             *handle = self.*handle,
             opened = self.opened,

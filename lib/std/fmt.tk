@@ -1,0 +1,126 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+
+import core/types::{usize, char}
+import std/string::{String}
+import core/libc::{libc_snprintf, libc_malloc, libc_free}
+import core/traits::{@encap}
+
+// Forward declaration for snprintf (if not in libc yet, but we will add it)
+// extern fn libc_snprintf(*str: char, size: usize, *format: char, ...) -> i32
+
+pub shape StringBuilder (
+    buffer: String
+)
+
+impl StringBuilder@encap {
+    fn drop(self#) {
+        // String drops automatically
+    }
+    
+    pub fn clone(self) -> StringBuilder {
+        return StringBuilder(
+            buffer = self.buffer.clone()
+        )
+    }
+}
+
+impl StringBuilder {
+    pub fn new() -> StringBuilder {
+        return StringBuilder(
+            buffer = String::from("")
+        )
+    }
+
+    pub fn with_capacity(cap: i32) -> StringBuilder {
+        // Ideally String would have with_capacity
+        return StringBuilder(
+            buffer = String::from("") 
+        )
+    }
+
+    pub fn append(self#, s: String) {
+        self.buffer#.push_str(s.c_str())
+    }
+
+    pub fn append_str(self#, s: *char) {
+        self.buffer#.push_str(s)
+    }
+    
+    pub fn append_char(self#, c: char) {
+        self.buffer#.push_char(c)
+    }
+
+    pub fn append_i32(self#, v: i32) {
+        // Optimization: direct push instead of alloc string?
+        // For now, reuse String::from_int
+        auto s = String::from_int(v)
+        self.buffer#.push_str(s.c_str())
+    }
+
+    pub fn append_u64(self#, v: u64) {
+        // String doesn't have from_u64 yet
+        unsafe {
+             auto *buf# = libc_malloc(32) as *char
+             libc_snprintf(*buf, 32, "%llu", v)
+             self.buffer#.push_str(*buf)
+             libc_free(*buf as *void)
+        }
+    }
+
+    pub fn append_f64(self#, v: f64) {
+        auto s = String::from_f64(v)
+        self.buffer#.push_str(s.c_str())
+    }
+    
+    pub fn append_bool(self#, v: bool) {
+        if v {
+            self.buffer#.push_str("true")
+        } else {
+            self.buffer#.push_str("false")
+        }
+    }
+
+    pub fn to_string(self) -> String {
+        return self.buffer.clone()
+    }
+    
+    pub fn len(self) -> i32 {
+        return self.buffer.len()
+    }
+    
+    pub fn clear(self#) {
+        self.buffer#.clear()
+    }
+}
+
+// Extensions for primitives to have .to_string()
+impl i32 {
+    pub fn to_string(self) -> String {
+        return String::from_int(self)
+    }
+}
+
+impl i64 {
+    pub fn to_string(self) -> String {
+        return String::from_i64(self)
+    }
+}
+
+impl bool {
+    pub fn to_string(self) -> String {
+        if self { return String::from("true") }
+        return String::from("false")
+    }
+}
+
+impl u64 {
+    pub fn to_string(self) -> String {
+        unsafe {
+             auto *buf# = libc_malloc(32) as *char
+             libc_snprintf(*buf, 32, "%llu", self)
+             auto s = String::from(*buf)
+             libc_free(*buf as *void)
+             return s
+        }
+    }
+}

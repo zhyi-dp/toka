@@ -44,6 +44,10 @@ impl Device@encap {
     fn drop(self#) {
         println("Dropping Device, id={}", self.id)
     }
+    
+    pub fn clone(self) -> Device {
+        return Device(id=0, internal_state=0, secret_key=[0,0,0,0], public_config=0, crate_shared=0)
+    }
 }
 
 // 3. Behavior (God-eye View: same file as shape definition)

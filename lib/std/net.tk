@@ -30,7 +30,7 @@ impl TcpStream@encap {
         }
     }
     
-    fn clone(self) -> TcpStream {
+    pub fn clone(self) -> TcpStream {
         // Move semantics preferred
         return TcpStream(fd = -1, closed = true)
     }
@@ -119,7 +119,7 @@ impl TcpListener@encap {
         }
     }
     
-    fn clone(self) -> TcpListener {
+    pub fn clone(self) -> TcpListener {
         return TcpListener(fd = -1, closed = true)
     }
 }

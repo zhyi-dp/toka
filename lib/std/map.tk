@@ -42,6 +42,12 @@ impl<K, V> HashMap<K, V>@encap {
             // They will just free the buffers. Correct.
         }
     }
+    
+    pub fn clone(self) -> HashMap<K, V> {
+        // TODO: Implement proper clone. Recursion in new() caused crash.
+        // For now, this is a move, not a clone.
+        return self
+    }
 }
 
 impl<K, V> HashMap<K, V> {

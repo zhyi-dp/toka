@@ -14,7 +14,7 @@
 
 pub trait @encap {
     //pub *
-    fn clone(self) -> Self
+    pub fn clone(self) -> Self
     fn drop(self#)
 }
 

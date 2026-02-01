@@ -66,6 +66,7 @@ extern fn libc_strrchr(*s: char, c: i32) -> *char
 extern fn libc_strstr(*haystack: char, *needle: char) -> *char
 extern fn libc_strdup(*s: char) -> *char
 extern fn libc_sprintf(*dest: char, *format: char, ...) -> usize
+extern fn libc_snprintf(*dest: char, size: usize, *format: char, ...) -> i32
 
 // Math
 extern fn libc_sin(x: f64) -> f64

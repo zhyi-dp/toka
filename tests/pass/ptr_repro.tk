@@ -7,7 +7,7 @@ shape Wrapper(
 )
 
 impl Wrapper@encap {
-    fn clone(self#) -> Wrapper {
+    pub fn clone(self) -> Wrapper {
         return Wrapper(*buf = self.*buf, sz = self.sz)
     }
     fn drop(self#) {}

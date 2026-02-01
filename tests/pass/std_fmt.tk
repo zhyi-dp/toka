@@ -1,0 +1,38 @@
+import std/fmt::{StringBuilder}
+import std/io::{println}
+import std/string::{String}
+
+fn main() -> i32 {
+    // 1. StringBuilder
+    auto sb# = StringBuilder::new()
+    sb#.append(String::from("Hello, "))
+    sb#.append_str("World ")
+    sb#.append_i32(2025)
+    sb#.append_char(33:char)
+    
+    auto s = sb.to_string()
+    println("SB: {}", s.c_str())
+    
+    if !s.eq(String::from("Hello, World 2025!")) { return 101 }
+    
+    // 2. Primitive extensions
+    // Note: importing std/fmt applies the extensions? 
+    // Yes, impls are global once compiled.
+    
+    auto i = 123
+    if !i.to_string().eq(String::from("123")) { return 201 }
+    
+    auto b = true
+    if !b.to_string().eq(String::from("true")) { return 202 }
+    
+    // u64
+    auto u: u64 = 123456789012345
+    // "123456789012345"
+    // Use unsafe to check u64 conversion, snprintf used
+    auto su = u.to_string()
+    println("u64: {}", su.c_str())
+    if su.len() != 15 { return 203 }
+    
+    println("std/fmt test passed")
+    return 0
+}

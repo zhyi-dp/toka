@@ -9,7 +9,7 @@ shape Tracker (
 )
 
 impl Tracker@encap {
-    fn clone(self) -> Tracker {
+    pub fn clone(self) -> Tracker {
         println("Cloning Tracker {}", self.id)
         return Tracker(id = self.id + 100, cloned = true)
     }

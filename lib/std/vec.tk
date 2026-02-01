@@ -46,7 +46,7 @@ impl<T> Vec<T>@encap {
         }
     }
 
-    fn clone(self) -> Vec<T> {
+    pub fn clone(self) -> Vec<T> {
         // Deep clone of the vector structure
         // Note: Elements are copied via assignment. 
         // Once compiler supports auto-clone on assign, this becomes deep copy for elements too.
@@ -270,7 +270,7 @@ pub shape VecIterator<T> (
 
 impl<T> VecIterator<T>@encap {
     fn drop(self#) {}
-    fn clone(self) -> VecIterator<T> {
+    pub fn clone(self) -> VecIterator<T> {
         return VecIterator<T>(
              *buf = self.*buf,
              len = self.len,

@@ -1,0 +1,29 @@
+import std/set::HashSet
+import std/io::println
+import std/string::String
+
+fn main() -> i32 {
+    auto set# = HashSet<i32>::new()
+    
+    set#.insert(10)
+    set#.insert(20)
+    set#.insert(10) // Duplicate
+    
+    if set.len() != 2 {
+        println("Error: Length should be 2")
+        return 1
+    }
+    
+    if !set.contains(10) {
+        println("Error: Should contain 10")
+        return 2
+    }
+    
+    if set.contains(30) {
+        println("Error: Should not contain 30")
+        return 3
+    }
+    
+    println("HashSet<i32> test passed")
+    return 0
+}
