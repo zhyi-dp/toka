@@ -1,0 +1,53 @@
+// Minimal reproduction
+import core/libc
+import tokac/llvm/bindings as llvm
+import core/types::{Addr}
+
+// Local declaration to avoid variadic printf issues
+extern fn puts(*s: char) -> i32
+
+fn main() -> i32 {
+    unsafe {
+        puts("Binding LLVM..." as *char)
+
+        // 1. Create Context
+        auto ctx = llvm::LLVMContextCreate()
+        
+        // 2. Create Module
+        auto mod = llvm::LLVMModuleCreateWithNameInContext("bootstrap_module" as *char, ctx)
+        
+        // 3. Create Builder
+        auto builder = llvm::LLVMCreateBuilderInContext(ctx)
+        
+        // 4. Define main function type: i32 ()
+        auto i32_t = llvm::LLVMInt32TypeInContext(ctx)
+        auto fn_t = llvm::LLVMFunctionType(i32_t, (0 as usize) as *void as *LLVMTypeRef, 0, 0)
+        
+        // 5. Add function to module
+        auto main_fn = llvm::LLVMAddFunction(mod, "main" as *char, fn_t)
+        
+        // 6. Basic Block
+        auto bb = llvm::LLVMAppendBasicBlockInContext(ctx, main_fn, "entry" as *char)
+        llvm::LLVMPositionBuilderAtEnd(builder, bb)
+        
+        // 7. Ret 0
+        auto ret_val = llvm::LLVMConstInt(i32_t, 0, 0)
+        llvm::LLVMBuildRet(builder, ret_val)
+        
+        puts("Function defined. Printing module to file..." as *char)
+        // Pass 0 (NULL) for ErrorMessage to avoid pointer complexity
+        if llvm::LLVMPrintModuleToFile(mod, "bootstrap_output.ll" as *char, 0) != 0 {
+            puts("Error printing module to file" as *char)
+            return 1
+        }
+        
+        puts("Success! Output written to bootstrap_output.ll" as *char)
+
+        // Cleanup
+        llvm::LLVMDisposeBuilder(builder)
+        llvm::LLVMDisposeModule(mod)
+        llvm::LLVMContextDispose(ctx)
+        
+        return 0
+    }
+}

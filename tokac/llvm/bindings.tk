@@ -1,0 +1,41 @@
+// LLVM C API Bindings
+import core/types::{Addr}
+
+// Opaque Pointers as Addr (u64)
+pub alias LLVMContextRef = Addr
+pub alias LLVMModuleRef = Addr
+pub alias LLVMBuilderRef = Addr
+pub alias LLVMTypeRef = Addr
+pub alias LLVMValueRef = Addr
+pub alias LLVMBasicBlockRef = Addr
+
+// Core
+extern fn LLVMContextCreate() -> LLVMContextRef
+extern fn LLVMContextDispose(C: LLVMContextRef) -> void
+extern fn LLVMModuleCreateWithNameInContext(*ModuleID: char, C: LLVMContextRef) -> LLVMModuleRef
+extern fn LLVMDisposeModule(M: LLVMModuleRef) -> void
+extern fn LLVMDumpModule(M: LLVMModuleRef) -> void
+extern fn LLVMPrintModuleToFile(M: LLVMModuleRef, *Filename: char, ErrorMessage: usize) -> i32
+
+// Types
+extern fn LLVMInt32TypeInContext(C: LLVMContextRef) -> LLVMTypeRef
+extern fn LLVMFunctionType(ReturnType: LLVMTypeRef, *ParamTypes: LLVMTypeRef, ParamCount: u32, IsVarArg: i32) -> LLVMTypeRef
+extern fn LLVMVoidTypeInContext(C: LLVMContextRef) -> LLVMTypeRef
+
+// Values
+extern fn LLVMConstInt(IntTy: LLVMTypeRef, N: u64, SignExtend: i32) -> LLVMValueRef
+extern fn LLVMAddFunction(M: LLVMModuleRef, *Name: char, FunctionTy: LLVMTypeRef) -> LLVMValueRef
+extern fn LLVMGetNamedFunction(M: LLVMModuleRef, *Name: char) -> LLVMValueRef
+
+// Basic Blocks
+extern fn LLVMAppendBasicBlockInContext(C: LLVMContextRef, Func: LLVMValueRef, *Name: char) -> LLVMBasicBlockRef
+
+// Instruction Builder
+extern fn LLVMCreateBuilderInContext(C: LLVMContextRef) -> LLVMBuilderRef
+extern fn LLVMPositionBuilderAtEnd(Builder: LLVMBuilderRef, Block: LLVMBasicBlockRef) -> void
+extern fn LLVMDisposeBuilder(Builder: LLVMBuilderRef) -> void
+
+// Instructions
+extern fn LLVMBuildRetVoid(Builder: LLVMBuilderRef) -> LLVMValueRef
+extern fn LLVMBuildRet(Builder: LLVMBuilderRef, V: LLVMValueRef) -> LLVMValueRef
+extern fn LLVMBuildCall(Builder: LLVMBuilderRef, Func: LLVMValueRef, *Args: LLVMValueRef, NumArgs: u32, *Name: char) -> LLVMValueRef
