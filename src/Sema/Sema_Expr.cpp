@@ -1642,6 +1642,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
 
     // Normal Array Indexing
     auto arrTypeObj = checkExpr(Arr->Array.get());
+
     if (Arr->Indices.size() != 1) {
       error(Arr, DiagID::ERR_INVALID_OP, "indexing", "array",
             "multiple indices");
@@ -3218,11 +3219,30 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
   if (baseType->isArray()) {
     resultType = baseType->getArrayElementType();
   } else if (baseType->isPointer()) {
-    // Pointer indexing P[i] -> Pointee Type
+    // Pointer indexing dispatch:
+    // 1. Hatted Base (*p[i] or self.*buf[i]) -> Handle Arithmetic (Stride) ->
+    // Returns Pointer
+    // 2. Unhatted Base (p[i] or self.buf[i]) -> Soul Access (Deref) -> Returns
+    // Value
+
     if (!m_InUnsafeContext) {
       error(Idx, "raw pointer indexing requires unsafe context");
     }
-    resultType = baseType->getPointeeType();
+
+    MorphKind morph = getSyntacticMorphology(Idx->Array.get());
+    bool isHatted = (morph == MorphKind::Raw || morph == MorphKind::Unique ||
+                     morph == MorphKind::Shared);
+
+    if (isHatted) {
+      // [Fix] Handle Indexing (Pointer Arithmetic)
+      if (Idx->Indices.size() != 1) {
+        error(Idx, "pointer handle indexing supports only one index");
+      }
+      resultType = baseType;
+    } else {
+      // [Default] Soul Indexing (Value Access)
+      resultType = baseType->getPointeeType();
+    }
   } else {
     error(Idx, "type '" + baseType->toString() + "' is not indexable");
     return toka::Type::fromString("unknown");

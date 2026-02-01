@@ -1,0 +1,28 @@
+import std/io::println
+import std/vec::{Vec}
+import core/types::{usize}
+
+fn main() -> i32 {
+    unsafe {
+        auto v# = Vec<i32>::new()
+        v#.push(10)
+        v#.push(20)
+        
+        auto *ptr0: i32 = v.unsafe_get(0)
+        auto *ptr1: i32 = v.unsafe_get(1)
+        
+        auto addr0 = *ptr0 as usize
+        auto addr1 = *ptr1 as usize
+        
+        println("ptr0: {}", addr0)
+        println("ptr1: {}", addr1)
+        println("diff: {}", addr1 - addr0)
+        
+        auto diff = addr1 - addr0
+        if diff != 4 {
+             println("Fail: Stride is {}, expected 4", diff)
+             return 1
+        }
+    }
+    return 0
+}

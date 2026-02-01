@@ -75,7 +75,7 @@ impl SplitIterator {
              
              while i < self.source_len {
                  // dereference
-                 if self.*source[i] == self.delimiter {
+                 if self.source[i] == self.delimiter {
                      found = true
                      break
                  }
@@ -354,7 +354,7 @@ impl String {
             return 0 as char
         }
         unsafe {
-            return self.*buf[index]
+            return self.buf[index]
         }
     }
 
@@ -362,7 +362,7 @@ impl String {
         unsafe {
             auto i# = 0
             while i < self.len {
-                if self.*buf[i] == c {
+                if self.buf[i] == c {
                     return i
                 }
                 i = i + 1
@@ -414,7 +414,7 @@ impl String {
         unsafe {
             auto i# = 0
             while i < res.len {
-                auto c = res.*buf[i]
+                auto c = res.buf[i]
                 if c >= 97:char && c <= 122:char { // 'a'-'z'
                     res.buf[i] = (c as i32 - 32) as char
                 }
@@ -429,7 +429,7 @@ impl String {
         unsafe {
             auto i# = 0
             while i < res.len {
-                auto c = res.*buf[i]
+                auto c = res.buf[i]
                 if c >= 65:char && c <= 90:char { // 'A'-'Z'
                     res.buf[i] = (c as i32 + 32) as char
                 }
@@ -444,7 +444,7 @@ impl String {
         unsafe {
             auto i# = 0
             while i < res.len {
-                if res.*buf[i] == old_c {
+                if res.buf[i] == old_c {
                     res.buf[i] = new_c
                 }
                 i = i + 1
@@ -459,7 +459,7 @@ impl String@Hash {
             auto hash#: u64 = 5381
             auto i# = 0
             while i < self.len {
-                auto c = self.*buf[i] as u64
+                auto c = self.buf[i] as u64
                 hash = ((hash bshl 5) + hash) + c
                 i = i + 1
             }

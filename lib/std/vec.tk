@@ -30,7 +30,7 @@ impl Counter {
 // Module-level factory functions removed. using static methods.
 
 pub shape Vec<T> (
-    *!buf#: T,
+    *?buf#: T,
     len: usize,
     cap: usize
 )
@@ -126,9 +126,30 @@ impl<T> Vec<T> {
         }
     }
 
+    pub fn unsafe_get(self, index: usize) -> *T {
+        unsafe {
+            if self.*buf != nullptr {
+                // 这一步显式转换： *?T -> *T
+                // 既然已经判空，这就是安全的 unsafe 操作
+                auto *ptr = self.*buf as *T
+                return *ptr[index]
+            }
+            return nullptr
+        }
+    }
+
+    pub fn unsafe_forget(self#) {
+        unsafe {
+            // Nullify buffer to prevent drop from freeing it
+            // This is used when ownership is manually transferred
+            self.*buf = nullptr
+            self.cap = 0
+            self.len = 0
+        }
+    }
+
     // Helper: Grow buffer
     fn grow(self#) {
-        println("grow, old cap: {}", self.cap)
         unsafe {
             // Determine new capacity
             auto new_cap = self.cap * 2

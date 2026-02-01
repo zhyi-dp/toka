@@ -1,0 +1,169 @@
+import core/types::{usize}
+import core/traits::{@Hash, @PartialEq, @encap}
+import core/option::{Option}
+import std/vec::{Vec}
+import core/primitives
+
+
+// HashMap using SOA (Structure of Arrays)
+// keys[i], vals[i], meta[i] correspond to the same slot.
+pub shape HashMap<K, V> (
+    keys#: Vec<K>,
+    vals#: Vec<V>,
+    meta#: Vec<u8>, // 0=Empty, 1=Occupied
+    len: usize,
+    cap: usize
+)
+
+impl<K, V> HashMap<K, V>@encap {
+    fn drop(self#) {}
+}
+
+impl<K, V> HashMap<K, V> {
+    pub fn new() -> HashMap<K, V> {
+        unsafe {
+            auto init_cap = 16
+            auto k# = Vec<K>::with_capacity(init_cap)
+            auto v# = Vec<V>::with_capacity(init_cap)
+            auto m# = Vec<u8>::with_capacity(init_cap) // 0 initialized by alloc usually? No, alloc is garbage.
+            
+            // We must zero-init meta.
+            auto i# = 0
+            while i < init_cap {
+                m#.push(0) // Push 0 (Empty)
+                // We also push garbage/default to k/v to grow length?
+                // Vec push increments len. 
+                // We need valid slots up to cap.
+                // But we can't formulate default K/V.
+                // We should rely on 'alloc' and manual len setting?
+                // Or just use 'push' with dummy if possible?
+                // We can't guarantee K/V have default constructor.
+                
+                // Workaround: We manually set len of k/v to init_cap 
+                // effectively treating them as "uninitialized but allocated".
+                // We effectively just need the BUFFER space.
+                // Vec::with_capacity allocs buffer. len is 0.
+                // We don't touch K/V Vecs until insert.
+                
+                // WAIT. If we access vec[idx], len must be > idx?
+                // Or we use unsafe_get (raw pointer) which ignores len.
+                // YES. unsafe_get works on buffer.
+                
+                // So for meta, we validly push 0s so we can read them safely?
+                // Or also use unsafe access? unsafe access is better for symmetry.
+                // If we use unsafe access, we must ensure buffer is zeroed.
+                // alloc does not zero.
+                
+                i += 1
+            }
+            
+            // Manually fill meta with 0
+            i = 0
+            while i < init_cap {
+                 m#.push(0) // This ensures meta has valid 0s up to init_cap
+                 i += 1
+            }
+             
+            // For keys/vals, we leave len=0 but cap=16. 
+            // We will access them unsafely.
+            // But we must NOT drop them if they contain garbage?
+            // If T is i32, drop is no-op. If String, drop is substantial.
+            // If we have garbage data in buffer and we drop Vec, it iterates 0..len.
+            // Since len=0, it won't drop garbage. Good.
+            
+            auto map = HashMap<K, V>(
+                keys = k,
+                vals = v,
+                meta = m,
+                len = 0,
+                cap = init_cap
+            )
+            
+            // Steal ownership of buffers
+            k#.unsafe_forget()
+            v#.unsafe_forget()
+            m#.unsafe_forget()
+            
+            return map
+        }
+    }
+
+    pub fn insert(self#, key: K, val: V) {
+        auto myself# = self
+        auto capacity = myself.cap
+        auto idx# = (key.hash() as usize) % capacity
+        auto start_idx = idx
+        auto should_inc_len# = false
+        
+        while true {
+            unsafe {
+                // Check meta
+                // auto *m_ptr# declares *m_ptr as the Handle (Ptr to u8).
+                // m_ptr is the Soul (u8).
+                auto *m_ptr#: u8 = myself.meta.unsafe_get(idx)
+                
+                if m_ptr == (0 as u8) {
+                    // Empty slot found
+                    m_ptr = (1 as u8) // Mark occupied (Write to Soul)
+                    
+                    // Write Key
+                    auto *k_ptr#: K = myself.keys.unsafe_get(idx)
+                    k_ptr = key // Write key to Soul
+                    
+                    // Write Val
+                    auto *v_ptr#: V = myself.vals.unsafe_get(idx)
+                    v_ptr = val // Write val to Soul
+                    
+                    should_inc_len = true
+                    break
+                }
+                
+                // Occupied. Check Key match.
+                auto *k_ptr#: K = myself.keys.unsafe_get(idx)
+                if k_ptr.eq(key) {
+                    // Overwrite Val
+                    auto *v_ptr#: V = myself.vals.unsafe_get(idx)
+                    v_ptr = val
+                    break
+                }
+            }
+            
+            idx = (idx + 1) % capacity
+            if idx == start_idx { break }
+        }
+        
+        if should_inc_len {
+            myself.len = myself.len + (1 as usize)
+        }
+    }
+    
+    pub fn get(self, key: K) -> Option<V> {
+         auto myself = self
+         auto capacity = myself.cap
+         auto idx# = (key.hash() as usize) % capacity
+         auto start_idx = idx
+         
+         while true {
+             unsafe {
+                 auto *m_ptr#: u8 = myself.meta.unsafe_get(idx)
+                 
+                 if m_ptr == (0 as u8) {
+                     return Option<V>::None
+                 }
+                 
+                 // Occupied, check key
+                 auto *k_ptr#: K = myself.keys.unsafe_get(idx)
+                 if k_ptr.eq(key) {
+                     auto *v_ptr#: V = myself.vals.unsafe_get(idx)
+                     return Option<V>::Some(v_ptr)
+                 }
+             }
+             
+             idx = (idx + 1) % capacity
+             if idx == start_idx {
+                 return Option<V>::None
+             }
+         }
+         return Option<V>::None
+    }
+}

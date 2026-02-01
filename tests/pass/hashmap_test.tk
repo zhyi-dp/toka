@@ -1,0 +1,45 @@
+import std/io::println
+import std/map::{HashMap}
+import core/option::{Option}
+
+fn main() -> i32 {
+    auto map# = HashMap<i32, i32>::new()
+    
+    println("Inserting 1->10")
+    map#.insert(1, 10)
+    
+    println("Inserting 2->20")
+    map#.insert(2, 20)
+    
+    println("Getting 1...")
+    auto res1 = map.get(1)
+    
+    // Match check
+    match res1 {
+        auto Option<i32>::Some(v) => {
+            if v != 10 {
+                println("Fail: Expected 10, got {}", v)
+                return 1
+            }
+        }
+        auto Option<i32>::None => {
+            println("Fail: Key 1 not found")
+            return 1
+        }
+    }
+    
+    println("Getting 2...")
+    auto res2 = map.get(2)
+    match res2 {
+        auto Option<i32>::Some(v) => {
+             if v != 20 {
+                println("Fail: Expected 20, got {}", v)
+                return 1
+            }
+        }
+        _ => return 1
+    }
+
+    println("HashMap Test Passed!")
+    return 0
+}

@@ -1,0 +1,53 @@
+// Copyright (c) 2025 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import std/memory
+
+shape Hero (
+    *buf#: i32
+)
+
+impl Hero@encap {
+    pub *
+    fn drop(self#) {
+        
+    }
+}
+
+}
+
+fn main() -> i32 {
+
+    unsafe {
+        auto *p# = alloc [10]i32(42)
+        p[5] = 5
+        if p[5] != 5 {
+            return -1
+        }
+        auto *q# = *p[6]
+        q = 6
+        if p[6] != 6 {
+            return -1
+        }
+    }
+    unsafe {
+        auto *p# = alloc [10]i32(42)
+        auto h# = Hero(*buf# = *p)
+        h.buf[0] = 10
+        if p[0] != 10 {
+            return -1
+        }
+    }
+    return 0
+}

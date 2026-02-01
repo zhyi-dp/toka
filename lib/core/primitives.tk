@@ -1,0 +1,40 @@
+import core/traits::{@Hash, @PartialEq}
+
+// i32 Implementation
+impl i32@Hash {
+    pub fn hash(self) -> u64 {
+        return self as u64
+    }
+}
+
+impl i32@PartialEq {
+    pub fn eq(self, other: i32) -> bool {
+        return self == other
+    }
+}
+
+// u64 Implementation
+impl u64@Hash {
+    pub fn hash(self) -> u64 {
+        return self
+    }
+}
+
+impl u64@PartialEq {
+    pub fn eq(self, other: u64) -> bool {
+        return self == other
+    }
+}
+
+// char Implementation
+impl char@Hash {
+    pub fn hash(self) -> u64 {
+        return self as u64
+    }
+}
+
+impl char@PartialEq {
+    pub fn eq(self, other: char) -> bool {
+        return self == other
+    }
+}
