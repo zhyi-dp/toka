@@ -1060,6 +1060,7 @@ struct ShapeMember {
   bool IsPointerNullable = false; // "?" handle attribute
   bool IsRebindBlocked = false;   // "$" pointer attribute
   bool IsValueBlocked = false;    // "$" identifier attribute
+  bool IsExplicitBound = false;   // "`" explicit lifetime binding attribute
 
   // For Bare Union (as ...)
   std::vector<ShapeMember> SubMembers;
@@ -1087,6 +1088,7 @@ struct ShapeMember {
     IsPointerNullable = other.IsPointerNullable;
     IsRebindBlocked = other.IsRebindBlocked;
     IsValueBlocked = other.IsValueBlocked;
+    IsExplicitBound = other.IsExplicitBound;
     SubMembers = other.SubMembers;
     SubKind = other.SubKind;
     ResolvedType = other.ResolvedType;
@@ -1112,6 +1114,7 @@ struct ShapeMember {
     IsPointerNullable = other.IsPointerNullable;
     IsRebindBlocked = other.IsRebindBlocked;
     IsValueBlocked = other.IsValueBlocked;
+    IsExplicitBound = other.IsExplicitBound;
     SubMembers = other.SubMembers;
     SubKind = other.SubKind;
     ResolvedType = other.ResolvedType;

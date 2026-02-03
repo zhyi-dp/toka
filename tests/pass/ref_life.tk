@@ -1,0 +1,25 @@
+fn biger(a:i32, b:i32) -> &i32 <- &a|&b {
+    if a > b {
+        return &a
+    } else {
+        return &b
+    }
+}
+
+fn swap_pos(a:i32, b:i32) -> (&i32<-&b, &i32<-&a) {
+    return (&b, &a)
+}
+
+shape RefLife(
+    `&same_life: i32,
+    &other_life: i32
+)
+
+fn main() -> i32 {
+    auto a = -1
+    auto b = 0
+    auto &c = biger(a, b)
+    auto (&z, &y) = swap_pos(a, b)
+    auto d = RefLife(&same_life=&c, &other_life=&z)
+    return c
+}

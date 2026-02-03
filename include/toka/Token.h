@@ -157,11 +157,12 @@ enum class TokenType {
   GreaterEqual,
   PlusPlus,
   MinusMinus,
-  Tilde,         // ~
-  At,            // @
-  And,           // &&
-  Or,            // ||
-  DoubleQuestion // ??
+  Tilde,          // ~
+  At,             // @
+  And,            // &&
+  Or,             // ||
+  DoubleQuestion, // ??
+  Backtick        // `
 };
 
 struct Token {

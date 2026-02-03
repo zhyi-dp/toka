@@ -477,6 +477,8 @@ Token Lexer::punctuation() {
     return string(); // Call string handler
   case '\'':
     return charLiteral();
+  case '`':
+    return Token{TokenType::Backtick, "`", line, col};
   default:
     return Token{TokenType::EndOfFile, "UNEXPECTED", line, col};
   }

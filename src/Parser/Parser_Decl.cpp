@@ -236,7 +236,12 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
       int idx = 0;
       while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
         ShapeMember m;
+        bool isExplicitBound = false;
         if (kind == ShapeKind::Struct) {
+          if (match(TokenType::Backtick)) {
+            isExplicitBound = true;
+          }
+
           std::string prefixType = "";
           if (match(TokenType::Star)) {
             m.HasPointer = true;
@@ -298,6 +303,7 @@ std::unique_ptr<ShapeDecl> Parser::parseShape(bool isPub) {
           m.Type = "";
         }
         m.Type += parseTypeString();
+        m.IsExplicitBound = isExplicitBound;
         if (match(TokenType::Equal)) {
           m.DefaultValue = parseExpr();
         }
@@ -473,6 +479,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
   std::vector<std::string> lifeDeps;
   if (match(TokenType::Dependency)) {
     do {
+      match(TokenType::Ampersand); // Optional & prefix
       if (check(TokenType::Identifier) || check(TokenType::KwSelf) ||
           check(TokenType::KwUpperSelf)) {
         lifeDeps.push_back(advance().Text);
