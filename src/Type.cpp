@@ -521,6 +521,29 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
   if (s.empty())
     return std::make_shared<VoidType>();
 
+  // [NEW] Strip Lifetime Dependency "<-" (Metadata Only)
+  int balance = 0;
+  for (size_t i = 0; i < s.size(); ++i) {
+    // Look ahead for "<-" at top level
+    if (balance == 0 && i + 1 < s.size() && s[i] == '<' && s[i + 1] == '-') {
+      s = trim(s.substr(0, i)); // Strip it off
+      break;
+    }
+
+    if (s[i] == '<')
+      balance++;
+    else if (s[i] == '>')
+      balance--;
+    else if (s[i] == '(')
+      balance++;
+    else if (s[i] == ')')
+      balance--;
+    else if (s[i] == '[')
+      balance++;
+    else if (s[i] == ']')
+      balance--;
+  }
+
   // Parse Suffixes (applies to the OUTERMOST type being constructed)
   bool isWritable = false;
   bool isNullable = false;
@@ -646,6 +669,12 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     int balance = 0;
     size_t start = 0;
     for (size_t i = 0; i < argsStr.size(); ++i) {
+      if (i + 1 < argsStr.size() && argsStr[i] == '<' &&
+          argsStr[i + 1] == '-') {
+        // Skip dependencies in type
+        i++;
+        continue;
+      }
       if (argsStr[i] == '<' || argsStr[i] == '(' || argsStr[i] == '[')
         balance++;
       else if (argsStr[i] == '>' || argsStr[i] == ')' || argsStr[i] == ']')
@@ -687,6 +716,12 @@ std::shared_ptr<Type> Type::fromString(const std::string &rawType) {
     int balance = 0;
     size_t start = 0;
     for (size_t i = 0; i < argsStr.size(); ++i) {
+      if (i + 1 < argsStr.size() && argsStr[i] == '<' &&
+          argsStr[i + 1] == '-') {
+        // Skip dependencies in type
+        i++;
+        continue;
+      }
       if (argsStr[i] == '<')
         balance++;
       else if (argsStr[i] == '>')

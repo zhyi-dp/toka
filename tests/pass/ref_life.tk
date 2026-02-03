@@ -19,7 +19,7 @@ fn main() -> i32 {
     auto a = -1
     auto b = 0
     auto &c = biger(a, b)
-    auto (&z, &y) = swap_pos(a, b)
-    auto d = RefLife(&same_life=&c, &other_life=&z)
+    auto res = swap_pos(a, b)
+    auto d = RefLife(&same_life=&c, &other_life=res.0)
     return c
 }
