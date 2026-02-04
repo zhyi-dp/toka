@@ -475,14 +475,52 @@ std::unique_ptr<FunctionDecl> Parser::parseFunctionDecl(bool isPub) {
   if (match(TokenType::Arrow)) {
     retType = parseTypeString();
   }
-
   std::vector<std::string> lifeDeps;
+
+  // [NEW] Scan implicitly parsing dependencies from return type string (e.g.
+  // Tuple fields) Pattern: "<-" [whitespace] [&] Identifier
+  size_t pos = 0;
+  while ((pos = retType.find("<-", pos)) != std::string::npos) {
+    pos += 2; // skip "<-"
+    // skip whitespace
+    while (pos < retType.size() && isspace(retType[pos]))
+      pos++;
+    // skip optional reference sigil '&'
+    if (pos < retType.size() && retType[pos] == '&')
+      pos++;
+
+    // Extract identifier
+    size_t start = pos;
+    if (start < retType.size() &&
+        (isalpha(retType[start]) || retType[start] == '_')) {
+      while (pos < retType.size() &&
+             (isalnum(retType[pos]) || retType[pos] == '_')) {
+        pos++;
+      }
+      std::string dep = retType.substr(start, pos - start);
+      if (!dep.empty()) {
+        bool exists = false;
+        for (const auto &d : lifeDeps)
+          if (d == dep)
+            exists = true;
+        if (!exists)
+          lifeDeps.push_back(dep);
+      }
+    }
+  }
+
   if (match(TokenType::Dependency)) {
     do {
       match(TokenType::Ampersand); // Optional & prefix
       if (check(TokenType::Identifier) || check(TokenType::KwSelf) ||
           check(TokenType::KwUpperSelf)) {
-        lifeDeps.push_back(advance().Text);
+        std::string dep = advance().Text;
+        bool exists = false;
+        for (const auto &d : lifeDeps)
+          if (d == dep)
+            exists = true;
+        if (!exists)
+          lifeDeps.push_back(dep);
       } else {
         error(peek(), "Expected dependency identifier");
         return nullptr;

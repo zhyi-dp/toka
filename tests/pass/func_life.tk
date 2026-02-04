@@ -1,0 +1,29 @@
+
+fn simple_life(a: i32) -> &i32 <- &a {
+    return &a
+}
+
+fn tuple_life(a: i32, b: i32) -> (&i32 <- &a, &i32 <- &b) {
+    return (&a, &b)
+}
+
+fn main() -> i32 {
+    auto x = 10
+    auto &y = simple_life(x)
+    if (y != 10) return 1
+
+    auto z = 20
+    auto t = tuple_life(x, z)
+    // t is (&i32, &i32). t.0 is &i32.
+    // Auto-deref should work for tuple members if they are refs?
+    // Let's test explicit deref if needed, or implicit.
+    // Based on previous simple_life, 'y' (ref) auto-derefs.
+    // 't.0' is an access expression returning a reference.
+    // So 't.0' should evaluate to i32 value.
+    auto &v1 = t.0
+    auto &v2 = t.1
+    if (v1 != 10) return 2
+    if (v2 != 20) return 3
+    
+    return 0
+}

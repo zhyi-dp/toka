@@ -1,0 +1,23 @@
+
+shape Bound(
+    `&ref: i32
+)
+
+fn main() -> i32 {
+    auto b: Bound
+    if true {
+        auto local = 10
+        // b should borrow 'local'. 
+        // local dies at '}', so b cannot outlive it.
+        // Since b is declared in outer scope, this assignment is illegal if b's lifetime escapes.
+        // Wait, b is declared outer. Mutating b to point to local?
+        // b is a value. b = Bound(...) is assignment.
+        // The value Bound(...) borrows local.
+        // Assigning to b (outer) means b now contains a reference to local.
+        // So b's validity is constrained by local.
+        // Toka's borrow checker is scope-based. b is in outer scope.
+        // assigning short-lived value to long-lived variable is Error.
+        b = Bound(&ref=&local) 
+    }
+    return *b.ref
+}

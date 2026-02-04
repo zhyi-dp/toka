@@ -16,7 +16,9 @@
 #include "toka/Sema.h"
 #include "toka/Type.h"
 #include <algorithm>
+#include <functional>
 #include <iostream>
+#include <set>
 
 namespace toka {
 
@@ -183,45 +185,87 @@ void Sema::checkStmt(Stmt *S) {
         }
       }
 
-      // [NEW] Lifetime Union Exemption & Escape Analysis
-      if (auto *AddrOf = dynamic_cast<UnaryExpr *>(Ret->ReturnValue.get())) {
-        if (AddrOf->Op == TokenType::Ampersand) {
-          if (auto *Var = dynamic_cast<VariableExpr *>(AddrOf->RHS.get())) {
+      // [NEW] Unified Lifetime Check logic
+      std::set<std::string> returnedDeps;
+
+      // Helper to collect dependencies from the returned expression
+      std::function<void(Expr *)> collectDeps = [&](Expr *E) {
+        if (!E)
+          return;
+
+        // Case 1: Taking address `&var`
+        if (auto *Addr = dynamic_cast<UnaryExpr *>(E)) {
+          if (Addr->Op == TokenType::Ampersand) {
+            if (auto *Var = dynamic_cast<VariableExpr *>(Addr->RHS.get())) {
+              returnedDeps.insert(Var->Name);
+            }
+          } else if (auto *Paren = dynamic_cast<TupleExpr *>(E)) {
+            // Parentheses around expression
+            for (auto &sub : Paren->Elements)
+              collectDeps(sub.get());
+          }
+        }
+        // Case 2: Returning existing reference variable `x`
+        else if (auto *Var = dynamic_cast<VariableExpr *>(E)) {
+          SymbolInfo info;
+          if (CurrentScope->lookup(Var->Name, info)) {
+            if (info.IsReference()) {
+              // It depends on whatever 'info' borrowed from
+              if (!info.BorrowedFrom.empty()) {
+                returnedDeps.insert(info.BorrowedFrom);
+              }
+              // Also merge its transitive dependencies if we track them
+              returnedDeps.insert(info.LifeDependencySet.begin(),
+                                  info.LifeDependencySet.end());
+            }
+          }
+        }
+        // Case 3: Tuple Return `(&a, &b)`
+        else if (auto *Tup = dynamic_cast<TupleExpr *>(E)) {
+          for (auto &Elem : Tup->Elements) {
+            collectDeps(Elem.get());
+          }
+        }
+      };
+
+      collectDeps(Ret->ReturnValue.get());
+
+      // Validate dependencies against declared LifeDependencies
+      if (CurrentFunction) {
+        for (const auto &dep : returnedDeps) {
+          // Is it in the allowed list?
+          bool allowed = false;
+          for (const auto &allowedDep : CurrentFunction->LifeDependencies) {
+            if (dep == allowedDep) {
+              allowed = true;
+              break;
+            }
+          }
+
+          if (!allowed) {
+            // Check if it's a parameter
             bool isParam = false;
-            if (CurrentFunction) {
-              for (const auto &Arg : CurrentFunction->Args) {
-                if (Arg.Name == Var->Name) {
-                  isParam = true;
-                  break;
-                }
+            for (const auto &Arg : CurrentFunction->Args) {
+              if (Arg.Name == dep) {
+                isParam = true;
+                break;
               }
             }
 
             if (isParam) {
-              // It's a parameter. Is it in LifeDependencies?
-              bool isDependent = false;
-              if (CurrentFunction) {
-                for (const auto &dep : CurrentFunction->LifeDependencies) {
-                  if (dep == Var->Name) {
-                    isDependent = true;
-                    break;
-                  }
-                }
-              }
-
-              if (!isDependent) {
-                // Return of parameter address NOT in LifeDependencies is
-                // UNSAFE (Escaping Local)
-                DiagnosticEngine::report(getLoc(Ret),
-                                         DiagID::ERR_LIFETIME_UNION_REQUIRED,
-                                         Var->Name, Var->Name);
-                HasError = true;
-              }
+              DiagnosticEngine::report(
+                  getLoc(Ret), DiagID::ERR_LIFETIME_UNION_REQUIRED, dep, dep);
+              HasError = true;
             } else {
-              // It's a local variable (not a parameter). Returning its address
-              // is ALWAYS unsafe.
+              // It's a local or global.
+              // If local, error (Cannot escape local).
+              // We can check if it's declared in the top-level scope of
+              // function? Not easily. We assume if it's not a parameter, and we
+              // are returning it, it's a local. (What about Globals/Consts?
+              // They are usually values or pointers, not references declared on
+              // stack) A global `auto &x = ...` is rare.
               DiagnosticEngine::report(getLoc(Ret), DiagID::ERR_ESCAPE_LOCAL,
-                                       Var->Name);
+                                       dep);
               HasError = true;
             }
           }

@@ -52,8 +52,8 @@ std::string Sema::resolveType(const std::string &Type, bool force) {
           return resolveType(aliasInfo.Target, force);
         }
       }
-      return TargetType; // It's a base type or shape in that module or a strong
-                         // alias
+      return TargetType; // It's a base type or shape in that module or a
+                         // strong alias
     }
   }
 
@@ -175,8 +175,8 @@ std::shared_ptr<toka::Type> Sema::resolveType(std::shared_ptr<toka::Type> type,
       }
     }
 
-    // [FIX] Check for Aliases (including Generic Aliases) BEFORE finding Shape
-    // Template
+    // [FIX] Check for Aliases (including Generic Aliases) BEFORE finding
+    // Shape Template
     if (TypeAliasMap.count(shape->Name)) {
       const auto &aliasInfo = TypeAliasMap[shape->Name];
       if (!shape->GenericArgs.empty() && !aliasInfo.GenericParams.empty()) {
@@ -436,49 +436,32 @@ Sema::instantiateGenericShape(std::shared_ptr<ShapeType> GenericShape) {
   for (auto &oldMember : Template->Members) {
     ShapeMember newM = oldMember;
 
-    // [Constitution] Hat Rule Normalization (The Double-Hat Fix)
-    // Rule: Slot wins. If slot has a hat, take argument's soul and apply
-    // slot's hat.
-    if (substMap.count(newM.Type)) {
-      auto actualTy = substMap[newM.Type];
-      if (newM.IsUnique || newM.IsShared || newM.IsReference ||
-          newM.HasPointer) {
-        // Slot has hat. Strip argument's hat (get soul) and apply slot's hat.
-        auto soulTy = actualTy->getSoulType();
-        newM.ResolvedType = soulTy; // We'll re-apply hats in resolveMember
-        newM.Type = soulTy->toString();
-      } else {
-        // Slot has NO hat. Pass-through argument's morphology.
-        newM.ResolvedType = actualTy;
-        newM.Type = actualTy->toString();
-      }
-    } else {
-      // [FIX] Nested Generic Substitution Workaround (Phase 1.5)
-      // If type string contains generic param, replace it.
-      // E.g. "Node<T>" -> "Node<i32>"
-      // Very naive, but needed for `^next: Node<T>`
-      std::string memberTypeStr = newM.Type;
-      // For each param, replace in string
-      for (auto const &[K, V] : substMap) {
-        size_t pos = 0;
-        while ((pos = memberTypeStr.find(K, pos)) != std::string::npos) {
-          // Check word boundaries (include underscore)
-          auto isWordChar = [](char c) { return std::isalnum(c) || c == '_'; };
-          bool startOk = (pos == 0) || !isWordChar(memberTypeStr[pos - 1]);
-          bool endOk = (pos + K.size() == memberTypeStr.size()) ||
-                       !isWordChar(memberTypeStr[pos + K.size()]);
+    // (Canceled)
+    // [FIX] Nested Generic Substitution Workaround (Phase 1.5)
+    // If type string contains generic param, replace it.
+    // E.g. "Node<T>" -> "Node<i32>"
+    // Very naive, but needed for `^next: Node<T>`
+    std::string memberTypeStr = newM.Type;
+    // For each param, replace in string
+    for (auto const &[K, V] : substMap) {
+      size_t pos = 0;
+      while ((pos = memberTypeStr.find(K, pos)) != std::string::npos) {
+        // Check word boundaries (include underscore)
+        auto isWordChar = [](char c) { return std::isalnum(c) || c == '_'; };
+        bool startOk = (pos == 0) || !isWordChar(memberTypeStr[pos - 1]);
+        bool endOk = (pos + K.size() == memberTypeStr.size()) ||
+                     !isWordChar(memberTypeStr[pos + K.size()]);
 
-          if (startOk && endOk) {
-            std::string valStr = V->toString();
-            memberTypeStr.replace(pos, K.size(), valStr);
-            pos += valStr.size();
-          } else {
-            pos += K.size();
-          }
+        if (startOk && endOk) {
+          std::string valStr = V->toString();
+          memberTypeStr.replace(pos, K.size(), valStr);
+          pos += valStr.size();
+        } else {
+          pos += K.size();
         }
       }
-      newM.Type = memberTypeStr;
     }
+    newM.Type = memberTypeStr;
 
     newMembers.push_back(std::move(newM));
   }
