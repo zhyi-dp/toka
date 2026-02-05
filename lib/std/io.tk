@@ -30,6 +30,7 @@ pub shape File (
 // Convenience Aliases for Generic Instantiation
 alias IoResult = Result<File, String>
 alias IoStringResult = Result<String, String>
+alias IoSizeResult = Result<usize, String>
 
 impl File@encap {
     pub *
@@ -125,6 +126,24 @@ impl File {
         unsafe {
             if !self.opened { return true }
             return libc_feof(self.*handle) != 0
+        }
+    }
+
+    pub fn read(self, *buf: u8, len: usize) -> IoSizeResult {
+        unsafe {
+            if !self.opened { 
+                return IoSizeResult::Err(String::from("File not open"))
+            }
+            
+            auto count = libc_fread(*buf as *void, 1, len, self.*handle)
+            return IoSizeResult::Ok(count as usize)
+        }
+    }
+
+    pub fn write_buf(self, *buf: u8, len: usize) -> usize {
+        unsafe {
+            if !self.opened { return 0 as usize }
+            return libc_fwrite(*buf as *void, 1, len, self.*handle)
         }
     }
 
