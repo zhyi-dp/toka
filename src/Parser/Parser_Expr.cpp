@@ -330,6 +330,18 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   } else if (match(TokenType::KwNew)) {
     Token kw = previous();
     Token startTok = peek();
+    
+    // [NEW] Parse Optional Array Scope for `new [N]Type`
+    std::unique_ptr<Expr> arraySize = nullptr;
+    if (match(TokenType::LBracket)) {
+      if (!check(TokenType::RBracket)) {
+        arraySize = parseExpr();
+      } else {
+        // new []T ? Empty length might be inferred later.
+      }
+      consume(TokenType::RBracket, "Expected ']' after array size");
+    }
+
     std::string typeStr = "";
     if (check(TokenType::Identifier)) {
       typeStr = advance().Text;
@@ -457,7 +469,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       error(kw, "Expected '{' or '(' initializer for new expression");
       return nullptr;
     }
-    auto node = std::make_unique<NewExpr>(typeStr, std::move(init));
+    auto node = std::make_unique<NewExpr>(typeStr, std::move(init), std::move(arraySize));
     node->setLocation(kw, m_CurrentFile);
     expr = std::move(node);
   } else if (match(TokenType::LBracket)) {

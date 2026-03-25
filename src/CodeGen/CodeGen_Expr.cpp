@@ -3411,6 +3411,17 @@ PhysEntity CodeGen::genNewExpr(const NewExpr *newExpr) {
 
   llvm::Value *sizeVal =
       llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), size);
+
+  llvm::Value *arrayCount = nullptr;
+  if (newExpr->ArraySize) {
+    llvm::Value *count = genExpr(newExpr->ArraySize.get()).load(m_Builder);
+    if (count->getType() != llvm::Type::getInt64Ty(m_Context)) {
+      count = m_Builder.CreateIntCast(count, llvm::Type::getInt64Ty(m_Context), false);
+    }
+    arrayCount = count;
+    sizeVal = m_Builder.CreateMul(sizeVal, count);
+  }
+
   llvm::Value *voidPtr = m_Builder.CreateCall(mallocFn, sizeVal, "new_alloc");
 
   // In LLVM 17 with opaque pointers, we just use the pointer.
@@ -3426,7 +3437,33 @@ PhysEntity CodeGen::genNewExpr(const NewExpr *newExpr) {
           initVal = m_Builder.CreateIntCast(initVal, type, true);
         }
       }
-      m_Builder.CreateStore(initVal, heapPtr);
+      
+      if (arrayCount) {
+        // Loop to initialize all elements
+        llvm::BasicBlock *preHeaderBB = m_Builder.GetInsertBlock();
+        llvm::Function *F = preHeaderBB->getParent();
+        llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(m_Context, "new_init_loop", F);
+        llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(m_Context, "new_init_after", F);
+
+        m_Builder.CreateBr(loopBB);
+        m_Builder.SetInsertPoint(loopBB);
+
+        llvm::PHINode *iVar = m_Builder.CreatePHI(llvm::Type::getInt64Ty(m_Context), 2, "i");
+        iVar->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 0), preHeaderBB);
+
+        // GEP to element
+        llvm::Value *elemPtr = m_Builder.CreateInBoundsGEP(type, heapPtr, iVar);
+        m_Builder.CreateStore(initVal, elemPtr);
+
+        llvm::Value *nextI = m_Builder.CreateAdd(iVar, llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 1));
+        llvm::Value *cond = m_Builder.CreateICmpULT(nextI, arrayCount);
+        iVar->addIncoming(nextI, loopBB);
+
+        m_Builder.CreateCondBr(cond, loopBB, afterBB);
+        m_Builder.SetInsertPoint(afterBB);
+      } else {
+        m_Builder.CreateStore(initVal, heapPtr);
+      }
     }
   }
 

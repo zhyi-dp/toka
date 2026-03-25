@@ -1,0 +1,28 @@
+// Copyright (c) 2026 YiZhonghua<zhyi@dpai.com>. All rights reserved.
+import std/io::println
+import core/libc::*
+
+shape Data(val: i32)
+
+fn check_slice(^p: [Data]) {
+    unsafe {
+        println("val0: {}, val1: {}", p[0].val, p[1].val)
+        assert(p[0].val == 42, "0")
+        assert(p[1].val == 42, "1")
+    }
+}
+
+fn main() -> i32 {
+    // Basic allocation of slice uniqueness
+    auto ^p# = new [4]Data(val = 42)
+    
+    // Test direct slice mutation and reads
+    unsafe {
+        p[2].val = 99
+        assert(p[2].val == 99, "mutate array")
+    }
+    
+    // Slice bounds loop init check
+    check_slice(^p)
+    return 0
+}

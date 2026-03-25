@@ -1425,6 +1425,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       }
     }
 
+    if (New->ArraySize) {
+      checkExpr(New->ArraySize.get());
+    }
     if (New->Initializer) {
       auto InitTypeObj = checkExpr(New->Initializer.get(),
                                    toka::Type::fromString(resolvedName));
@@ -1434,6 +1437,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
     }
     // 'new' usually returns a unique pointer: ^Type# (soul is fully writable)
     m_LastInitMask = ~0ULL;
+    if (New->ArraySize) {
+      return toka::Type::fromString("^[" + resolvedName + "]#");
+    }
     return toka::Type::fromString("^" + resolvedName + "#");
   } else if (auto *UnsafeE = dynamic_cast<UnsafeExpr *>(E)) {
     bool oldUnsafe = m_InUnsafeContext;

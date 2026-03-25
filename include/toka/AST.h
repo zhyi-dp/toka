@@ -634,14 +634,17 @@ class NewExpr : public Expr {
 public:
   std::string Type;
   std::unique_ptr<Expr> Initializer;
-  NewExpr(const std::string &type, std::unique_ptr<Expr> init)
-      : Type(type), Initializer(std::move(init)) {}
+  std::unique_ptr<Expr> ArraySize; // [NEW] Support for new [N]T syntax
+  NewExpr(const std::string &type, std::unique_ptr<Expr> init, std::unique_ptr<Expr> arraySize = nullptr)
+      : Type(type), Initializer(std::move(init)), ArraySize(std::move(arraySize)) {}
   std::string toString() const override {
-    return "New(" + Type + ", " + (Initializer ? Initializer->toString() : "") +
-           ")";
+    std::string s = "New(" + Type;
+    if (ArraySize) s += "[" + ArraySize->toString() + "]";
+    s += ", " + (Initializer ? Initializer->toString() : "") + ")";
+    return s;
   }
   std::unique_ptr<ASTNode> clone() const override {
-    auto n = std::make_unique<NewExpr>(Type, cloneNode(Initializer));
+    auto n = std::make_unique<NewExpr>(Type, cloneNode(Initializer), cloneNode(ArraySize));
     n->Loc = Loc;
     n->ResolvedType = ResolvedType;
     return n;
