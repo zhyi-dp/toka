@@ -7,7 +7,7 @@ fn main() -> i32 {
     unsafe {
         auto arr = [1, 2, 3, 4, 5]
         // &arr[0] is &i32. Cast to *#i32 (mutable raw pointer)
-        auto *#p = *arr
+        auto *#p = *arr as *[i32]
         println("p addr {}", *p as OAddr)   
         
         // Pointer arithmetic: increment the pointer by bytes

@@ -30,7 +30,7 @@ impl Counter {
 // Module-level factory functions removed. using static methods.
 
 pub shape Vec<T> (
-    nul *#buf#: T,
+    nul *#buf#: [T],
     len: usize,
     cap: usize
 )
@@ -41,7 +41,6 @@ impl<T> Vec<T>@encap {
             if self.*buf != nullptr {
                 unsafe free [self.cap]self.*#buf
                 self.*buf = nullptr // Explicit nullify
-              
             }
         }
     }
@@ -167,9 +166,9 @@ impl<T> Vec<T> {
     pub fn unsafe_get(self, index: usize) -> *T {
         unsafe {
             if self.*buf != nullptr {
-                // 这一步显式转换： *?T -> *T
+                // 这一步显式转换： *?T -> *[T]
                 // 既然已经判空，这就是安全的 unsafe 操作
-                auto *ptr = self.*buf as *T
+                auto *ptr = self.*buf as *[T]
                 return *ptr[index]
             }
             return nullptr
@@ -263,7 +262,7 @@ impl<T> Vec<T> {
 }
 
 pub shape VecIterator<T> (
-    nul *#buf# : T,
+    nul *#buf# : [T],
     len : usize,
     pos# : usize
 )

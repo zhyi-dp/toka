@@ -26,7 +26,7 @@ import core/libc::*
 // ------------------------------------------------------
 
 pub shape String (
-    *buf#: char,
+    *buf#: [char],
     len: i32,
     cap: i32
 )
@@ -54,7 +54,7 @@ impl String@encap {
 // ------------------------------------------------------
 
 pub shape SplitIterator (
-    *source: char,
+    *source: [char],
     source_len: i32,
     current_pos#: i32,
     delimiter: char
@@ -129,7 +129,7 @@ impl String {
     pub fn from(*s: char) -> String {
         unsafe {
             auto l = libc_strlen(*s)
-            auto *p# = libc_malloc((l + 1) as usize) as *char
+            auto *p# = libc_malloc((l + 1) as usize) as *[char]
             libc_memcpy(*p as *void, *s as *void, l)
             p[l] = 0 as char
             
@@ -145,7 +145,7 @@ impl String {
     pub fn from_with_len(*s: char, len: i32) -> String {
         unsafe {
             auto l = len
-            auto *p# = libc_malloc((l + 1) as usize) as *char
+            auto *p# = libc_malloc((l + 1) as usize) as *[char]
             libc_memcpy(*p as *void, *s as *void, l as usize)
             p[l] = 0 as char
             
@@ -170,7 +170,7 @@ impl String {
             
             libc_write(2, "DEBUG: from_take strlen done\n" as *u8, 29)
             
-            auto *p# = libc_malloc((l + 1) as usize) as *char
+            auto *p# = libc_malloc((l + 1) as usize) as *[char]
             libc_memcpy(*p as *void, *s as *void, l)
             p[l] = 0 as char
             
@@ -194,9 +194,9 @@ impl String {
     pub fn from_int(val: i32) -> String {
         unsafe {
             // Max i32 chars is 11 (-2147483648) + null
-            auto *buf# = libc_malloc(16) as *char
-            libc_sprintf(*buf, "%d", val)
-            auto len = libc_strlen(*buf)
+            auto *buf# = libc_malloc(16) as *[char]
+            libc_sprintf(*buf as *char, "%d", val)
+            auto len = libc_strlen(*buf as *char)
             
             return String(
                 *buf = *buf,
@@ -208,18 +208,18 @@ impl String {
 
     pub fn from_i64(val: i64) -> String {
         unsafe {
-            auto *buf# = libc_malloc(32) as *char
-            libc_sprintf(*buf, "%lld", val)
-            auto len = libc_strlen(*buf)
+            auto *buf# = libc_malloc(32) as *[char]
+            libc_sprintf(*buf as *char, "%lld", val)
+            auto len = libc_strlen(*buf as *char)
             return String(*buf = *buf, len = len as i32, cap = 32)
         }
     }
     
     pub fn from_f64(val: f64) -> String {
          unsafe {
-            auto *buf# = libc_malloc(32) as *char
-            libc_sprintf(*buf, "%.6f", val)
-            auto len = libc_strlen(*buf)
+            auto *buf# = libc_malloc(32) as *[char]
+            libc_sprintf(*buf as *char, "%.6f", val)
+            auto len = libc_strlen(*buf as *char)
             return String(*buf = *buf, len = len as i32, cap = 32)
         }
     }
@@ -247,13 +247,13 @@ impl String {
             
             if needed >= self.cap {
                 auto new_cap = (self.cap * 2) + (slen as i32) + 1
-                auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *char
-                if *tmp == (0 as *char) { return 0 }
+                auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *[char]
+                if *tmp == nullptr { return 0 }
                 self.*buf = *tmp
                 self.cap = new_cap
             }
             
-            auto *dst# = (self.*buf as usize + self.len as usize) as *char
+            auto *dst# = (self.*buf as usize + self.len as usize) as *[char]
             libc_memcpy(*dst as *void, *s as *void, slen)
             self.len = needed
             dst[slen] = 0 as char
@@ -267,13 +267,13 @@ impl String {
             
             if needed >= self.cap {
                 auto new_cap = (self.cap * 2) + 2
-                auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *char
-                if *tmp == (0 as *char) { return 0 }
+                auto *tmp = libc_realloc(self.*buf as *void, new_cap as usize) as *[char]
+                if *tmp == nullptr { return 0 }
                 self.*buf = *tmp
                 self.cap = new_cap
             }
             
-            auto *dst# = (self.*buf as usize + self.len as usize) as *char
+            auto *dst# = (self.*buf as usize + self.len as usize) as *[char]
             dst[0] = c
             dst[1] = 0 as char
             self.len = needed
@@ -328,7 +328,7 @@ impl String {
         unsafe {
             auto start# = 0
             auto end# = self.len - 1
-            auto *raw = self.c_str()
+            auto *raw = self.c_str() as *[char]
             
             // Find start
             while start < self.len {
@@ -354,7 +354,7 @@ impl String {
                 return String::from("")
             }
             
-            auto *sub_start = *raw[start]
+            auto *sub_start = (self.c_str() as usize + start as usize) as *char
             return String::from_with_len(*sub_start, new_len)
         }
     }
@@ -393,7 +393,7 @@ impl String {
     pub fn trim_start(self) -> String {
         unsafe {
             auto start# = 0
-            auto *raw = self.c_str()
+            auto *raw = self.c_str() as *[char]
             while start < self.len {
                 if !String::is_whitespace(raw[start]) { break }
                 start = start + 1
@@ -410,7 +410,7 @@ impl String {
     pub fn trim_end(self) -> String {
         unsafe {
             auto end# = self.len - 1
-            auto *raw = self.c_str()
+            auto *raw = self.c_str() as *[char]
             while end >= 0 {
                 if !String::is_whitespace(raw[end]) { break }
                 end = end - 1
@@ -426,7 +426,7 @@ impl String {
     // delim as i32 to avoid ABI char passing issues
     pub fn split(self, delim: i32) -> SplitIterator {
         return SplitIterator(
-            *source = self.c_str(),
+            *source = self.*buf,
             source_len = self.len,
             current_pos = 0,
             delimiter = delim as char
@@ -440,7 +440,7 @@ impl String {
             return 0 as char
         }
         unsafe {
-            auto *b = self.c_str()
+            auto *b = self.*buf
             return b[index]
         }
     }
@@ -448,7 +448,7 @@ impl String {
     pub fn find_char(self, c: char) -> i32 {
         unsafe {
             auto i# = 0
-            auto *b = self.c_str()
+            auto *b = self.*buf
             while i < self.len {
                 if b[i] == c {
                     return i
@@ -463,8 +463,8 @@ impl String {
         if other.len() > self.len { return false }
         unsafe {
             auto i# = 0
-            auto *s1 = self.c_str()
-            auto *s2 = other.c_str()
+            auto *s1 = self.*buf
+            auto *s2 = other.c_str() as *[char]
             while i < other.len() {
                 if s1[i] != s2[i] { return false }
                 i = i + 1
@@ -477,8 +477,8 @@ impl String {
         if other.len() > self.len { return false }
         unsafe {
             auto i# = 0
-            auto *s1 = self.c_str()
-            auto *s2 = other.c_str()
+            auto *s1 = self.*buf
+            auto *s2 = other.c_str() as *[char]
             auto offset = self.len - other.len()
             while i < other.len() {
                 if s1[offset + i] != s2[i] { return false }
@@ -501,7 +501,7 @@ impl String {
         auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0
-            auto *b# = (res.c_str() as usize) as *char
+            auto *b# = (res.c_str() as usize) as *[char]
             while i < res.len {
                 auto c = b[i]
                 if c >= 97:char && c <= 122:char { // 'a'-'z'
@@ -517,7 +517,7 @@ impl String {
         auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0
-            auto *b# = (res.c_str() as usize) as *char
+            auto *b# = (res.c_str() as usize) as *[char]
             while i < res.len {
                 auto c = b[i]
                 if c >= 65:char && c <= 90:char { // 'A'-'Z'
@@ -533,7 +533,7 @@ impl String {
         auto res# = String::from_with_len(self.c_str(), self.len)
         unsafe {
             auto i# = 0
-            auto *b# = (res.c_str() as usize) as *char
+            auto *b# = (res.c_str() as usize) as *[char]
             while i < res.len {
                 if b[i] == old_c {
                     b[i] = new_c
@@ -561,8 +561,8 @@ impl String {
         unsafe {
              auto i# = 0
              // Get pointers to buffers
-             auto *s_buf = self.c_str()
-             auto *old_buf = old_s.c_str()
+             auto *s_buf = self.*buf
+             auto *old_buf = old_s.c_str() as *[char]
              
              while i < self.len {
                  auto is_match# = true
@@ -610,8 +610,8 @@ impl String {
         unsafe {
             auto res# = String::from_with_len(self.c_str(), self.len)
             auto i# = 0
-            auto *dest# = (res.c_str() as usize) as *char
-            auto *src = self.c_str()
+            auto *dest# = (res.c_str() as usize) as *[char]
+            auto *src = self.*buf
             while i < self.len {
                 dest[i] = src[self.len - 1 - i]
                 i = i + 1
@@ -625,7 +625,7 @@ impl String@Hash {
         unsafe {
             auto hash#: u64 = 5381
             auto i# = 0
-            auto *b = self.c_str()
+            auto *b = self.*buf
             while i < self.len {
                 auto c = b[i] as u64
                 hash = ((hash bshl 5) + hash) + c

@@ -2042,6 +2042,17 @@ llvm::Type *CodeGen::getLLVMType(std::shared_ptr<Type> type) {
     return llvm::StructType::get(m_Context, {ptrTy, refCountTy});
   }
 
+  // Handle Slices ([T])
+  // A Slice is a dynamically sized memory region. For LLVM GEP stepping logic,
+  // its apparent layout type must be the Element Type.
+  if (type->typeKind == Type::Slice) {
+    auto sliceType = std::static_pointer_cast<SliceType>(type);
+    llvm::Type *elemTy = getLLVMType(sliceType->ElementType);
+    if (!elemTy)
+      elemTy = llvm::Type::getInt8Ty(m_Context);
+    return elemTy;
+  }
+
   // Handle Arrays ([T; N])
   if (type->typeKind == Type::Array) {
     auto arrType = std::static_pointer_cast<ArrayType>(type);

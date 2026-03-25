@@ -43,7 +43,7 @@ fn check_shared_ptr(nul ~ptr: Data) {
     }
 }
 
-fn check_raw_ptr(nul *ptr: Data) {
+fn check_raw_ptr(nul *ptr: [Data]) {
     guard *ptr {
         println("Raw pointer is not nullptr confirmed")
     } else {

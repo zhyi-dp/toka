@@ -63,10 +63,10 @@ impl<T> SharedPtr<T> {
     pub fn assign(self#, rhs: SharedPtr<T>) {
         // [帽子规则]: 比较指针地址不需要解引用
         if self.*wrapper == rhs.*wrapper {
-            unsafe println("lhs wrapper:{} == rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.data)
+            unsafe println("lhs wrapper:{} == rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.data as usize)
             return
         }
-        unsafe println("lhs wrapper:{} <- rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.data[0])
+        unsafe println("lhs wrapper:{} <- rhs wrapper:{} val = {}", self.*wrapper as OAddr, rhs.*wrapper as OAddr, rhs.wrapper.data as usize)
 
         // [逻辑修复]: 必须先释放旧值 (DecRef/Free)
         self#.xdrop() 

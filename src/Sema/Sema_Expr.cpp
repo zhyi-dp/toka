@@ -1459,6 +1459,9 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       checkExpr(AllocE->Initializer.get(), toka::Type::fromString(baseType));
     }
     AllocE->TypeName = baseType; // [FIX] Update with mangled name for CodeGen
+    if (AllocE->IsArray) {
+      return toka::Type::fromString("*[" + baseType + "]");
+    }
     return toka::Type::fromString("*" + baseType);
   } else if (auto *Met = dynamic_cast<MethodCallExpr *>(E)) {
     auto ObjTypeObj = checkExpr(Met->Object.get());
@@ -1675,46 +1678,6 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
       return lhsObj->withAttributes(lhsObj->IsWritable, false);
     }
     return toka::Type::fromString(lhsInfo);
-  } else if (auto *Arr = dynamic_cast<ArrayIndexExpr *>(E)) {
-    if (auto *Var = dynamic_cast<VariableExpr *>(Arr->Array.get())) {
-      if (ShapeMap.count(Var->Name)) {
-        ShapeDecl *SD = ShapeMap[Var->Name];
-        if (SD->Kind == ShapeKind::Array) {
-          if (Arr->Indices.size() != SD->ArraySize) {
-            error(Arr, "Array shape '" + Var->Name + "' expects " +
-                           std::to_string(SD->ArraySize) + " elements, got " +
-                           std::to_string(Arr->Indices.size()));
-          }
-          std::string ElemType = "unknown";
-          if (!SD->Members.empty())
-            ElemType = SD->Members[0].Type;
-
-          for (auto &idx : Arr->Indices) {
-            idx = foldGenericConstant(std::move(idx)); // [FIX] Substitution
-            std::shared_ptr<toka::Type> ArgTypeObj = checkExpr(idx.get());
-            std::string ArgType = ArgTypeObj->toString();
-            if (!isTypeCompatible(ElemType, ArgType)) {
-              error(idx.get(), "Array element type mismatch: expected '" +
-                                   ElemType + "', got '" + ArgType + "'");
-            }
-          }
-          return toka::Type::fromString(Var->Name);
-        }
-      }
-    }
-
-    // Normal Array Indexing
-    auto arrTypeObj = checkExpr(Arr->Array.get());
-
-    if (Arr->Indices.size() != 1) {
-      error(Arr, DiagID::ERR_INVALID_OP, "indexing", "array",
-            "multiple indices");
-    }
-    Arr->Indices[0] =
-        foldGenericConstant(std::move(Arr->Indices[0])); // [FIX] Substitution
-    checkExpr(Arr->Indices[0].get());
-    return toka::Type::fromString(
-        "unknown"); // Placeholder for element type derivation
   } else if (auto *Tup = dynamic_cast<TupleExpr *>(E)) {
     std::vector<std::shared_ptr<toka::Type>> elements;
     for (size_t i = 0; i < Tup->Elements.size(); ++i) {
@@ -2786,7 +2749,8 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
 
     if (auto *Var = dynamic_cast<VariableExpr *>(Traverse)) {
       SymbolInfo *InfoPtr = nullptr;
-      if (CurrentScope->findSymbol(Var->Name, InfoPtr)) {
+      std::string actualName = Var->Name;
+      if (CurrentScope->findVariableWithDeref(Var->Name, InfoPtr, actualName)) {
         // [Fix] Trace to Source for Borrow Check
         SymbolInfo *EffectiveInfo = InfoPtr;
         std::string EffectiveName = Var->Name;
@@ -2810,17 +2774,21 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
                              !EffectiveInfo->MutablyBorrowedBy.empty() &&
                              EffectiveInfo->MutablyBorrowedBy == borrower);
 
-          if (Var->Name == borrower)
+          if (actualName == borrower)
             authorized = true;
           else if (EffectiveInfo->IsMutablyBorrowed &&
-                   EffectiveInfo->MutablyBorrowedBy == Var->Name)
+                   EffectiveInfo->MutablyBorrowedBy == actualName)
             authorized = true;
 
           if (!authorized) {
-            SymbolInfo varInfo;
-            if (CurrentScope->lookup(Var->Name, varInfo)) {
-              if (varInfo.BorrowedFrom == EffectiveName)
+            if (InfoPtr->BorrowedFrom == EffectiveName) {
                 authorized = true;
+            } else {
+                SymbolInfo varInfo;
+                if (CurrentScope->lookup(actualName, varInfo)) {
+                  if (varInfo.BorrowedFrom == EffectiveName)
+                    authorized = true;
+                }
             }
           }
 
@@ -2843,6 +2811,10 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
             isLHSWritable = true;
         } else {
           if (InfoPtr->InitMask != ~0ULL)
+            isLHSWritable = true;
+        }
+        
+        if (InfoPtr->IsMutable()) {
             isLHSWritable = true;
         }
       }
@@ -3193,7 +3165,19 @@ std::shared_ptr<toka::Type> Sema::checkBinaryExpr(BinaryExpr *Bin) {
       error(Bin,
             DiagID::ERR_UNSAFE_ALLOC_CTX); // Reuse for ptr arithmetic
     }
-    return lhsType->withAttributes(false, lhsType->IsNullable);
+    auto ptrType = std::dynamic_pointer_cast<toka::PointerType>(resolveType(lhsType, true));
+    std::string elemType = "unknown";
+    if (ptrType) {
+      auto pointee = resolveType(ptrType->getPointeeType(), true);
+      if (auto slice = std::dynamic_pointer_cast<toka::SliceType>(pointee)) {
+        elemType = slice->ElementType->toString();
+      } else if (auto arr = std::dynamic_pointer_cast<toka::ArrayType>(pointee)) {
+        elemType = arr->ElementType->toString();
+      } else {
+        elemType = pointee->toString();
+      }
+    }
+    return toka::Type::fromString("*[" + elemType + "]");
   }
 
   if (Bin->Op == "==" || Bin->Op == "!=" || Bin->Op == "<" || Bin->Op == ">" ||
@@ -3287,6 +3271,9 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
     std::string actualName = Var->Name;
     if (CurrentScope->findVariableWithDeref(Var->Name, Info, actualName)) {
       baseType = Info->TypeObj;
+      if (Info->IsMutable()) {
+        baseType = baseType->withAttributes(true, baseType->IsNullable);
+      }
     } else {
       baseType = checkExpr(Idx->Array.get());
     }
@@ -3328,7 +3315,19 @@ std::shared_ptr<toka::Type> Sema::checkIndexExpr(ArrayIndexExpr *Idx) {
       resultType = baseType;
     } else {
       // [Default] Soul Indexing (Value Access)
-      resultType = baseType->getPointeeType();
+      auto pointee = baseType->getPointeeType();
+      if (pointee) {
+        auto resolvedPointee = resolveType(pointee, true);
+        if (auto slice = std::dynamic_pointer_cast<toka::SliceType>(resolvedPointee)) {
+          resultType = slice->ElementType->withAttributes(baseType->IsWritable || slice->IsWritable || slice->ElementType->IsWritable, slice->ElementType->IsNullable);
+        } else if (auto arr = std::dynamic_pointer_cast<toka::ArrayType>(resolvedPointee)) {
+          resultType = arr->ElementType->withAttributes(baseType->IsWritable || arr->IsWritable || arr->ElementType->IsWritable, arr->ElementType->IsNullable);
+        } else {
+          error(Idx, "Array indexing '[]' is only permitted on arrays '[T; N]' or slices '*[T]'. Cannot index single-element pointer '" + baseType->toString() + "'.");
+          std::cerr << "DEBUG: E0406 generated for node type " << Idx->toString() << "\n";
+          resultType = pointee;
+        }
+      }
     }
   } else {
     error(Idx, "type '" + baseType->toString() + "' is not indexable");
@@ -3850,15 +3849,14 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
                 for (const auto &M : Sh->Members) {
                   if (M.Name == fieldName) {
                     MorphKind fieldMorph = MorphKind::None;
-                    if (!M.Type.empty()) {
-                      char c = M.Type[0];
-                      if (c == '*')
+                    if (M.ResolvedType) {
+                      if (M.ResolvedType->isRawPointer())
                         fieldMorph = MorphKind::Raw;
-                      else if (c == '^')
+                      else if (M.ResolvedType->isUniquePtr())
                         fieldMorph = MorphKind::Unique;
-                      else if (c == '~')
+                      else if (M.ResolvedType->isSharedPtr())
                         fieldMorph = MorphKind::Shared;
-                      else if (c == '&')
+                      else if (M.ResolvedType->isReference())
                         fieldMorph = MorphKind::Ref;
                     }
                     checkStrictMorphology(bin, fieldMorph, keyMorph, fieldName);
@@ -4184,16 +4182,14 @@ std::shared_ptr<toka::Type> Sema::checkCallExpr(CallExpr *Call) {
 
     // Morphology Check for Argument
     MorphKind targetMorph = MorphKind::None;
-    std::string paramTypeStr = paramType->toString();
-    if (!paramTypeStr.empty()) {
-      char c = paramTypeStr[0];
-      if (c == '*')
+    if (paramType) {
+      if (paramType->isRawPointer())
         targetMorph = MorphKind::Raw;
-      else if (c == '^')
+      else if (paramType->isUniquePtr())
         targetMorph = MorphKind::Unique;
-      else if (c == '~')
+      else if (paramType->isSharedPtr())
         targetMorph = MorphKind::Shared;
-      else if (c == '&')
+      else if (paramType->isReference())
         targetMorph = MorphKind::Ref;
     }
 

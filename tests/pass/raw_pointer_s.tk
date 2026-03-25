@@ -15,7 +15,7 @@
 import std/memory
 
 shape Hero (
-    *buf#: i32
+    *buf#: [i32]
 )
 
 impl Hero@encap {

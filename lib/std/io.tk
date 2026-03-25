@@ -98,7 +98,7 @@ impl File {
             }
             
             // Alloc temp buffer using libc_malloc
-            auto *buf# = libc_malloc((size + 1) as usize) as *char
+            auto *buf# = libc_malloc((size + 1) as usize) as *[char]
             
             // Read
             auto count = libc_fread(*buf as *void, 1, size as usize, self.*handle)

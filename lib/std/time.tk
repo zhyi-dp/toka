@@ -71,7 +71,7 @@ impl Time {
             // On macOS, struct tm fields are mostly i32.
             // Avoid direct *void -> *i32 cast due to compiler crash.
             auto addr = *tm_ptr as Addr
-            auto *fields = addr as *i32
+            auto *fields = addr as *[i32]
             
             return DateTime(
                 sec = fields[0],

@@ -10,7 +10,7 @@ extern fn _NSGetArgv() -> *Addr
 // Returns the number of command-line arguments.
 pub fn args_impl() -> i32 {
     unsafe {
-        auto *argc = _NSGetArgc()
+        auto *argc = _NSGetArgc() as *[i32]
         return argc[0]
     }
 }
@@ -18,17 +18,17 @@ pub fn args_impl() -> i32 {
 // Retrieves a specific command-line argument by index.
 pub fn get_arg_impl(i: i32) -> String {
     unsafe {
-        auto *handle_ptr = _NSGetArgv()
+        auto *handle_ptr = _NSGetArgv() as *[Addr]
         auto handle_addr = handle_ptr[0] as Addr
-        auto *p_argv_base = handle_addr as *Addr
+        auto *p_argv_base = handle_addr as *[Addr]
         auto argv_array_base = p_argv_base[0] as Addr
         
         auto slot_addr = (argv_array_base as u64 + (i as u64) * 8) as Addr
-        auto *p_str = slot_addr as *Addr
+        auto *p_str = slot_addr as *[Addr]
         auto str_addr = p_str[0] as Addr
-        auto *final_ptr = str_addr as *char
+        auto *final_ptr = str_addr as *[char]
         
-        return String::from(final_ptr)
+        return String::from(*final_ptr as *char)
     }
 }
 
@@ -222,7 +222,7 @@ pub fn net_socket_impl() -> i32 {
 
 pub fn net_setsockopt_reuse_impl(fd: i32) -> i32 {
     unsafe {
-        auto *opt# = libc_malloc(4) as *i32
+        auto *opt# = libc_malloc(4) as *[i32]
         opt[0] = 1
         auto res = libc_setsockopt(fd, 65535, 4, *opt as *void, 4)
         libc_free(*opt as *void)
@@ -349,11 +349,11 @@ pub fn net_connect_impl(fd: i32, host: usize, port: i32) -> i32 {
 pub fn net_accept_impl(fd: i32) -> i32 {
     unsafe {
         // We ignore the peer address for now in this impl
-        auto *addr_len_ptr# = libc_malloc(4) as *u32
+        auto *addr_len_ptr# = libc_malloc(4) as *[u32]
         addr_len_ptr[0] = 16
         auto *addr_buf# = libc_malloc(16) as *void
         
-        auto res = libc_accept(fd, *addr_buf, *addr_len_ptr)
+        auto res = libc_accept(fd, *addr_buf, *addr_len_ptr as *u32)
         
         libc_free(*addr_len_ptr as *void)
         libc_free(*addr_buf)

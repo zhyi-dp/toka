@@ -173,9 +173,9 @@ impl<K, V> HashMap<K, V> {
     pub fn iter(self) -> HashMapIterator<K, V> {
         unsafe {
              return HashMapIterator<K, V>(
-                 keys_ptr = self.keys.unsafe_get(0),
-                 vals_ptr = self.vals.unsafe_get(0),
-                 meta_ptr = self.meta.unsafe_get(0),
+                 keys_ptr = self.keys.unsafe_get(0) as *[K],
+                 vals_ptr = self.vals.unsafe_get(0) as *[V],
+                 meta_ptr = self.meta.unsafe_get(0) as *[u8],
                  cap  = self.cap,
                  pos  = 0
              )
@@ -191,9 +191,9 @@ pub shape Entry<K, V> (
 alias MapResult<K, V> = Option<Entry<K, V>>
 
 pub shape HashMapIterator<K, V> (
-    *keys_ptr: K,
-    *vals_ptr: V,
-    *meta_ptr: u8,
+    *keys_ptr: [K],
+    *vals_ptr: [V],
+    *meta_ptr: [u8],
     cap: usize,
     pos#: usize
 )
@@ -202,11 +202,9 @@ impl<K, V> HashMapIterator<K, V> {
     pub fn next(self) -> MapResult<K, V> {
         unsafe {
             // Acquire pointers locally
-            // auto *p: T declares p as *T.
-            // self.*ptr returns Handle (*T).
-            auto *m_buf: u8 = self.*meta_ptr
-            auto *k_buf: K = self.*keys_ptr
-            auto *v_buf: V = self.*vals_ptr
+            auto *m_buf: [u8] = self.*meta_ptr
+            auto *k_buf: [K] = self.*keys_ptr
+            auto *v_buf: [V] = self.*vals_ptr
             
             while self.pos < self.cap {
                 // Index unhatted -> Value

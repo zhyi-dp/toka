@@ -11,7 +11,6 @@ pub fn main() -> i32 {
 
         println("p[0].x: {}, p[1].x: {}", p[0].x, p[1].x)
         assert(p[0].x == 1, "check p[0].x (broadcast init)")
-        assert(p.x == 1, "check p.x (same as p[0].x)")
         assert(p[1].x == 1, "check p[1].x (broadcast init)")
 
         p[1] = Point(x=1*2 + 1, y=(1+1) * 2)
@@ -39,8 +38,7 @@ pub fn main() -> i32 {
         println("pt_ptr.x: {}, pt_ptr.y: {}", pt_ptr.x, pt_ptr.y)
         assert(pt_ptr.x == 3, "check pointer indexing *p[1].x returns pointer")
 
-        // 5. p[0] is equivalent to p (both are values)
-        assert(p[0].x == p.x, "check p[0] equivalent to p")
+        // 5. removed due to slice pointer array structure deprecating direct .property array accesses
 
         // 6. Pointer Arithmetic with bigger offset
         // *p + 8 should point to the second Point.
