@@ -1,0 +1,18 @@
+import std/io::println
+import std/thread::{spawn}
+
+pub fn main() -> i32 {
+    auto target = 100
+    
+    // Spawn a thread and explicitly capture `target` by moving it (cede) into the thread!
+    auto handle = spawn([cede target] {
+        println("I am a new Toka OS thread! Target is: {}", target)
+        0
+    })
+    
+    println("Main thread is waiting...")
+    handle.join()
+    println("Thread finished! Shutting down.")
+    
+    return 0
+}

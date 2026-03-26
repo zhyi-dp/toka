@@ -14,25 +14,19 @@ pub fn main() -> i32 {
     while i < count {
         auto filename = get_arg(i)
         
-        // Handle lli artifact: Skip if filename ends with ".ll"
-        // Since we don't have ends_with, and we know lli puts it at index 1 usually
-        // We will just try to read. But to avoid crash we deeply copy both args.
-        
-        // Also simple heuristic skip logic could be added here if needed, 
-        // but for now let's just make it crash-proof memory-wise.
-        
-        // Pass a copy of the filename string to open, because open takes ownership
         auto file_path = String::from(filename.c_str())
-        
-        // Pass a proper String object for mode "r"
         auto val_r = String::from("r")
         
-        auto file = File::open(file_path, val_r)
+        auto f_res = File::open(file_path, val_r)
         
-        if file.opened {
-            auto content = file.read_to_string()
-            println("{}", content)
-            file.close()
+        if f_res.is_ok() {
+            auto file# = f_res.unwrap()
+            auto content_res = file.read_to_string()
+            if content_res.is_ok() {
+                auto content = content_res.unwrap()
+                println("{}", content)
+            }
+            file#.close()
         } else {
             // println("Error: Could not open file '{}'", filename)
         }

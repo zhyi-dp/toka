@@ -19,13 +19,10 @@ pub fn args_impl() -> i32 {
 pub fn get_arg_impl(i: i32) -> String {
     unsafe {
         auto *handle_ptr = _NSGetArgv() as *[Addr]
-        auto handle_addr = handle_ptr[0] as Addr
-        auto *p_argv_base = handle_addr as *[Addr]
-        auto argv_array_base = p_argv_base[0] as Addr
+        auto *argv = handle_ptr[0] as *[Addr]
         
-        auto slot_addr = (argv_array_base as u64 + (i as u64) * 8) as Addr
-        auto *p_str = slot_addr as *[Addr]
-        auto str_addr = p_str[0] as Addr
+        auto idx = i as usize
+        auto str_addr = argv[idx] as Addr
         auto *final_ptr = str_addr as *[char]
         
         return String::from(*final_ptr as *char)

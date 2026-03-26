@@ -130,3 +130,7 @@ extern fn libc_inet_pton(af: i32, *src: char, *dst: void) -> i32
 extern fn libc_htons(hostshort: u16) -> u16
 extern fn libc_recv(sockfd: i32, *buf: void, len: usize, flags: i32) -> i64
 extern fn libc_send(sockfd: i32, *buf: void, len: usize, flags: i32) -> i64
+
+// Threads (macOS/POSIX)
+extern fn libc_pthread_create(thread: Addr, attr: Addr, start_routine: Addr, arg: Addr) -> i32
+extern fn libc_pthread_join(thread: Addr, retval: Addr) -> i32

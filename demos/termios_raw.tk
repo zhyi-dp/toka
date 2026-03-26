@@ -1,4 +1,3 @@
-import std/io::println
 import std/termios::*
 import std/memory
 import std/io::*
@@ -10,7 +9,7 @@ fn main() -> i32 {
         // Allocate memory for two Termios structs using alloc keyword
         // sizeof(Termios) is 72 on Mac. mapping to [72]u8(0) for zero-init buffer.
         auto *orig_ptr = (alloc [72]u8(0)) as *Termios
-        auto *raw_ptr = (alloc [72]u8(0)) as *Termios
+        auto *raw_ptr# = (alloc [72]u8(0)) as *Termios
 
         // Get current settings
         // fd 0 is stdin
@@ -19,25 +18,23 @@ fn main() -> i32 {
 
         // Modify raw_ptr to disable ECHO and ICANON
         // c_lflag is at offset 24 (u64)
-        // raw_ptr.c_lflag &= ~(ECHO | ICANON)
         
         // Use bnot, band
-        raw_ptr.*c_lflag = raw_ptr.*c_lflag band (bnot ((ECHO as u64) bor (ICANON as u64)))
+        raw_ptr.c_lflag = raw_ptr.c_lflag band (bnot ((ECHO as u64) bor (ICANON as u64)))
 
         // Apply raw settings
         __toka_tcsetattr(0, TCSANOW, *raw_ptr)
 
         println("Raw mode active. Input is not echoed. Press 'q' to exit.")
 
-        auto d# = 0:u8  // 准备一个小缓冲区
-        auto *c# = *d#
+        auto *c# = (alloc [1]u8(0)) as *u8
     
         auto running# = true
         while running {
-            auto nread = libc_read(0, *c#, 1)
+            auto nread = libc_read(0, *c, 1)
             if nread > 0 {
                 // Raw Mode 下，回车通常是 13 (\r)
-                if c == 113 { // 'q'
+                if c == 'q' as u8 { // 'q'
                     println("\r\nGot: q")
                     running = false
                 } else {

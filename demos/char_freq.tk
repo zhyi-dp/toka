@@ -28,12 +28,12 @@ fn main() -> i32 {
         return 1
     }
     
-    auto content_res = f_res#.unwrap().read_to_string()
+    auto content_res = f_res.unwrap().read_to_string()
     if content_res.is_err() {
         println("Error: Could not read file")
         return 1
     }
-    auto content = content_res#.unwrap()
+    auto content = content_res.unwrap()
     
     // 2. Count Frequencies
     auto counts# = Vec<i32>::new()
