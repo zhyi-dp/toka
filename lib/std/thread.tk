@@ -5,7 +5,7 @@
 import core/libc::{libc_malloc, libc_free, libc_pthread_create, libc_pthread_join, libc_usleep}
 import core/types::{Addr, usize}
 
-pub shape JoinHandle(id: Addr)
+pub shape JoinHandle<T>(id: Addr)
 
 /// Suspends the current thread for at least the specified number of milliseconds.
 pub fn sleep_ms(ms: u32) {
@@ -20,16 +20,13 @@ pub fn sleep_ms(ms: u32) {
 /// Note: To capture variables from the environment safely across threads,
 /// use the `[cede ...]` capture list in the closure to consume variables
 /// by value (move semantics).
-pub fn spawn(f: fn() -> i32) -> JoinHandle {
+pub fn spawn<T>(f: fn() -> ^T) -> JoinHandle<T> {
     unsafe {
         // 1. Allocate a stable heap buffer for the closure (fat pointer is 16 bytes)
-        auto *f_buf# = libc_malloc(16 as usize) as *fn() -> i32
+        auto *f_buf# = libc_malloc(16 as usize) as *fn() -> ^T
         f_buf = f
         
         // 2. Transmute the fat pointer into two Addrs (env_ptr + function_ptr)
-        // This takes advantage of Toka's closure memory layout which guarantees
-        // the environment pointer comes first (offset 0) and the invoker 
-        // function comes second (offset 8).
         auto *mem = (*f_buf) as *Addr
         
         // Extract env_ptr (first 8 bytes)
@@ -45,8 +42,6 @@ pub fn spawn(f: fn() -> i32) -> JoinHandle {
         thread_ptr = 0:Addr
         
         // 4. Fire the thread
-        // libc_pthread_create matches: thread, attr, start_routine, arg
-        // start_routine is identical to the Toka Closure `invoke(self)` signature mapping!
         libc_pthread_create(
             (*thread_ptr) as Addr,
             0:Addr,
@@ -57,26 +52,23 @@ pub fn spawn(f: fn() -> i32) -> JoinHandle {
         auto thread_id = thread_ptr
         libc_free((*thread_ptr) as *void)
         
-        // Note: f_buf is intentionally leaked to the new thread's execution lifetime for now.
-        // It should technically be freed by the thread_wrapper internally, but native closures 
-        // cannot dynamically append a libc_free call. A robust implementation would involve
-        // generating an LLVM-level wrapper or making threads explicitly drop their closures.
-        
-        return JoinHandle(id = thread_id)
+        return JoinHandle<T>(id = thread_id)
     }
 }
 
-impl JoinHandle {
+impl<T> JoinHandle<T> {
     /// Waits for the associated thread to finish.
-    pub fn join(self) -> i32 {
+    pub fn join(self) -> ^T {
         unsafe {
             // Allocate dummy pointer for retval to satisfy pthread_join signature
-            auto *null_ptr# = libc_malloc(8 as usize) as *Addr
-            null_ptr = 0:Addr
-            libc_pthread_join(self.id, (*null_ptr) as Addr)
-            libc_free((*null_ptr) as *void)
+            auto *retval_ptr# = libc_malloc(8 as usize) as *Addr
+            retval_ptr = 0:Addr
+            libc_pthread_join(self.id, (*retval_ptr) as Addr)
             
-            return 0
+            auto raw_res = retval_ptr
+            libc_free((*retval_ptr) as *void)
+            
+            return (raw_res as *T) as ^T
         }
     }
 }

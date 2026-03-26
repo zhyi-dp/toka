@@ -1,25 +1,36 @@
 import std/io::println
 import std/thread::{spawn, sleep_ms}
+import std/string::{String}
 
 pub fn main() -> i32 {
-    auto target = 100
+    auto target = 100:i64
     
     // Spawn a thread and explicitly capture `target` by moving it (cede) into the thread!
-    auto handle = spawn([cede target] {
+    auto handle = spawn<String>([cede target] {
         sleep_ms(100:u32)
-        println("I am a new Toka OS thread! Target is: {}", target)
-        0
+        auto text# = String::from("Toka Threading with generics: target = ")
+        auto num_s = String::from_i64(target)
+        text#.push_str(num_s.c_str())
+        auto ^res# = unsafe alloc String(buf=nullptr, len=0:i32, cap=0:i32)
+        res = text 
+        return ^res
     })
 
-    auto handle2 = spawn({
-        println("I am a new Toka OS thread! Target is: {}", 111)
-        0
+    auto handle2 = spawn<String>({
+        auto text = String::from("Hello from background thread!")
+        auto ^res# = unsafe alloc String(buf=nullptr, len=0:i32, cap=0:i32)
+        res = text
+        return ^res
     })
     
     println("Main thread is waiting...")
-    handle.join()
-    handle2.join()
-    println("Thread finished! Shutting down.")
+    
+    auto ^res1# = handle.join()
+    auto ^res2# = handle2.join()
+    
+    println("Thread 1 returned: {}", res1)
+    println("Thread 2 returned: {}", res2)
+    println("Thread finished! Memory will safely drop. Shutting down.")
     
     return 0
 }

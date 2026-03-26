@@ -891,11 +891,11 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
           }
         }
       }
-    } else if (targetType->isSmartPointer() && !srcType->isSmartPointer() &&
+    } else if (!m_InUnsafeContext && targetType->isSmartPointer() && !srcType->isSmartPointer() &&
                srcType->toString() != "nullptr" &&
                srcType->toString() != "*?void") {
       error(Cast, DiagID::ERR_SMART_PTR_FROM_STACK, Cast->TargetType[0]);
-    } else if (targetIsRaw &&
+    } else if (!m_InUnsafeContext && targetIsRaw &&
                (srcType->isUniquePtr() || srcType->isSharedPtr())) {
       error(Cast, DiagID::ERR_GENERIC_PARSE,
             "Identity Intrusion: Managed memory ('" + srcType->toString() +
@@ -925,7 +925,7 @@ std::shared_ptr<toka::Type> Sema::checkExprImpl(Expr *E) {
               Cast->TargetType);
       }
     } else if (srcIsRaw) {
-      if (!(targetIsAddr || targetIsRaw || targetIsNumeric)) {
+      if (!(targetIsAddr || targetIsRaw || targetIsNumeric || (m_InUnsafeContext && targetType->isSmartPointer()))) {
         error(Cast, DiagID::ERR_CAST_MISMATCH, srcType->toString(),
               Cast->TargetType);
       }
