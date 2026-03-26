@@ -1327,6 +1327,56 @@ public:
   }
 };
 
+enum class CaptureMode { ImplicitBorrow, ExplicitCede, ExplicitCopy };
+
+struct CaptureItem {
+  std::string Name;
+  CaptureMode Mode;
+  SourceLocation Loc;
+
+  CaptureItem clone() const {
+    CaptureItem c;
+    c.Name = Name;
+    c.Mode = Mode;
+    c.Loc = Loc;
+    return c;
+  }
+};
+
+class ClosureExpr : public Expr {
+public:
+  std::vector<CaptureItem> ExplicitCaptures;
+  std::vector<std::string> ImplicitCaptures; // Filled by Sema
+  std::vector<FunctionDecl::Arg> Params;
+  std::string ReturnType;
+  std::shared_ptr<toka::Type> ResolvedReturnType;
+  std::unique_ptr<BlockStmt> Body;
+  std::string SynthesizedShapeName;
+
+  ClosureExpr() {}
+  std::string toString() const override { return "ClosureExpr(" + SynthesizedShapeName + ")"; }
+  std::unique_ptr<ASTNode> clone() const override {
+    auto n = std::make_unique<ClosureExpr>();
+    for (const auto &cap : ExplicitCaptures) {
+      n->ExplicitCaptures.push_back(cap.clone());
+    }
+    n->ImplicitCaptures = ImplicitCaptures;
+    for (const auto &p : Params) {
+      n->Params.push_back(p.clone());
+    }
+    n->ReturnType = ReturnType;
+    n->ResolvedReturnType = ResolvedReturnType;
+    if (Body) {
+      n->Body = std::unique_ptr<BlockStmt>(
+          static_cast<BlockStmt *>(Body->clone().release()));
+    }
+    n->SynthesizedShapeName = SynthesizedShapeName;
+    n->Loc = Loc;
+    n->ResolvedType = ResolvedType;
+    return n;
+  }
+};
+
 class ExternDecl : public ASTNode {
 public:
   struct Arg {

@@ -233,6 +233,7 @@ private:
   std::set<std::string>
       m_LastLifeDependencies; // [NEW] Track shape dependencies
   std::shared_ptr<toka::Type> m_ExpectedType;
+  std::set<std::string> m_AccessedVariables; // [CLOSURE] Track accessed variables
   // {VarName, IsMutable}
   std::vector<std::pair<std::string, bool>> m_CurrentStmtBorrows;
   struct ModuleScope {
@@ -307,6 +308,7 @@ private:
   std::string checkUnaryExprStr(UnaryExpr *Unary); // Legacy
   std::shared_ptr<toka::Type>
   checkExprImpl(Expr *E); // New Object API Implementation
+  std::shared_ptr<toka::Type> checkClosureExpr(ClosureExpr *Clo);
   std::shared_ptr<toka::Type>
   checkExpr(Expr *E); // New Object API Wrapper (Annotates AST)
   std::shared_ptr<toka::Type> checkExpr(

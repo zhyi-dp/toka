@@ -226,6 +226,7 @@ private:
   PhysEntity genPassExpr(const PassExpr *expr);
   PhysEntity genBreakExpr(const BreakExpr *expr);
   PhysEntity genContinueExpr(const ContinueExpr *expr);
+  PhysEntity genClosureExpr(const ClosureExpr *expr);
   PhysEntity genUnsafeExpr(const UnsafeExpr *expr);
   PhysEntity genNewExpr(const NewExpr *expr);
   llvm::Value *genReturnStmt(const ReturnStmt *stmt);

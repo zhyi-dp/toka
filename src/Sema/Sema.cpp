@@ -692,13 +692,19 @@ void Sema::checkFunction(FunctionDecl *Fn) {
     if (Arg.IsValueMutable)
       fullType += "#";
 
-    // [New] Annotated AST: Use resolveType (string version) to handle
-    // aliases/Self, then parse
-    std::string resolvedStr = resolveType(fullType);
-    Info.TypeObj = toka::Type::fromString(resolvedStr);
+    // [Fix] Preserve pre-resolved Types (e.g. Synthetic Closures)
+    if (Arg.ResolvedType) {
+      Info.TypeObj = Arg.ResolvedType;
+    } else {
+      // [New] Annotated AST: Use resolveType (string version) to handle
+      // aliases/Self, then parse
+      std::string resolvedStr = resolveType(fullType);
+      Info.TypeObj = toka::Type::fromString(resolvedStr);
 
-    // Assign to AST Node for CodeGen
-    Arg.ResolvedType = Info.TypeObj;
+      // Assign to AST Node for CodeGen
+      Arg.ResolvedType = Info.TypeObj;
+    }
+
     Info.IsRebindable = Arg.IsRebindable;
 
     CurrentScope->define(Arg.Name, Info);

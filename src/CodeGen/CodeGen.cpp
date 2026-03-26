@@ -85,6 +85,8 @@ PhysEntity CodeGen::genExpr(const Expr *expr) {
     return genCallExpr(e);
   if (auto e = dynamic_cast<const PostfixExpr *>(expr))
     return genPostfixExpr(e);
+  if (auto e = dynamic_cast<const ClosureExpr *>(expr))
+    return genClosureExpr(e);
   if (auto e = dynamic_cast<const InitStructExpr *>(expr))
     return genInitStructExpr(e);
   if (auto e = dynamic_cast<const PassExpr *>(expr))

@@ -24,7 +24,11 @@ namespace toka {
 llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
   llvm::Value *retVal = nullptr;
   if (ret->ReturnValue) {
+    std::cerr << "DEBUG CodeGen: ReturnStmt has ReturnValue of type " << typeid(*ret->ReturnValue).name() << "\n";
     retVal = genExpr(ret->ReturnValue.get()).load(m_Builder);
+    if (!retVal) {
+      std::cerr << "DEBUG CodeGen: ReturnStmt evaluation yielded nullptr!\n";
+    }
 
     // [Fix] Premature Drop in Return
     // If we are returning a local Shared Pointer variable (by Copy/Share
@@ -139,15 +143,19 @@ llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
   }
 
   llvm::Function *f = m_Builder.GetInsertBlock()->getParent();
-  llvm::errs() << "DEBUG: genReturnStmt cleanupScopes\n";
+  std::cerr << "DEBUG: genReturnStmt cleanupScopes\n";
   cleanupScopes(0);
   if (retVal) {
+    std::cerr << "DEBUG: genReturnStmt has valid retVal of type: ";
+    retVal->getType()->print(llvm::errs()); llvm::errs() << "\n";
     if (retVal->getType() != f->getReturnType()) {
       if (f->getReturnType()->isVoidTy())
         return m_Builder.CreateRetVoid();
       retVal = m_Builder.CreateBitCast(retVal, f->getReturnType());
     }
     return m_Builder.CreateRet(retVal);
+  } else {
+    std::cerr << "DEBUG: genReturnStmt has NULL retVal! Falling back to 0.\n";
   }
 
   if (f->getReturnType()->isVoidTy())

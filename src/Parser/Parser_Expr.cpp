@@ -236,6 +236,10 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     return node;
   }
 
+  if (isClosureExpression()) {
+    return parseClosureExpr();
+  }
+
   if (match(TokenType::Integer)) {
     Token tok = previous();
     auto node = std::make_unique<NumberExpr>(std::stoull(tok.Text, nullptr, 0));
@@ -1014,6 +1018,105 @@ std::unique_ptr<Expr> Parser::parsePass() {
   auto node = std::make_unique<PassExpr>(std::move(val));
   node->setLocation(tok, m_CurrentFile);
   return node;
+}
+
+bool Parser::isClosureExpression() {
+  if (check(TokenType::KwFn) && checkAt(1, TokenType::LParen)) return true;
+  if (check(TokenType::LBracket) && (checkAt(1, TokenType::KwCede) || checkAt(1, TokenType::KwCopy))) return true;
+  if ((check(TokenType::KwCede) || check(TokenType::KwCopy)) && (checkAt(1, TokenType::KwFn) || checkAt(1, TokenType::LParen))) return true;
+  
+  if (check(TokenType::KwFn) && checkAt(1, TokenType::LParen)) return true;
+  return false;
+}
+
+std::unique_ptr<Expr> Parser::parseClosureExpr() {
+  auto expr = std::make_unique<ClosureExpr>();
+  expr->setLocation(peek(), m_CurrentFile);
+
+  // 1. Optional Captures
+  if (match(TokenType::LBracket)) {
+    while (!check(TokenType::RBracket) && !check(TokenType::EndOfFile)) {
+       CaptureItem cap;
+       cap.Loc = peek().Loc;
+       if (match(TokenType::KwCede)) cap.Mode = CaptureMode::ExplicitCede;
+       else if (match(TokenType::KwCopy)) cap.Mode = CaptureMode::ExplicitCopy;
+       else { error(peek(), "Expected 'cede' or 'copy' modifier in closure capture list. Implicit variables do not need to be declared."); return nullptr; }
+       
+       std::string prefix = "";
+       if (match(TokenType::Tilde)) prefix = "~";
+       else if (match(TokenType::Caret)) prefix = "^";
+       else if (match(TokenType::Star)) prefix = "*";
+       else if (match(TokenType::Ampersand)) prefix = "&";
+
+       if (match(TokenType::TokenNull)) prefix += "?";
+       if (match(TokenType::TokenWrite)) prefix += "#";
+
+       cap.Name = prefix + consume(TokenType::Identifier, "Expected variable name to capture").Text;
+       
+       expr->ExplicitCaptures.push_back(cap);
+       if (!check(TokenType::RBracket)) consume(TokenType::Comma, "Expected ',' in capture list");
+    }
+    consume(TokenType::RBracket, "Expected ']' to end capture list");
+  } else if (match(TokenType::KwCede)) {
+    // Global cede
+    CaptureItem cap;
+    cap.Name = "*"; // Special marker for global cede
+    cap.Mode = CaptureMode::ExplicitCede;
+    expr->ExplicitCaptures.push_back(cap);
+  } else if (match(TokenType::KwCopy)) {
+    // Global copy
+    CaptureItem cap;
+    cap.Name = "*"; // Special marker for global copy
+    cap.Mode = CaptureMode::ExplicitCopy;
+    expr->ExplicitCaptures.push_back(cap);
+  }
+
+  // 2. Optional `fn` keyword
+  match(TokenType::KwFn);
+
+  // 3. Parameters
+  consume(TokenType::LParen, "Expected '(' for closure parameters");
+  while (!check(TokenType::RParen) && !check(TokenType::EndOfFile)) {
+    FunctionDecl::Arg arg;
+    
+    // Parse param sigils
+    if (match(TokenType::Caret)) { arg.HasPointer = true; arg.IsUnique = true; }
+    else if (match(TokenType::Tilde)) { arg.HasPointer = true; arg.IsShared = true; }
+    else if (match(TokenType::Star)) arg.HasPointer = true;
+    else if (match(TokenType::Ampersand)) arg.IsReference = true;
+
+    if (arg.HasPointer && match(TokenType::TokenWrite)) arg.IsRebindable = true;
+    if (arg.HasPointer && match(TokenType::TokenNull)) arg.IsPointerNullable = true;
+    if (arg.HasPointer && match(TokenType::TokenNone)) arg.IsRebindBlocked = true;
+
+    arg.Name = consume(TokenType::Identifier, "Expected parameter name").Text;
+
+    if (match(TokenType::TokenWrite)) arg.IsValueMutable = true;
+    if (match(TokenType::TokenNone)) arg.IsValueBlocked = true;
+
+    if (match(TokenType::Colon)) {
+      arg.Type = parseTypeString();
+    } else {
+      // In closures, types can be inferred
+      arg.Type = "unknown";
+    }
+    
+    expr->Params.push_back(std::move(arg));
+    if (!check(TokenType::RParen)) consume(TokenType::Comma, "Expected ',' between closure parameters");
+  }
+  consume(TokenType::RParen, "Expected ')' to close closure parameters");
+
+  // 4. Optional Return Type
+  if (match(TokenType::Arrow)) {
+     expr->ReturnType = parseTypeString();
+  } else {
+     expr->ReturnType = "unknown";
+  }
+
+  // 5. Body
+  expr->Body = parseBlock();
+
+  return expr;
 }
 
 } // namespace toka

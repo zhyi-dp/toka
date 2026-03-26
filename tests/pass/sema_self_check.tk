@@ -17,9 +17,9 @@ impl Rect {
 
     // 3. 'Self' in variable declaration
     pub fn clone(self) -> Self {
-        auto copy: Self = unset
-        copy = Rect(width=self.width, height=self.height)
-        return copy
+        auto self_copy: Self = unset
+        self_copy = Rect(width=self.width, height=self.height)
+        return self_copy
     }
 
     // [新增] 4. 'Self' as Namespace for Static Calls

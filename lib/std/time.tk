@@ -97,8 +97,8 @@ impl DateTime {
             auto *buf# = libc_malloc(128:u64) as *char
             // To pass a pointer to self, we need it to be addressable.
             // Copying to a local mutable variable # ensures it's on stack.
-            auto copy# = self 
-            auto len = libc_strftime(*buf, 128:u64, fmt.c_str(), *copy as *void)
+            auto self_copy# = self 
+            auto len = libc_strftime(*buf, 128:u64, fmt.c_str(), *self_copy as *void)
             auto s = String::from_with_len(*buf, len as i32)
             libc_free(*buf as *void)
             return s

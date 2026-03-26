@@ -695,22 +695,26 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   PhysEntity lhs_ent = genExpr(bin->LHS.get()).load(m_Builder);
   llvm::Value *lhs = lhs_ent.load(m_Builder);
   if (!lhs) {
+    std::cerr << "DEBUG CodeGen: genBinaryExpr aborted because lhs load failed.\n";
     return nullptr;
   }
 
   if (!m_Builder.GetInsertBlock() ||
       m_Builder.GetInsertBlock()->getTerminator()) {
+    std::cerr << "DEBUG CodeGen: genBinaryExpr aborted because lhs terminated block.\n";
     return nullptr;
   }
 
   PhysEntity rhs_ent = genExpr(bin->RHS.get()).load(m_Builder);
   llvm::Value *rhs = rhs_ent.load(m_Builder);
   if (!rhs) {
+    std::cerr << "DEBUG CodeGen: genBinaryExpr aborted because rhs load failed.\n";
     return nullptr;
   }
 
   if (!m_Builder.GetInsertBlock() ||
       m_Builder.GetInsertBlock()->getTerminator()) {
+    std::cerr << "DEBUG CodeGen: genBinaryExpr aborted because rhs terminated block.\n";
     return nullptr;
   }
 
@@ -886,7 +890,9 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
       }
       return m_Builder.CreateGEP(elemTy, lhs, {rhs}, "ptradd");
     }
-    return m_Builder.CreateAdd(lhs, rhs, "addtmp");
+    llvm::Value *add_res = m_Builder.CreateAdd(lhs, rhs, "addtmp");
+    std::cerr << "DEBUG CodeGen: Created ADD resulting in " << (add_res ? "valid" : "null") << "\n";
+    return add_res;
   }
   if (bin->Op == "-") {
     if (lhs->getType()->isPointerTy()) {
@@ -1413,18 +1419,47 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
   llvm::Type *soulType = nullptr;
   if (m_Symbols.count(baseName)) {
     soulType = m_Symbols[baseName].soulType;
-  } else if (var->ResolvedType) {
-    // [New] Use ResolvedType as fallback if not in symbols
-    soulType = getLLVMType(var->ResolvedType);
   } else {
-    // Fallback for globals/externs
-    if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(soulAddr)) {
-      soulType = ai->getAllocatedType();
-    } else if (auto *li = llvm::dyn_cast<llvm::LoadInst>(soulAddr)) {
-      soulType = li->getType();
-    } else if (auto *gv = llvm::dyn_cast<llvm::GlobalVariable>(soulAddr)) {
-      soulType = gv->getValueType();
+    // [Fix] Closure Environment Fallback: Retrieve exact type from ShapeDecl
+    if (m_Symbols.count("self")) {
+      auto selfTy = m_Symbols["self"].soulTypeObj;
+      if (selfTy && selfTy->isReference()) {
+        selfTy = std::static_pointer_cast<toka::PointerType>(selfTy)->PointeeType;
+      }
+      if (selfTy && selfTy->isShape() && selfTy->getSoulName().find("__Closure_") == 0) {
+        auto shapeTy = std::static_pointer_cast<ShapeType>(selfTy);
+        if (shapeTy->Decl) {
+          for (const auto &memb : shapeTy->Decl->Members) {
+            if (memb.Name == baseName) {
+              if (memb.ResolvedType && memb.ResolvedType->isReference()) {
+                soulType = getLLVMType(std::static_pointer_cast<toka::PointerType>(memb.ResolvedType)->PointeeType);
+              } else if (memb.ResolvedType) {
+                soulType = getLLVMType(memb.ResolvedType);
+              }
+              break;
+            }
+          }
+        }
+      }
     }
+
+    if (!soulType && var->ResolvedType) {
+      // [New] Use ResolvedType as fallback if not in symbols
+      soulType = getLLVMType(var->ResolvedType);
+    } else if (!soulType) {
+      // Fallback for globals/externs
+      if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(soulAddr)) {
+        soulType = ai->getAllocatedType();
+      } else if (auto *li = llvm::dyn_cast<llvm::LoadInst>(soulAddr)) {
+        soulType = li->getType();
+      } else if (auto *gv = llvm::dyn_cast<llvm::GlobalVariable>(soulAddr)) {
+        soulType = gv->getValueType();
+      }
+    }
+  }
+
+  if (!soulType) {
+    std::cerr << "DEBUG CodeGen: soulType missing for " << baseName << ", defaulting to ptrTy!\n";
   }
 
   // [Fix] Shared Pointer Handle Type Correction
@@ -3742,6 +3777,64 @@ PhysEntity CodeGen::genRepeatedArrayExpr(const RepeatedArrayExpr *expr) {
   std::string arrayTypeName =
       "[" + val_ent.typeName + "; " + std::to_string(count) + "]";
   return PhysEntity(alloca, arrayTypeName, arrTy, true);
+}
+
+PhysEntity CodeGen::genClosureExpr(const ClosureExpr *expr) {
+  auto shapeType = std::dynamic_pointer_cast<toka::ShapeType>(expr->ResolvedType);
+  if (!shapeType || !shapeType->Decl) {
+      if (expr->ResolvedType && expr->ResolvedType->isReference()) {
+         auto refTy = std::dynamic_pointer_cast<toka::ReferenceType>(expr->ResolvedType);
+         if (refTy) shapeType = std::dynamic_pointer_cast<toka::ShapeType>(refTy->PointeeType);
+      }
+  }
+
+  if (!shapeType || !shapeType->Decl) {
+      std::cerr << "CodeGen Internal Error: Closure's ResolvedType was not ShapeType!\n";
+      return nullptr;
+  }
+
+  llvm::Type *llvmTy = getLLVMType(shapeType);
+  if (!llvmTy) return nullptr;
+
+  llvm::Value *alloca = m_Builder.CreateAlloca(llvmTy, nullptr, "closure_env");
+
+  // Populate captures
+  for (size_t i = 0; i < shapeType->Decl->Members.size(); ++i) {
+    const auto &member = shapeType->Decl->Members[i];
+    
+    llvm::Value *fieldAddr = m_Builder.CreateStructGEP(llvmTy, alloca, i);
+
+    if (member.ResolvedType && member.ResolvedType->isReference()) {
+       // Reference capture: Store the address
+       llvm::Value *srcAddr = getEntityAddr(member.Name); 
+       if (srcAddr) {
+           m_Builder.CreateStore(srcAddr, fieldAddr);
+       } else {
+           std::cerr << "CodeGen Internal Error: Captured variable '" << member.Name << "' addr not found.\n";
+       }
+    } else {
+       // Value capture
+       llvm::Value *srcAddr = getEntityAddr(member.Name); 
+       if (srcAddr) {
+           llvm::Type *loadTy = nullptr;
+           if (member.ResolvedType) {
+               loadTy = getLLVMType(member.ResolvedType);
+           } else {
+               loadTy = resolveType(member.Type, member.HasPointer);
+           }
+           if (!loadTy) {
+               std::cerr << "CodeGen Internal Error: Captured variable '" << member.Name << "' type could not be resolved.\n";
+               continue;
+           }
+           auto val = m_Builder.CreateLoad(loadTy, srcAddr);
+           m_Builder.CreateStore(val, fieldAddr);
+       } else {
+           std::cerr << "CodeGen Internal Error: Captured variable '" << member.Name << "' val not found.\n";
+       }
+    }
+  }
+
+  return PhysEntity(alloca, shapeType->Name, llvmTy, true);
 }
 
 } // namespace toka

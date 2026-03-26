@@ -1,0 +1,21 @@
+fn test_closure(arg: i32) -> i32 {
+    auto f1 = fn(x: i32) -> i32 { return x + 1; }
+    
+    auto x = arg + 5;
+    auto f2 = [cede x] fn(y: i32) -> i32 { return y + x; }
+    
+    auto r = arg * 2;
+    auto f3 = [copy ~r] fn(z:i32) -> i32 { return z + r; }
+    
+    auto f4 = fn(a:i32) -> i32 { return a + 1; }
+    
+    auto env = arg - 1;
+    auto f5 = [cede env] fn(b:i32) -> i32 { return b + env; }
+    
+    return 0;
+}
+
+fn main() -> i32 {
+    test_closure(10);
+    return 0;
+}

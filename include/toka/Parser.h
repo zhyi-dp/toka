@@ -62,6 +62,11 @@ private:
   std::unique_ptr<Stmt> parseStmt();
   std::unique_ptr<Expr> parseIf();
   std::unique_ptr<Expr> parseGuard();
+  std::unique_ptr<Expr> parseRangeExpr(std::unique_ptr<Expr> start);
+  std::unique_ptr<Expr> parseClosureExpr();
+
+  bool isClosureExpression();
+  bool isTypeCast();
   std::unique_ptr<Expr> parseWhile();
   std::unique_ptr<Expr> parseLoop();
   std::unique_ptr<Expr> parseForExpr();

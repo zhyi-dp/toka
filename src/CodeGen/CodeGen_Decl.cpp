@@ -180,6 +180,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
   for (auto &arg : f->args()) {
     const auto &argDecl = func->Args[idx];
     std::string argName = argDecl.Name;
+    
+    // std::cout << "DEBUG: Registering Arg " << idx << ": " << argName << " in function " << funcName << std::endl;
 
     // 1. Strip morphology to get the base symbol name
     argName = Type::stripMorphology(argName);

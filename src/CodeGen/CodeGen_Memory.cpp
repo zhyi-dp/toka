@@ -982,6 +982,42 @@ llvm::Value *CodeGen::getEntityAddr(const std::string &name) {
 
   auto it = m_Symbols.find(baseName);
   if (it == m_Symbols.end()) {
+    std::cerr << "DEBUG CodeGen: '" << baseName << "' not in m_Symbols.\n";
+    // [Fix] Closure Environment Fallback
+    if (m_Symbols.count("self")) {
+      std::cerr << "DEBUG CodeGen: 'self' found in m_Symbols.\n";
+      auto selfTy = m_Symbols["self"].soulTypeObj;
+      if (selfTy && selfTy->isReference()) {
+        auto ptrTy = std::static_pointer_cast<toka::PointerType>(selfTy);
+        selfTy = ptrTy->PointeeType;
+      }
+      if (selfTy && selfTy->isShape() && selfTy->getSoulName().find("__Closure_") == 0) {
+        std::cerr << "DEBUG CodeGen: 'self' is closure shape " << selfTy->getSoulName() << "\n";
+        auto shapeTy = std::static_pointer_cast<ShapeType>(selfTy);
+        if (shapeTy->Decl) {
+          std::cerr << "DEBUG CodeGen: shapeTy has Decl with " << shapeTy->Decl->Members.size() << " members.\n";
+          int count = 0;
+          for (const auto& member : shapeTy->Decl->Members) {
+            std::cerr << "DEBUG CodeGen: checking member " << member.Name << "\n";
+            if (member.Name == baseName) {
+              std::cerr << "DEBUG CodeGen: matched member " << baseName << "!\n";
+              llvm::Value *selfAddr = getEntityAddr("self");
+              if (!selfAddr) return nullptr;
+              llvm::Type *structTy = getLLVMType(shapeTy);
+              llvm::Value *fieldAddr = m_Builder.CreateStructGEP(structTy, selfAddr, count, "CLOSURE_CAPT_" + baseName);
+              
+              if (member.ResolvedType && member.ResolvedType->isReference()) {
+                  llvm::Type *fieldLLVMTy = getLLVMType(member.ResolvedType);
+                  return m_Builder.CreateLoad(fieldLLVMTy, fieldAddr, "CLOSURE_REF_" + baseName);
+              }
+              return fieldAddr;
+            }
+            count++;
+          }
+        }
+      }
+    }
+
     // Try global
     if (auto *glob = m_Module->getNamedGlobal(baseName)) {
       return glob;
