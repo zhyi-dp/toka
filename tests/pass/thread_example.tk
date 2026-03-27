@@ -7,18 +7,18 @@ pub fn main() -> i32 {
     
     // Spawn a thread and explicitly capture `target` by moving it (cede) into the thread!
     auto handle = spawn<String>([cede target] {
-        sleep_ms(100:u32)
+        sleep_ms(1000:u32)
         auto text# = String::from("Toka Threading with generics: target = ")
         auto num_s = String::from_i64(target)
         text#.push_str(num_s.c_str())
-        auto ^res# = unsafe alloc String(buf=nullptr, len=0:i32, cap=0:i32)
+        auto ^res# = new String(*buf=nullptr, len=0:i32, cap=0:i32)
         res = text 
         return ^res
     })
 
     auto handle2 = spawn<String>({
         auto text = String::from("Hello from background thread!")
-        auto ^res# = unsafe alloc String(buf=nullptr, len=0:i32, cap=0:i32)
+        auto ^res# = new String(*buf=nullptr, len=0:i32, cap=0:i32)
         res = text
         return ^res
     })

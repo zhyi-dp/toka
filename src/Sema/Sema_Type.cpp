@@ -884,9 +884,8 @@ bool Sema::isTypeCompatible(std::shared_ptr<toka::Type> Target,
     if (T->isPointer() || T->isSmartPointer() || T->isReference()) {
       if (T->IsNullable)
         return true;
-      // [Relaxation] Allow nullptr to raw pointers in unsafe context (Standard
-      // Library compat)
-      if (m_InUnsafeContext && T->isRawPointer())
+      // [Relaxation] Allow nullptr to all raw pointers (*T, *[T]) implicitly
+      if (T->isRawPointer())
         return true;
     }
   }
