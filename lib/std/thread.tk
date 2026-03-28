@@ -1,5 +1,8 @@
 import core/libc::{libc_pthread_create, libc_pthread_join, libc_malloc, libc_free, libc_usleep, libc_putchar}
 import std/io::{println}
+import core/result::{Result}
+import std/error::{Error}
+import std/string::{String}
 
 /// Suspends the current thread for at least the specified number of milliseconds.
 pub fn sleep_ms(ms: u32) {
@@ -32,8 +35,6 @@ pub fn spawn<T>(f: fn() -> cede T) -> JoinHandle<T> {
         
         // 2. Define capturing trampoline matching C-ABI implicitly via fat ptrs
         auto tramp_fn: fn() -> Addr = [cede captured_box] {
-            libc_putchar(65:i32) // Print 'A'
-            libc_putchar(10:i32) // Print '\n'
             unsafe {
                 auto closure = captured_box.closure
                 auto self_ptr = captured_box.self_ptr
@@ -42,12 +43,12 @@ pub fn spawn<T>(f: fn() -> cede T) -> JoinHandle<T> {
                 libc_free(self_ptr as *void)
                 
                 // Create native heap box for result matching structural types safely via parenthesis isolating generic templates 
-                auto *box_ret# = (libc_malloc(sizeof(T) as usize) as *T)
+                auto *ret_ptr# = (libc_malloc(sizeof(T) as usize) as *T)
                 
                 // Write the structural closure evaluation safely to memory by utilizing `cede` keyword for moves!
-                box_ret# = cede closure()
+                ret_ptr# = cede closure()
                 
-                return (*box_ret) as Addr
+                return (*ret_ptr) as Addr
             }
         }
         
@@ -89,26 +90,38 @@ pub fn spawn<T>(f: fn() -> cede T) -> JoinHandle<T> {
 pub shape JoinHandle<T>(id: Addr)
 
 impl<T> JoinHandle<T> {
-    /// Waits for the thread to finish and returns its yielded value.
-    pub fn join(self) -> T {
+    /// Waits for the thread to finish and returns its yielded value or an Error if the OS join fails.
+    pub fn join(self) -> Result<T, Error> {
         unsafe {
             // Allocate 8-byte pointer block to receive the pthread_join result
             auto *retval_ptr# = (libc_malloc(8 as usize) as *Addr)
-            retval_ptr# = 0:Addr
+            retval_ptr = 0:Addr
             
-            // Join blocks here, taking the thread id from the handle
-            libc_pthread_join(self.id, (*retval_ptr) as Addr)
+            // We pass the pointer handle (*retval_ptr) so that `pthread_join` writes the struct box pointer 
+            auto rc = libc_pthread_join(self.id, (*retval_ptr) as Addr)
             
-            // value returned from thread (it's the allocated struct box)
-            auto raw_res = retval_ptr
+            if rc != 0 {
+                auto msg# = String::from("pthread_join failed with error code: ")
+                auto rc_str = String::from_int(rc)
+                msg#.push_str(rc_str.c_str())
+                
+                auto err = Error::new(rc, msg)
+                libc_free((*retval_ptr) as *byte)
+                return Result<T, Error>::Err(err)
+            }
+            
+            // The value effectively returned from the thread
+            auto raw_res: Addr = retval_ptr
+            
+            // Free the indirection block that we allocated to satisfy `void **`
             libc_free((*retval_ptr) as *byte)
             
-            // Extract the box, unbox it safely, and free the box
+            // Extract the structurally boxed payload safely
             auto *box_ret = (raw_res as *T)
             auto val = cede box_ret
             libc_free(raw_res as *void)
             
-            return cede val
+            return Result<T, Error>::Ok(cede val)
         }
     }
 }

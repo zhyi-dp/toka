@@ -27,11 +27,11 @@ pub fn main() -> i32 {
     
     println("Main thread is waiting...")
     
-    auto res1 = handle.join()
-    auto res2 = handle2.join()
+    auto res1 = handle.join().unwrap()
+    auto res2 = handle2.join().unwrap()
     
-    println("Thread 1 returned: {}", res1)
-    println("Thread 2 returned: {}", res2)
+    println("Thread 1 returned: {}", res1.c_str())
+    println("Thread 2 returned: {}", res2.c_str())
     println("Thread finished! Memory will safely drop. Shutting down.")
     
     return 0
