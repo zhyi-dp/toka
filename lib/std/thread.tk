@@ -1,4 +1,4 @@
-import core/libc::{libc_pthread_create, libc_pthread_join, libc_malloc, libc_free, libc_usleep}
+import core/libc::{libc_pthread_create, libc_pthread_join, libc_malloc, libc_free, libc_usleep, libc_putchar}
 import std/io::{println}
 
 /// Suspends the current thread for at least the specified number of milliseconds.
@@ -32,6 +32,8 @@ pub fn spawn<T>(f: fn() -> cede T) -> JoinHandle<T> {
         
         // 2. Define capturing trampoline matching C-ABI implicitly via fat ptrs
         auto tramp_fn: fn() -> Addr = [cede captured_box] {
+            libc_putchar(65:i32) // Print 'A'
+            libc_putchar(10:i32) // Print '\n'
             unsafe {
                 auto closure = captured_box.closure
                 auto self_ptr = captured_box.self_ptr

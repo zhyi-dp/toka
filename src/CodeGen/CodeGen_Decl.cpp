@@ -848,6 +848,11 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   fillSymbolMetadata(sym, var->TypeName, var->HasPointer, var->IsUnique,
                      var->IsShared, var->IsReference, var->IsValueMutable,
                      var->IsValueNullable || var->IsPointerNullable, elemTy);
+                     
+  if (var->ResolvedType) {
+      sym.soulTypeObj = var->ResolvedType;
+  }
+  
   sym.isRebindable = var->IsRebindable;
   sym.hasDrop = false;
   sym.dropFunc = "";

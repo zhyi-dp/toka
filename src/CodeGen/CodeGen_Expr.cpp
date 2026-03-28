@@ -2729,45 +2729,75 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
   
   if (!callee) {
     // [NEW] Fat Pointer Invocation Intercept
-    if (m_Symbols.count(calleeName)) {
-      auto &sym = m_Symbols[calleeName];
-      if (sym.soulTypeObj && sym.soulTypeObj->typeKind == Type::Function) {
-        auto fnTy = std::static_pointer_cast<FunctionType>(sym.soulTypeObj);
-        
-        auto varExpr = std::make_unique<VariableExpr>(calleeName);
-        varExpr->ResolvedType = fnTy;
-        llvm::Value *fatVal = genExpr(varExpr.get()).load(m_Builder);
-        if (!fatVal) return nullptr;
-        
-        llvm::Value *envPtr = m_Builder.CreateExtractValue(fatVal, 0, "closure_env");
-        llvm::Value *funcPtr = m_Builder.CreateExtractValue(fatVal, 1, "closure_func");
-        
-        std::vector<llvm::Type*> argTys;
-        std::vector<llvm::Value*> argVals;
-        argTys.push_back(llvm::PointerType::getUnqual(m_Context));
-        argVals.push_back(envPtr);
-        
-        for (size_t i = 0; i < call->Args.size(); ++i) {
-          llvm::Value *av = genExpr(call->Args[i].get()).load(m_Builder);
-          llvm::Type *expectedTy = getLLVMType(fnTy->ParamTypes[i]);
-          
-          if (av && expectedTy->isPointerTy() && av->getType()->isStructTy()) {
-             llvm::AllocaInst *tmp = m_Builder.CreateAlloca(av->getType(), nullptr, "arg_tmp_byref");
-             m_Builder.CreateStore(av, tmp);
-             av = tmp;
-             expectedTy = av->getType();
-          }
-          
-          argVals.push_back(av);
-          argTys.push_back(expectedTy);
+    // Handle both local variables and closure captures
+    bool isValidVar = m_Symbols.count(calleeName) > 0;
+    std::shared_ptr<Type> symTy = nullptr;
+    
+    if (isValidVar) {
+        symTy = m_Symbols[calleeName].soulTypeObj;
+    } else if (m_Symbols.count("self")) {
+        auto selfTy = m_Symbols["self"].soulTypeObj;
+        if (selfTy && selfTy->isReference()) {
+            selfTy = std::static_pointer_cast<toka::PointerType>(selfTy)->PointeeType;
+        }
+        if (selfTy && selfTy->isShape() && selfTy->getSoulName().find("__Closure_") == 0) {
+            auto shapeTy = std::static_pointer_cast<ShapeType>(selfTy);
+            if (shapeTy->Decl) {
+                for (const auto &memb : shapeTy->Decl->Members) {
+                    if (memb.Name == calleeName) {
+                        isValidVar = true;
+                        symTy = memb.ResolvedType;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (isValidVar) {
+        if (symTy && symTy->isPointer()) {
+            symTy = std::static_pointer_cast<PointerType>(symTy)->PointeeType;
         }
         
-        llvm::Type *retTy = getLLVMType(fnTy->ReturnType);
-        llvm::FunctionType *llFnTy = llvm::FunctionType::get(retTy, argTys, false);
-        
-        llvm::Value *retVal = m_Builder.CreateCall(llFnTy, funcPtr, argVals);
-        return PhysEntity(retVal, fnTy->ReturnType->getSoulName(), retVal->getType(), false);
-      }
+        if (symTy && symTy->isFunction()) {
+            auto fnTy = std::static_pointer_cast<FunctionType>(symTy);
+            
+            auto varExpr = std::make_unique<VariableExpr>(calleeName);
+            varExpr->ResolvedType = fnTy; // Optional, but helps downstream
+            PhysEntity fatVal_ent = genExpr(varExpr.get());
+            llvm::Value *fatVal = fatVal_ent.load(m_Builder);
+            
+            if (fatVal && fatVal->getType()->isStructTy() && fatVal->getType()->getStructNumElements() == 2) {
+                llvm::Value *envPtr = m_Builder.CreateExtractValue(fatVal, 0, "closure_env");
+                llvm::Value *funcPtr = m_Builder.CreateExtractValue(fatVal, 1, "closure_func");
+                
+                std::vector<llvm::Type*> argTys;
+                std::vector<llvm::Value*> argVals;
+                argTys.push_back(llvm::PointerType::getUnqual(m_Context));
+                argVals.push_back(envPtr);
+                
+                for (size_t i = 0; i < call->Args.size(); ++i) {
+                    llvm::Value *av = genExpr(call->Args[i].get()).load(m_Builder);
+                    llvm::Type *expectedTy = getLLVMType(fnTy->ParamTypes[i]);
+                    
+                    if (av && expectedTy->isPointerTy() && av->getType()->isStructTy()) {
+                       llvm::AllocaInst *tmp = m_Builder.CreateAlloca(av->getType(), nullptr, "arg_tmp_byref");
+                       m_Builder.CreateStore(av, tmp);
+                       av = tmp;
+                       expectedTy = av->getType();
+                    }
+                    
+                    argVals.push_back(av);
+                    argTys.push_back(expectedTy);
+                }
+                
+                llvm::Type *retTy = getLLVMType(fnTy->ReturnType);
+                llvm::FunctionType *llFnTy = llvm::FunctionType::get(retTy, argTys, false);
+                
+                llvm::Value *retVal = m_Builder.CreateCall(llFnTy, funcPtr, argVals);
+                return PhysEntity(retVal, fnTy->ReturnType->getSoulName(), retVal->getType(), false);
+            }
+        }
     }
 
     // Check for ADT Constructor (Type::Member)
@@ -3289,6 +3319,15 @@ PhysEntity CodeGen::genPassExpr(const PassExpr *pe) {
     m_Builder.ClearInsertionPoint();
   }
   return nullptr;
+}
+
+PhysEntity CodeGen::genCedeExpr(const CedeExpr *ce) {
+  // Cede is a move semantic marker checked heavily in Sema. 
+  // In LLVM IR, it simply evaluates to the underlying value.
+  if (ce->Value) {
+    return genExpr(ce->Value.get());
+  }
+  return {};
 }
 
 PhysEntity CodeGen::genBreakExpr(const BreakExpr *be) {

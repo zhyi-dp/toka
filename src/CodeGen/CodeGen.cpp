@@ -102,6 +102,8 @@ PhysEntity CodeGen::genExpr(const Expr *expr) {
     return genInitStructExpr(e);
   if (auto e = dynamic_cast<const PassExpr *>(expr))
     return genPassExpr(e);
+  if (auto e = dynamic_cast<const CedeExpr *>(expr))
+    return genCedeExpr(e);
   if (auto e = dynamic_cast<const BreakExpr *>(expr))
     return genBreakExpr(e);
   if (auto e = dynamic_cast<const ContinueExpr *>(expr))

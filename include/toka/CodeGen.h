@@ -224,6 +224,7 @@ private:
   PhysEntity genCallExpr(const CallExpr *expr);
   PhysEntity genPostfixExpr(const PostfixExpr *expr);
   PhysEntity genPassExpr(const PassExpr *expr);
+  PhysEntity genCedeExpr(const CedeExpr *expr);
   PhysEntity genBreakExpr(const BreakExpr *expr);
   PhysEntity genContinueExpr(const ContinueExpr *expr);
   PhysEntity genClosureExpr(const ClosureExpr *expr);
