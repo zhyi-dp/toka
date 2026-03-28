@@ -86,12 +86,21 @@ llvm::Value *CodeGen::genReturnStmt(const ReturnStmt *ret) {
             m_Builder.CreateCondBr(refNN, doIncBB, contBB);
             m_Builder.SetInsertPoint(doIncBB);
 
-            llvm::Value *cnt =
-                m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
-            llvm::Value *inc = m_Builder.CreateAdd(
-                cnt,
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-            m_Builder.CreateStore(inc, refPtr);
+            bool isAtomic = false;
+            if (sym.soulTypeObj) {
+                if (auto st = std::dynamic_pointer_cast<ShapeType>(sym.soulTypeObj->getSoulType())) {
+                    isAtomic = st->IsSync;
+                }
+            }
+
+            if (isAtomic) {
+                m_Builder.CreateAtomicRMW(llvm::AtomicRMWInst::Add, refPtr, m_Builder.getInt32(1), llvm::MaybeAlign(4), llvm::AtomicOrdering::SequentiallyConsistent);
+            } else {
+                llvm::Value *cnt = m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
+                llvm::Value *inc = m_Builder.CreateAdd(
+                    cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+                m_Builder.CreateStore(inc, refPtr);
+            }
 
             m_Builder.CreateBr(contBB);
             m_Builder.SetInsertPoint(contBB);
@@ -242,15 +251,38 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
             m_Builder.CreateCondBr(refIsNotNull, decBB, afterDecBB);
             m_Builder.SetInsertPoint(decBB);
 
-            llvm::Value *count = m_Builder.CreateLoad(
-                llvm::Type::getInt32Ty(m_Context), refPtr, "ref_count");
-            llvm::Value *dec = m_Builder.CreateSub(
-                count,
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-            m_Builder.CreateStore(dec, refPtr);
-            llvm::Value *isZero = m_Builder.CreateICmpEQ(
-                dec,
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+            bool isAtomic = false;
+            if (m_Symbols.count(it->Name)) {
+              if (auto typeObj = m_Symbols[it->Name].soulTypeObj) {
+                if (auto st = std::dynamic_pointer_cast<ShapeType>(typeObj->getSoulType())) {
+                  isAtomic = st->IsSync;
+                  std::cerr << "[DEBUG] cleanupScopes: Variable " << it->Name << " type=" << typeObj->toString() << " isAtomic=" << isAtomic << "\n";
+                } else {
+                  std::cerr << "[DEBUG] cleanupScopes: Variable " << it->Name << " type is NOT ShapeType!\n";
+                }
+              } else {
+                std::cerr << "[DEBUG] cleanupScopes: Variable " << it->Name << " has NO soulTypeObj!\n";
+              }
+            } else {
+              std::cerr << "[DEBUG] cleanupScopes: Variable " << it->Name << " NOT found in m_Symbols!\n";
+            }
+
+            
+            llvm::Value *isZero = nullptr;
+            if (isAtomic) {
+              llvm::Value *oldCnt = m_Builder.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, refPtr, m_Builder.getInt32(1), llvm::MaybeAlign(4), llvm::AtomicOrdering::SequentiallyConsistent);
+              isZero = m_Builder.CreateICmpEQ(oldCnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+            } else {
+              llvm::Value *count = m_Builder.CreateLoad(
+                  llvm::Type::getInt32Ty(m_Context), refPtr, "ref_count");
+              llvm::Value *dec = m_Builder.CreateSub(
+                  count,
+                  llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+              m_Builder.CreateStore(dec, refPtr);
+              isZero = m_Builder.CreateICmpEQ(
+                  dec,
+                  llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+            }
 
             llvm::BasicBlock *freeBB =
                 llvm::BasicBlock::Create(m_Context, "sh_free", f);

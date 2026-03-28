@@ -3,15 +3,21 @@ import core/result::{Result}
 import std/error::{Error}
 import std/string::{String}
 
+/// The compiler intrinsic sync trait indicating a type is thread-safe
+pub trait @sync {}
+
 /// A mutual exclusion primitive useful for protecting shared data
 pub shape Mutex<T>(
     handle#: Addr,
     data#: T
 )
 
+impl<T> Mutex<T>@sync {}
+
 impl<T> Mutex<T> {
     pub fn new(data: cede T) -> Mutex<T> {
         unsafe {
+
             // Allocate 64 bytes for macOS pthread_mutex_t (64 bytes covers Linux as well)
             auto *handle_ptr# = (libc_malloc(64 as usize) as *byte)
             auto handle_addr = (*handle_ptr) as Addr

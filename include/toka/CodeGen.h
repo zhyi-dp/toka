@@ -160,8 +160,8 @@ private:
                           const TokaSymbol &sym, const Expr *lhsExpr);
   llvm::Value *emitPromotion(llvm::Value *rawPtr, llvm::Type *targetHandleType,
                              const TokaSymbol &sym);
-  void emitAcquire(llvm::Value *sharedHandle);
-  void emitRelease(llvm::Value *sharedHandle, const TokaSymbol &sym);
+  void emitAcquire(llvm::Value *sharedHandle, std::shared_ptr<Type> pointeeType);
+  void emitRelease(llvm::Value *sharedHandle, const TokaSymbol &sym, std::shared_ptr<Type> pointeeType);
 
   llvm::Type *resolveType(const std::string &baseType, bool hasPointer);
   llvm::Type *getLLVMType(std::shared_ptr<Type> type);
@@ -238,6 +238,7 @@ private:
   llvm::Value *genFreeStmt(const FreeStmt *stmt);
 
   // Helpers
+  llvm::AllocaInst *createEntryBlockAlloca(llvm::Type *type, llvm::Value *ArraySize = nullptr, const std::string &varName = "");
   std::string stripMorphology(const std::string &name);
   llvm::Value *genUnsafeStmt(const UnsafeStmt *stmt);
   llvm::Value *genExprStmt(const ExprStmt *stmt);

@@ -273,4 +273,13 @@ void CodeGen::restoreContext(const GenContext &ctx) {
   }
 }
 
+llvm::AllocaInst *CodeGen::createEntryBlockAlloca(llvm::Type *type, llvm::Value *ArraySize, const std::string &varName) {
+  llvm::Function *TheFunction = m_Builder.GetInsertBlock()->getParent();
+  if (TheFunction->empty()) {
+    llvm::BasicBlock *Entry = llvm::BasicBlock::Create(m_Context, "entry", TheFunction);
+  }
+  llvm::IRBuilder<> TmpB(&TheFunction->getEntryBlock(), TheFunction->getEntryBlock().begin());
+  return TmpB.CreateAlloca(type, ArraySize, varName);
+}
+
 } // namespace toka

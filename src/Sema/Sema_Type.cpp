@@ -136,10 +136,10 @@ std::shared_ptr<toka::Type> Sema::resolveType(std::shared_ptr<toka::Type> type,
     auto inner = resolveType(ptr->getPointeeType());
     if (inner != ptr->getPointeeType()) {
       std::shared_ptr<toka::PointerType> newPtr;
-      if (ptr->typeKind == toka::Type::UniquePtr)
-        newPtr = std::make_shared<toka::UniquePointerType>(inner);
-      else if (ptr->typeKind == toka::Type::SharedPtr)
+      if (ptr->typeKind == toka::Type::SharedPtr)
         newPtr = std::make_shared<toka::SharedPointerType>(inner);
+      else if (ptr->typeKind == toka::Type::UniquePtr)
+        newPtr = std::make_shared<toka::UniquePointerType>(inner);
       else if (ptr->typeKind == toka::Type::Reference)
         newPtr = std::make_shared<toka::ReferenceType>(inner);
       else

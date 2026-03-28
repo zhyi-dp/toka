@@ -721,7 +721,7 @@ PhysEntity CodeGen::genIndexExpr(const ArrayIndexExpr *idxExpr) {
       if (sh->Kind == ShapeKind::Array) {
         llvm::StructType *st = m_StructTypes[var->Name];
         llvm::Value *alloca =
-            m_Builder.CreateAlloca(st, nullptr, var->Name + "_init");
+            createEntryBlockAlloca(st, nullptr, var->Name + "_init");
 
         for (size_t i = 0; i < idxExpr->Indices.size(); ++i) {
           llvm::Value *val = genExpr(idxExpr->Indices[i].get()).load(m_Builder);
@@ -1051,11 +1051,46 @@ llvm::Value *CodeGen::getIdentityAddr(const std::string &name) {
     baseName.pop_back();
 
   auto it = m_Symbols.find(baseName);
-  if (it == m_Symbols.end())
-    return nullptr;
+  if (it != m_Symbols.end()) {
+    // The Identity is ALWAYS the allocaPtr (the box)
+    return it->second.allocaPtr;
+  }
 
-  // The Identity is ALWAYS the allocaPtr (the box)
-  return it->second.allocaPtr;
+  // [Fix] Closure Environment Fallback for Identity (Handle)
+  if (m_Symbols.count("self")) {
+    auto selfTy = m_Symbols["self"].soulTypeObj;
+    std::cerr << "[DEBUG] getIdentityAddr: self base type=" << (selfTy ? selfTy->toString() : "null") << "\n";
+    if (selfTy && selfTy->isReference()) {
+      auto ptrTy = std::static_pointer_cast<toka::PointerType>(selfTy);
+      selfTy = ptrTy->PointeeType;
+    }
+    std::cerr << "[DEBUG] getIdentityAddr: self unwrapped type=" << (selfTy ? selfTy->toString() : "null") << " isShape=" << (selfTy ? selfTy->isShape() : 0) << "\n";
+    if (selfTy && selfTy->isShape() && selfTy->getSoulName().find("__Closure_") == 0) {
+      auto shapeTy = std::static_pointer_cast<ShapeType>(selfTy);
+      if (shapeTy->Decl) {
+        int count = 0;
+        for (const auto& member : shapeTy->Decl->Members) {
+          std::cerr << "[DEBUG] getIdentityAddr: checking " << baseName << " vs " << member.Name << "\n";
+          if (member.Name == baseName) {
+            llvm::Value *selfAddr = getEntityAddr("self");
+            if (!selfAddr) return nullptr;
+            llvm::Type *structTy = getLLVMType(shapeTy);
+            llvm::Value *fieldAddr = m_Builder.CreateStructGEP(structTy, selfAddr, count, "CLOSURE_CAPT_ID_" + baseName);
+            // The identity of a captured value inside the closure struct is the address of its field.
+            return fieldAddr;
+          }
+          count++;
+        }
+      }
+    }
+  }
+
+  // Try global
+  if (auto *glob = m_Module->getNamedGlobal(baseName)) {
+    return glob;
+  }
+
+  return nullptr;
 }
 
 llvm::Value *CodeGen::emitEntityAddr(const Expr *expr) {
@@ -1082,7 +1117,7 @@ llvm::Value *CodeGen::emitEntityAddr(const Expr *expr) {
   if (!ty)
     ty = pe.value->getType();
 
-  llvm::Value *spill = m_Builder.CreateAlloca(ty, nullptr, "rval.spill");
+  llvm::Value *spill = createEntryBlockAlloca(ty, nullptr, "rval.spill");
   m_Builder.CreateStore(pe.value, spill);
   return spill;
 }

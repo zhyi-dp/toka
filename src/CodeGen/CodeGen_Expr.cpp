@@ -23,13 +23,26 @@
 
 namespace toka {
 
-void CodeGen::emitAcquire(llvm::Value *sharedHandle) {
+void CodeGen::emitAcquire(llvm::Value *sharedHandle, std::shared_ptr<Type> pointeeType) {
   if (!sharedHandle || !sharedHandle->getType()->isStructTy())
     return;
 
   auto *ST = llvm::cast<llvm::StructType>(sharedHandle->getType());
   if (ST->getNumElements() < 2)
     return;
+
+  bool isAtomic = false;
+  std::string pName = "null";
+  if (pointeeType) {
+    if (auto shapeTy = std::dynamic_pointer_cast<ShapeType>(pointeeType->getSoulType())) {
+      isAtomic = shapeTy->IsSync;
+      pName = shapeTy->Name;
+    } else {
+      pName = pointeeType->toString();
+    }
+  }
+
+  std::cerr << "[DEBUG] emitAcquire: " << pName << " isAtomic=" << isAtomic << "\n";
 
   llvm::Value *refPtr =
       m_Builder.CreateExtractValue(sharedHandle, 1, "sh.acq_ref_ptr");
@@ -43,19 +56,33 @@ void CodeGen::emitAcquire(llvm::Value *sharedHandle) {
   m_Builder.CreateCondBr(nn, incBB, contBB);
 
   m_Builder.SetInsertPoint(incBB);
-  llvm::Value *cnt =
-      m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
-  llvm::Value *inc = m_Builder.CreateAdd(
-      cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-  m_Builder.CreateStore(inc, refPtr);
+  
+  if (isAtomic) {
+    m_Builder.CreateAtomicRMW(llvm::AtomicRMWInst::Add, refPtr, m_Builder.getInt32(1), llvm::MaybeAlign(4), llvm::AtomicOrdering::SequentiallyConsistent);
+  } else {
+    llvm::Value *cnt =
+        m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
+    llvm::Value *inc = m_Builder.CreateAdd(
+        cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+    m_Builder.CreateStore(inc, refPtr);
+  }
+  
   m_Builder.CreateBr(contBB);
 
   m_Builder.SetInsertPoint(contBB);
 }
 
-void CodeGen::emitRelease(llvm::Value *sharedHandle, const TokaSymbol &sym) {
+void CodeGen::emitRelease(llvm::Value *sharedHandle, const TokaSymbol &sym, std::shared_ptr<Type> pointeeType) {
   if (!sharedHandle || !sharedHandle->getType()->isStructTy())
     return;
+    
+  bool isAtomic = false;
+  if (pointeeType) {
+    if (auto shapeTy = std::dynamic_pointer_cast<ShapeType>(pointeeType->getSoulType())) {
+      isAtomic = shapeTy->IsSync;
+    }
+  }
+
   llvm::Value *refPtr =
       m_Builder.CreateExtractValue(sharedHandle, 1, "sh.rel_ref_ptr");
   llvm::Value *nn = m_Builder.CreateIsNotNull(refPtr, "sh.rel_nn");
@@ -68,14 +95,21 @@ void CodeGen::emitRelease(llvm::Value *sharedHandle, const TokaSymbol &sym) {
   m_Builder.CreateCondBr(nn, decBB, contBB);
 
   m_Builder.SetInsertPoint(decBB);
-  llvm::Value *cnt =
-      m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
-  llvm::Value *dec = m_Builder.CreateSub(
-      cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
-  m_Builder.CreateStore(dec, refPtr);
+  
+  llvm::Value *isZero = nullptr;
+  if (isAtomic) {
+    llvm::Value *oldCnt = m_Builder.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, refPtr, m_Builder.getInt32(1), llvm::MaybeAlign(4), llvm::AtomicOrdering::SequentiallyConsistent);
+    isZero = m_Builder.CreateICmpEQ(oldCnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+  } else {
+    llvm::Value *cnt =
+        m_Builder.CreateLoad(llvm::Type::getInt32Ty(m_Context), refPtr);
+    llvm::Value *dec = m_Builder.CreateSub(
+        cnt, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 1));
+    m_Builder.CreateStore(dec, refPtr);
+    isZero = m_Builder.CreateICmpEQ(
+        dec, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
+  }
 
-  llvm::Value *isZero = m_Builder.CreateICmpEQ(
-      dec, llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0));
   llvm::BasicBlock *freeBB =
       llvm::BasicBlock::Create(m_Context, "sh.rel_free", f);
   m_Builder.CreateCondBr(isZero, freeBB, contBB);
@@ -169,7 +203,7 @@ void CodeGen::emitEnvelopeRebind(llvm::Value *handleAddr, llvm::Value *rhsVal,
     // 1. Release(Old)
     llvm::Value *oldVal =
         m_Builder.CreateLoad(rhsVal->getType(), handleAddr, "sh.old_handle");
-    emitRelease(oldVal, sym);
+    emitRelease(oldVal, sym, sym.soulTypeObj);
     // 2. Update(Handle) with new owning handle from genExpr
     m_Builder.CreateStore(rhsVal, handleAddr);
   } else if (sym.morphology == Morphology::Unique) {
@@ -1035,6 +1069,11 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
 }
 
 PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
+  std::cerr << "[DEBUG] genUnaryExpr Op=" << (int)unary->Op;
+  if (dynamic_cast<const VariableExpr*>(unary->RHS.get())) {
+    std::cerr << " RHS=" << dynamic_cast<const VariableExpr*>(unary->RHS.get())->Name;
+  }
+  std::cerr << "\n";
   if (unary->Op == TokenType::PlusPlus || unary->Op == TokenType::MinusMinus) {
     llvm::Value *addr = genAddr(unary->RHS.get());
     if (!addr)
@@ -1191,7 +1230,12 @@ PhysEntity CodeGen::genUnaryExpr(const UnaryExpr *unary) {
 
     llvm::Value *val =
         m_Builder.CreateLoad(handleTy, identityAddr, "share.val");
-    emitAcquire(val);
+    std::shared_ptr<Type> pType = nullptr;
+    if (unary->RHS->ResolvedType) pType = unary->RHS->ResolvedType->getPointeeType();
+    
+    std::cerr << "[DEBUG] Tilde calling emitAcquire for Variable " << unary->RHS->toString() << " with pType=" << (pType ? pType->toString() : "null") << " IsSync=" << (pType && pType->isShape() ? std::static_pointer_cast<ShapeType>(pType)->IsSync : 0) << "\n";
+    
+    emitAcquire(val, pType);
 
     std::string typeName =
         unary->RHS->ResolvedType ? unary->RHS->ResolvedType->toString() : "";
@@ -1365,7 +1409,7 @@ PhysEntity CodeGen::genCastExpr(const CastExpr *cast) {
     }
     // If one is not a pointer, we need alloca/bitcast (Zero-cost
     // GEP/Address logic)
-    llvm::Value *tmp = m_Builder.CreateAlloca(srcType);
+    llvm::Value *tmp = createEntryBlockAlloca(srcType);
     m_Builder.CreateStore(val, tmp);
     llvm::Value *castPtr =
         m_Builder.CreateBitCast(tmp, llvm::PointerType::getUnqual(targetType));
@@ -1508,7 +1552,7 @@ PhysEntity CodeGen::genVariableExpr(const VariableExpr *var) {
     if (var->ResolvedType && var->ResolvedType->isSharedPtr()) {
       // SharedPtr: Share (Load + Acquire)
       llvm::Value *val = m_Builder.CreateLoad(soulType, soulAddr, "share.val");
-      emitAcquire(val);
+      emitAcquire(val, var->ResolvedType->getPointeeType());
       return PhysEntity(val, typeName, soulType, false); // Return RValue
     }
   }
@@ -1631,12 +1675,12 @@ PhysEntity CodeGen::genMatchExpr(const MatchExpr *expr) {
   llvm::AllocaInst *resultAddr = nullptr;
   if (!resultType->isVoidTy()) {
     resultAddr =
-        m_Builder.CreateAlloca(resultType, nullptr, "match_result_addr");
+        createEntryBlockAlloca(resultType, nullptr, "match_result_addr");
   }
 
   // Store target to temp alloca for addressing
   llvm::Value *targetAddr =
-      m_Builder.CreateAlloca(targetType, nullptr, "match_target_addr");
+      createEntryBlockAlloca(targetType, nullptr, "match_target_addr");
   m_Builder.CreateStore(targetVal, targetAddr);
 
   llvm::Function *func = m_Builder.GetInsertBlock()->getParent();
@@ -1896,7 +1940,7 @@ PhysEntity CodeGen::genIfExpr(const IfExpr *ie) {
   // Track result via alloca if this if yields a value (determined by
   // PassExpr)
   llvm::AllocaInst *resultAddr =
-      m_Builder.CreateAlloca(m_Builder.getInt32Ty(), nullptr, "if_result_addr");
+      createEntryBlockAlloca(m_Builder.getInt32Ty(), nullptr, "if_result_addr");
   // Initialize with 0 or some default
   m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
 
@@ -1943,7 +1987,7 @@ PhysEntity CodeGen::genIfExpr(const IfExpr *ie) {
 
 PhysEntity CodeGen::genGuardExpr(const GuardExpr *guard) {
   llvm::AllocaInst *resultAddr =
-      m_Builder.CreateAlloca(m_Builder.getInt32Ty(), nullptr, "guard_result_addr");
+      createEntryBlockAlloca(m_Builder.getInt32Ty(), nullptr, "guard_result_addr");
   m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
 
   llvm::Value *condVal = nullptr;
@@ -2049,7 +2093,7 @@ PhysEntity CodeGen::genWhileExpr(const WhileExpr *we) {
       llvm::BasicBlock::Create(m_Context, "while_after");
 
   // Result via alloca
-  llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
+  llvm::AllocaInst *resultAddr = createEntryBlockAlloca(
       m_Builder.getInt32Ty(), nullptr, "while_result_addr");
   m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
 
@@ -2097,7 +2141,7 @@ PhysEntity CodeGen::genLoopExpr(const LoopExpr *le) {
   llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(m_Context, "loop_after");
 
   // Result via alloca
-  llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
+  llvm::AllocaInst *resultAddr = createEntryBlockAlloca(
       m_Builder.getInt32Ty(), nullptr, "loop_result_addr");
   m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
 
@@ -2142,12 +2186,12 @@ PhysEntity CodeGen::genForExpr(const ForExpr *fe) {
   llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(m_Context, "for_after");
 
   // Result via alloca
-  llvm::AllocaInst *resultAddr = m_Builder.CreateAlloca(
+  llvm::AllocaInst *resultAddr = createEntryBlockAlloca(
       m_Builder.getInt32Ty(), nullptr, "for_result_addr");
   m_Builder.CreateStore(m_Builder.getInt32(0), resultAddr);
 
   // Loop index
-  llvm::AllocaInst *idxAlloca = m_Builder.CreateAlloca(
+  llvm::AllocaInst *idxAlloca = createEntryBlockAlloca(
       llvm::Type::getInt32Ty(m_Context), nullptr, "for_idx");
   m_Builder.CreateStore(
       llvm::ConstantInt::get(llvm::Type::getInt32Ty(m_Context), 0), idxAlloca);
@@ -2243,7 +2287,7 @@ PhysEntity CodeGen::genForExpr(const ForExpr *fe) {
   } else {
     // Array R-Value (LLVM Array)
     llvm::Value *allocaColl =
-        m_Builder.CreateAlloca(collVal->getType(), nullptr, "for_arr_tmp");
+        createEntryBlockAlloca(collVal->getType(), nullptr, "for_arr_tmp");
     m_Builder.CreateStore(collVal, allocaColl);
     elemPtr = m_Builder.CreateGEP(
         collVal->getType(), allocaColl,
@@ -2263,7 +2307,7 @@ PhysEntity CodeGen::genForExpr(const ForExpr *fe) {
   // 4. Load and Store into Loop Variable
   llvm::Value *elem = m_Builder.CreateLoad(elemTy, elemPtr, vName);
   llvm::AllocaInst *vAlloca =
-      m_Builder.CreateAlloca(elem->getType(), nullptr, vName);
+      createEntryBlockAlloca(elem->getType(), nullptr, vName);
   m_Builder.CreateStore(elem, vAlloca);
 
   // Register in legacy and new symbol tables
@@ -2356,7 +2400,7 @@ void CodeGen::genPatternBinding(const MatchArm::Pattern *pat,
     // Create local alloca
     llvm::Type *allocaType = val->getType();
     llvm::AllocaInst *alloca =
-        m_Builder.CreateAlloca(allocaType, nullptr, pName);
+        createEntryBlockAlloca(allocaType, nullptr, pName);
     m_Builder.CreateStore(val, alloca);
 
     m_NamedValues[pName] = alloca;
@@ -2456,7 +2500,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
         return nullptr; // Avoids crashing on CreateAlloca(nullptr)
       }
       llvm::StructType *st = m_StructTypes[sh->Name];
-      auto *alloca = m_Builder.CreateAlloca(st, nullptr, sh->Name + "_ctor");
+      auto *alloca = createEntryBlockAlloca(st, nullptr, sh->Name + "_ctor");
 
       // [Fix] Union Alignment
       if (sh->Kind == ShapeKind::Union) {
@@ -2781,7 +2825,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
                     llvm::Type *expectedTy = getLLVMType(fnTy->ParamTypes[i]);
                     
                     if (av && expectedTy->isPointerTy() && av->getType()->isStructTy()) {
-                       llvm::AllocaInst *tmp = m_Builder.CreateAlloca(av->getType(), nullptr, "arg_tmp_byref");
+                       llvm::AllocaInst *tmp = createEntryBlockAlloca(av->getType(), nullptr, "arg_tmp_byref");
                        m_Builder.CreateStore(av, tmp);
                        av = tmp;
                        expectedTy = av->getType();
@@ -2819,7 +2863,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
             if (argVal && paramTy->isPointerTy() &&
                 argVal->getType()->isStructTy()) {
               // Implicit By-Ref for Structs: Pass Address of Temp
-              llvm::AllocaInst *tmp = m_Builder.CreateAlloca(
+              llvm::AllocaInst *tmp = createEntryBlockAlloca(
                   argVal->getType(), nullptr, "arg_tmp_byref");
               m_Builder.CreateStore(argVal, tmp);
               argVal = tmp;
@@ -2858,7 +2902,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
             return nullptr;
 
           llvm::StructType *st = m_StructTypes[optName];
-          llvm::Value *alloca = m_Builder.CreateAlloca(st, nullptr, "opt_ctor");
+          llvm::Value *alloca = createEntryBlockAlloca(st, nullptr, "opt_ctor");
           llvm::Value *tagAddr =
               m_Builder.CreateStructGEP(st, alloca, 0, "tag_addr");
           m_Builder.CreateStore(
@@ -3025,7 +3069,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
           llvm::Value *rVal = pe.load(m_Builder);
           if (rVal) {
             llvm::AllocaInst *tmp =
-                m_Builder.CreateAlloca(rVal->getType(), nullptr, "arg_tmp");
+                createEntryBlockAlloca(rVal->getType(), nullptr, "arg_tmp");
             m_Builder.CreateStore(rVal, tmp);
             val = tmp;
           }
@@ -3068,7 +3112,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
            if (envTy->isPointerTy()) {
                envPtrAddr = val;
            } else {
-               envPtrAddr = m_Builder.CreateAlloca(envTy, nullptr, "closure_env_alloc");
+               envPtrAddr = createEntryBlockAlloca(envTy, nullptr, "closure_env_alloc");
                m_Builder.CreateStore(val, envPtrAddr);
            }
            
@@ -3092,7 +3136,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
            fatPtr = m_Builder.CreateInsertValue(fatPtr, opaqueFunc, 1);
            
            // Pass fat pointer by reference (ABI for FunctionType)
-           llvm::AllocaInst *fatPtrAlloc = m_Builder.CreateAlloca(fatPtrTy, nullptr, "fat_ptr_alloc");
+           llvm::AllocaInst *fatPtrAlloc = createEntryBlockAlloca(fatPtrTy, nullptr, "fat_ptr_alloc");
            m_Builder.CreateStore(fatPtr, fatPtrAlloc);
            val = fatPtrAlloc;
         }
@@ -3104,7 +3148,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
     if (val && i < callee->getFunctionType()->getNumParams()) {
       llvm::Type *paramTy = callee->getFunctionType()->getParamType(i);
       if (paramTy->isPointerTy() && val->getType()->isStructTy()) {
-        llvm::AllocaInst *tmp = m_Builder.CreateAlloca(val->getType(), nullptr,
+        llvm::AllocaInst *tmp = createEntryBlockAlloca(val->getType(), nullptr,
                                                        "arg_fallback_byref");
         m_Builder.CreateStore(val, tmp);
         val = tmp;
@@ -3189,7 +3233,7 @@ PhysEntity CodeGen::genCallExpr(const CallExpr *call) {
 
             // Pass address of Fat Pointer (Struct)
             llvm::AllocaInst *tmp =
-                m_Builder.CreateAlloca(fatPtrTy, nullptr, "dyn_tmp");
+                createEntryBlockAlloca(fatPtrTy, nullptr, "dyn_tmp");
             m_Builder.CreateStore(fatPtr, tmp);
             val = tmp;
             // Skip standard casting if we handled it here?
@@ -3405,7 +3449,7 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
   }
 
   llvm::Value *alloca =
-      m_Builder.CreateAlloca(st, nullptr, init->ShapeName + "_init");
+      createEntryBlockAlloca(st, nullptr, init->ShapeName + "_init");
   auto &fields = m_StructFieldNames[shapeName];
 
   for (const auto &f : init->Members) {
@@ -3535,7 +3579,7 @@ PhysEntity CodeGen::genInitStructExpr(const InitStructExpr *init) {
 
     if (f.second && f.second->ResolvedType &&
         f.second->ResolvedType->isSharedPtr()) {
-      emitAcquire(fieldVal);
+      emitAcquire(fieldVal, f.second->ResolvedType->getPointeeType());
     }
 
     m_Builder.CreateStore(fieldVal, fieldAddr);
@@ -3651,7 +3695,7 @@ PhysEntity CodeGen::genTupleExpr(const TupleExpr *expr) {
 
     // [Constitution] Shared Pointer RC Acquisition for Tuples
     if (e->ResolvedType && e->ResolvedType->isSharedPtr()) {
-      emitAcquire(v);
+      emitAcquire(v, e->ResolvedType->getPointeeType());
     }
 
     if (auto *c = llvm::dyn_cast<llvm::Constant>(v)) {
@@ -3751,7 +3795,7 @@ PhysEntity CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
     return nullptr;
   }
 
-  llvm::Value *alloca = m_Builder.CreateAlloca(recType, nullptr, "anon_rec");
+  llvm::Value *alloca = createEntryBlockAlloca(recType, nullptr, "anon_rec");
 
   for (size_t i = 0; i < expr->Fields.size(); ++i) {
     PhysEntity val_ent = genExpr(expr->Fields[i].second.get()).load(m_Builder);
@@ -3765,7 +3809,7 @@ PhysEntity CodeGen::genAnonymousRecordExpr(const AnonymousRecordExpr *expr) {
     // [Constitution] Shared Pointer RC Acquisition for Anonymous Records
     if (expr->Fields[i].second->ResolvedType &&
         expr->Fields[i].second->ResolvedType->isSharedPtr()) {
-      emitAcquire(val);
+      emitAcquire(val, expr->Fields[i].second->ResolvedType->getPointeeType());
     }
 
     m_Builder.CreateStore(val, ptr);
@@ -3898,7 +3942,7 @@ PhysEntity CodeGen::genRepeatedArrayExpr(const RepeatedArrayExpr *expr) {
     return PhysEntity(arrVal, arrayTypeName, arrTy, false);
   }
   llvm::Value *alloca =
-      m_Builder.CreateAlloca(arrTy, nullptr, "repeated_array");
+      createEntryBlockAlloca(arrTy, nullptr, "repeated_array");
   for (uint64_t i = 0; i < count; ++i) {
     llvm::Value *ptr = m_Builder.CreateInBoundsGEP(
         arrTy, alloca,
@@ -3928,7 +3972,7 @@ PhysEntity CodeGen::genClosureExpr(const ClosureExpr *expr) {
   llvm::Type *llvmTy = getLLVMType(shapeType);
   if (!llvmTy) return nullptr;
 
-  llvm::Value *alloca = m_Builder.CreateAlloca(llvmTy, nullptr, "closure_env");
+  llvm::Value *alloca = createEntryBlockAlloca(llvmTy, nullptr, "closure_env");
 
   // Populate captures
   for (size_t i = 0; i < shapeType->Decl->Members.size(); ++i) {
@@ -3946,7 +3990,7 @@ PhysEntity CodeGen::genClosureExpr(const ClosureExpr *expr) {
        }
     } else {
        // Value capture
-       llvm::Value *srcAddr = getEntityAddr(member.Name); 
+       llvm::Value *srcAddr = getIdentityAddr(member.Name); 
        if (srcAddr) {
            llvm::Type *loadTy = nullptr;
            if (member.ResolvedType) {
@@ -3960,6 +4004,22 @@ PhysEntity CodeGen::genClosureExpr(const ClosureExpr *expr) {
            }
            auto val = m_Builder.CreateLoad(loadTy, srcAddr);
            m_Builder.CreateStore(val, fieldAddr);
+           
+           // [Fix] Memory Leak/Double Free: Nullify the original pointer if the capture is `cede`
+           bool isCede = false;
+           for (const auto& cap : expr->ExplicitCaptures) {
+               if (cap.Name == member.Name && cap.Mode == CaptureMode::ExplicitCede) {
+                   isCede = true;
+                   break;
+               }
+           }
+           if (isCede) {
+               if (loadTy->isPointerTy()) {
+                   m_Builder.CreateStore(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(loadTy)), srcAddr);
+               } else if (loadTy->isStructTy()) {
+                   m_Builder.CreateStore(llvm::ConstantAggregateZero::get(loadTy), srcAddr);
+               }
+           }
        } else {
            std::cerr << "CodeGen Internal Error: Captured variable '" << member.Name << "' val not found.\n";
        }

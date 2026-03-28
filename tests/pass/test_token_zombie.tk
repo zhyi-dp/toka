@@ -3,7 +3,7 @@
 
 shape SelfRef(
     name: str,
-    &ref: str <- &name  // 自引用，ref 的借用令牌依赖于 name
+    &ref: str <- name  // 自引用，ref 的借用令牌依赖于 name
 )
 
 fn main() -> i32 {

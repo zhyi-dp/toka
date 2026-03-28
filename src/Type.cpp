@@ -387,6 +387,7 @@ void ShapeType::resolve(ShapeDecl *decl) {
   Decl = decl;
   if (decl) {
     Name = decl->Name;
+    IsSync = decl->IsSync; // [NEW] Propagate thread-safety bounds
   }
 }
 

@@ -1,0 +1,97 @@
+import std/sync::{Mutex}
+import std/thread::{spawn, yield_now}
+import std/io::{println}
+
+pub fn main() -> i32 {
+    println("Testing atomic reference counting for ~Mutex...")
+    auto ~m = Mutex<i32>::new(42)
+    
+    auto ~m1 = ~m
+    auto ~m2 = ~m
+    auto ~m3 = ~m
+    auto ~m4 = ~m
+    auto ~m5 = ~m
+
+    auto f1: fn() -> cede i32 = [cede m1] {
+        auto i# = 0
+        while i < 50000 {
+            auto ~local = ~m1
+            // Use locked value to ensure no optimization removes this
+            auto lock = local.lock()
+            if lock.is_err() { return cede 1 }
+            local.unlock().unwrap()
+            i = i + 1
+        }
+        return cede 0
+    }
+
+    auto f2: fn() -> cede i32 = [cede m2] {
+        auto i# = 0
+        while i < 50000 {
+            auto ~local = ~m2
+            auto lock = local.lock()
+            if lock.is_err() { return cede 1 }
+            local.unlock().unwrap()
+            i = i + 1
+        }
+        return cede 0
+    }
+
+    auto f3: fn() -> cede i32 = [cede m3] {
+        auto i# = 0
+        while i < 50000 {
+            auto ~local = ~m3
+            auto lock = local.lock()
+            if lock.is_err() { return cede 1 }
+            local.unlock().unwrap()
+            i = i + 1
+        }
+        return cede 0
+    }
+
+    auto f4: fn() -> cede i32 = [cede m4] {
+        auto i# = 0
+        while i < 50000 {
+            auto ~local = ~m4
+            auto lock = local.lock()
+            if lock.is_err() { return cede 1 }
+            local.unlock().unwrap()
+            i = i + 1
+        }
+        return cede 0
+    }
+
+    auto f5: fn() -> cede i32 = [cede m5] {
+        auto i# = 0
+        while i < 50000 {
+            auto ~local = ~m5
+            auto lock = local.lock()
+            if lock.is_err() { return cede 1 }
+            local.unlock().unwrap()
+            i = i + 1
+        }
+        return cede 0
+    }
+
+    println("Spawning 5 threads, each doing 50000 local clone/drops of ~Mutex...")
+
+    auto t1# = spawn<i32>(f1)
+    auto t2# = spawn<i32>(f2)
+    auto t3# = spawn<i32>(f3)
+    auto t4# = spawn<i32>(f4)
+    auto t5# = spawn<i32>(f5)
+
+    auto r1 = t1#.join().unwrap()
+    auto r2 = t2#.join().unwrap()
+    auto r3 = t3#.join().unwrap()
+    auto r4 = t4#.join().unwrap()
+    auto r5 = t5#.join().unwrap()
+
+    if r1 != 0 || r2 != 0 || r3 != 0 || r4 != 0 || r5 != 0 {
+        println("A thread failed!")
+        return 1
+    }
+
+    println("Stress test PASS! Reference counter didn't corrupt :)")
+    return 0
+}

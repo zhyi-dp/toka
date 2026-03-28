@@ -637,6 +637,13 @@ void Sema::registerImpl(ImplDecl *Impl) {
       }
     }
   }
+
+  // [Toka] Sync Trait: Mark type as IsSync
+  if (Impl->TraitName == "sync" || Impl->TraitName == "@sync") {
+    if (ShapeMap.count(resolvedTypeName)) {
+      ShapeMap[resolvedTypeName]->IsSync = true;
+    }
+  }
 }
 
 void Sema::checkFunction(FunctionDecl *Fn) {
@@ -1027,76 +1034,53 @@ void Sema::computeShapeProperties(const std::string &shapeName, Module &M) {
       }
   }
 
-  if (S) {
+    if (S) {
     for (auto &member : S->Members) {
-      // Check member type
-      std::string type = member.Type;
-      // Primitive checks
-      if (member.HasPointer) { // Raw pointer syntax *T in AST usually
-                               // Wait, AST member has flags.
-                               // If member.Type is bare, rely on flags?
-                               // In Parser, *T -> HasPointer=true.
-      }
-
-      // We need to parse strict morphology from Type string or Member flags
-      // Member flags: HasPointer, IsUnique, IsShared
-
-      if (member.HasPointer) { // *T
+      std::string typeStr = member.Type;
+      if (member.HasPointer) {
         props.HasRawPtr = true;
       }
 
-      std::string typeStr = member.Type;
-      // Handle flag-based or string-based sigils
       if (member.IsUnique || member.IsShared || typeStr.rfind("^", 0) == 0 ||
           typeStr.rfind("~", 0) == 0) {
         props.HasDrop = true;
       }
 
       // Check if it's an array string "[T; N]"
-      // Note: This is a hacky parse, but consistent with current AST
       if (typeStr.size() > 0 && typeStr.front() == '[') {
         size_t semi = typeStr.rfind(';');
         if (semi != std::string::npos) {
           std::string inner = typeStr.substr(1, semi - 1);
-          // Recurse on inner type
           if (inner.rfind("^", 0) == 0 || inner.rfind("~", 0) == 0) {
             props.HasDrop = true;
           } else {
             computeShapeProperties(inner, M);
             if (m_ShapeProps[inner].HasDrop)
               props.HasDrop = true;
-            // Check explicit drop on inner type (e.g. valid struct inside
-            // array)
-            bool innerHasDrop = false;
-            for (auto &I : M.Impls) {
-              if (I->TypeName == inner) {
-                for (auto &M : I->Methods) {
-                  if (M->Name == "drop") {
-                    innerHasDrop = true;
-                    break;
-                  }
-                }
-              }
+            // Handle IsSync contagion
+            if (ShapeMap.count(inner) && ShapeMap[inner]->IsSync) {
+                // If member's type is sync, this shape is sync
+                const_cast<ShapeDecl*>(S)->IsSync = true;
             }
-            if (innerHasDrop)
-              props.HasDrop = true;
           }
         }
       } else if (!member.HasPointer && !member.IsUnique && !member.IsShared &&
                  !member.IsReference && typeStr.rfind("^", 0) != 0 &&
                  typeStr.rfind("~", 0) != 0) {
-        // It's a value type T. Check if T is a Shape.
+        // Value Type T. Check if T is a Shape.
         std::string baseType = member.Type;
         if (ShapeMap.count(baseType)) {
           computeShapeProperties(baseType, M);
           auto &subProps = m_ShapeProps[baseType];
-          if (subProps.HasDrop)
-            props.HasDrop = true;
-          if (subProps.HasManualDrop)
-            props.HasManualDrop = true;
+          if (subProps.HasDrop) props.HasDrop = true;
+          if (subProps.HasManualDrop) props.HasManualDrop = true;
+          // [Toka] IsSync Contagion
+          if (ShapeMap[baseType]->IsSync) {
+              const_cast<ShapeDecl*>(S)->IsSync = true;
+          }
         }
 
-        // Also check if type T has 'drop' method itself (encap)
+        // Also check if type T has 'drop' method itself
         bool memberTypeHasExplicitDrop = false;
         for (auto &I : M.Impls) {
           if (I->TypeName == baseType) {

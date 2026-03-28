@@ -255,6 +255,7 @@ public:
   std::string Name;
   std::vector<std::shared_ptr<Type>> GenericArgs; // [NEW] Generic Arguments
   ShapeDecl *Decl = nullptr;
+  bool IsSync = false; // [NEW] Track atomic reference status based on definition
   ShapeType(const std::string &name,
             std::vector<std::shared_ptr<Type>> args = {})
       : Type(Shape), Name(name), GenericArgs(std::move(args)) {}

@@ -1,4 +1,4 @@
-fn biger(a:i32, b:i32) -> &i32 <- &a|&b {
+fn biger(a:i32, b:i32) -> &i32 <- a|b {
     if a > b {
         return &a
     } else {
@@ -6,7 +6,7 @@ fn biger(a:i32, b:i32) -> &i32 <- &a|&b {
     }
 }
 
-fn swap_pos(a:i32, b:i32) -> (&i32<-&b, &i32<-&a) {
+fn swap_pos(a:i32, b:i32) -> (&i32<-b, &i32<-a) {
     return (&b, &a)
 }
 

@@ -598,7 +598,10 @@ void Sema::checkStmt(Stmt *S) {
     if (Var->IsValueMutable || (morph.empty() && Var->IsRebindable))
       fullType += "#";
 
-    Info.TypeObj = toka::Type::fromString(fullType);
+    Info.TypeObj = resolveType(toka::Type::fromString(fullType), false);
+    if (!Info.TypeObj) {
+      Info.TypeObj = toka::Type::fromString(fullType);
+    }
     Info.IsRebindable = Var->IsRebindable;
     Var->ResolvedType = Info.TypeObj;
 

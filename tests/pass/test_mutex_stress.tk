@@ -1,0 +1,57 @@
+import std/sync::{Mutex}
+import std/thread::{spawn, yield_now}
+import std/io::{println}
+
+pub fn main() -> i32 {
+    auto m = Mutex<i32>::new(0)
+    
+    // 我们启动 5 个线程，每个线程循环 1000 次，每次将 m.data 加 1
+    // 总计预期应该是 5000
+    auto f: fn() -> cede i32 = {
+        auto i# = 0
+        while i < 1000 {
+            auto lock_res = m.lock()
+            if lock_res.is_err() {
+                return cede 1
+            }
+            
+            // 拿到锁之后进行计算
+            auto current = m.data
+            // 模拟一些复杂的环境故意 yield 让出 CPU 增加竞态概率
+            if i % 10 == 0 {
+                yield_now()
+            }
+            m.data = current + 1
+            
+            m.unlock().unwrap()
+            i = i + 1
+        }
+        return cede 0
+    }
+    
+    println("Spawning 5 threads to increment Mutex data 1000 times each...")
+
+    auto t1# = spawn<i32>(f)
+    auto t2# = spawn<i32>(f)
+    auto t3# = spawn<i32>(f)
+    auto t4# = spawn<i32>(f)
+    auto t5# = spawn<i32>(f)
+    
+    t1#.join().unwrap()
+    t2#.join().unwrap()
+    t3#.join().unwrap()
+    t4#.join().unwrap()
+    t5#.join().unwrap()
+    
+    auto final_lock = m.lock().unwrap()
+    println("All threads finished. Final Mutex data: {}", m.data)
+    
+    // 如果无锁保护，最终结果必定小于 5000
+    if m.data == 5000 {
+        println("Stress test PASS! Mutex protected the data perfectly.")
+        return 0
+    }
+    
+    println("Stress test FAIL! Data race occurred.")
+    return 1
+}

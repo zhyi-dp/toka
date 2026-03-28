@@ -1192,6 +1192,7 @@ public:
   std::vector<ShapeMember> Members;
   int64_t ArraySize = 0; // For Array kind
   uint64_t MaxAlign = 1; // For Union/Enum alignment persistence
+  bool IsSync = false;   // [NEW] Indication for thread-safe/atomic reference bounds
 
   ShapeDecl(bool isPub, const std::string &name,
             std::vector<GenericParam> generics, ShapeKind kind,

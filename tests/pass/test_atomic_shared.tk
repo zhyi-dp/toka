@@ -1,0 +1,13 @@
+import std/io::{println}
+import std/sync::{Mutex}
+
+pub fn main() -> i32 {
+    auto ~m = new Mutex<i32>(handle = 0:Addr, data = 42)
+    auto ~shared_m = ~m
+    
+    // Acquire
+    auto ~shared_m2 = ~shared_m
+    
+    // Drop logic should emit Release
+    return 0
+}

@@ -256,7 +256,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
       finalStorage = &arg;
     } else {
       llvm::AllocaInst *alloca =
-          m_Builder.CreateAlloca(allocaType, nullptr, argName + ".addr");
+          createEntryBlockAlloca(allocaType, nullptr, argName + ".addr");
 
       // [Fix] Union Alignment
       if (argDecl.ResolvedType) {
@@ -478,7 +478,8 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
   std::string varName = Type::stripMorphology(var->Name);
   std::cerr << "DEBUG: genVariableDecl: " << varName
-            << " (original: " << var->Name << ")\n";
+            << " (original: " << var->Name << ")"
+            << " Init=" << (var->Init ? typeid(*var->Init).name() : "null") << "\n";
 
   llvm::Value *initVal = nullptr;
   llvm::Type *decayArrayType = nullptr;
@@ -826,7 +827,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     }
   }
 
-  llvm::AllocaInst *alloca = m_Builder.CreateAlloca(type, nullptr, varName);
+  llvm::AllocaInst *alloca = createEntryBlockAlloca(type, nullptr, varName);
 
   // [Fix] Union Alignment
   if (var->ResolvedType) {
@@ -914,7 +915,7 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
              if (envTy->isPointerTy()) {
                  envPtrAddr = initVal;
              } else {
-                 envPtrAddr = m_Builder.CreateAlloca(envTy, nullptr, "closure_env_alloc");
+                 envPtrAddr = createEntryBlockAlloca(envTy, nullptr, "closure_env_alloc");
                  m_Builder.CreateStore(initVal, envPtrAddr);
              }
              
@@ -1108,7 +1109,7 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
     }
 
     llvm::AllocaInst *alloca =
-        m_Builder.CreateAlloca(finalVal->getType(), nullptr, vName);
+        createEntryBlockAlloca(finalVal->getType(), nullptr, vName);
     m_Builder.CreateStore(finalVal, alloca);
 
     m_NamedValues[vName] = alloca;
@@ -1689,7 +1690,7 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
       // Fallback for R-Values: Create temporary alloca
       // Only if objVal is not already a pointer
       if (!objVal->getType()->isPointerTy()) {
-        llvm::AllocaInst *tmp = m_Builder.CreateAlloca(objVal->getType());
+        llvm::AllocaInst *tmp = createEntryBlockAlloca(objVal->getType());
         m_Builder.CreateStore(objVal, tmp);
         finalObjVal = tmp;
       }
@@ -1730,7 +1731,7 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
         // If expects mutable (Pointer) and we have Pointer R-value allow it?
         // Usually IsMutable expects L-Value.
         // For safety, store R-value in temp.
-        llvm::AllocaInst *tmp = m_Builder.CreateAlloca(rval->getType());
+        llvm::AllocaInst *tmp = createEntryBlockAlloca(rval->getType());
         m_Builder.CreateStore(rval, tmp);
         argVal = tmp;
       }
@@ -1741,7 +1742,7 @@ PhysEntity toka::CodeGen::genMethodCall(const toka::MethodCallExpr *expr) {
       if (argVal && callee->arg_size() > i + 1) {
         llvm::Type *paramTy = callee->getFunctionType()->getParamType(i + 1);
         if (paramTy->isPointerTy() && argVal->getType()->isStructTy()) {
-          llvm::AllocaInst *tmp = m_Builder.CreateAlloca(
+          llvm::AllocaInst *tmp = createEntryBlockAlloca(
               argVal->getType(), nullptr, "arg_byref_tmp");
           m_Builder.CreateStore(argVal, tmp);
           argVal = tmp;
