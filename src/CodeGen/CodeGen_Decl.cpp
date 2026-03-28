@@ -317,9 +317,10 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
       bool argHasDrop = false;
       std::string argDropFunc = "";
+      std::string soulName = "";
       if (argDecl.ResolvedType) {
         auto soul = argDecl.ResolvedType->getSoulType();
-        std::string soulName = soul->getSoulName();
+        soulName = soul->getSoulName();
         // Check authoritative metadata from Sema
         if (m_Shapes.count(soulName)) {
           auto SD = m_Shapes[soulName];
@@ -333,7 +334,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
       m_ScopeStack.back().push_back(
           {argName, finalStorage, argAllocTy, false, false,
            false, // [Fix] Borrowed Args: IsUnique=false, IsShared=false
-           ""});  // Callee does NOT drop args
+           "", soulName});  // Callee does NOT drop args
     }
 
     idx++;
@@ -418,7 +419,17 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
 
           if (hasDrop) {
             // Access member
-            llvm::Value *structPtr = getEntityAddr("self");
+            // Access member: Ensure we have the actual struct address (Soul)
+            llvm::Value *structPtr = nullptr;
+            if (m_Symbols.count("self")) {
+                auto &sym = m_Symbols["self"];
+                structPtr = sym.allocaPtr;
+                if (sym.mode == AddressingMode::Pointer) {
+                    structPtr = m_Builder.CreateLoad(m_Builder.getPtrTy(), structPtr, "self.soul_ptr");
+                }
+            } else {
+                structPtr = getEntityAddr("self");
+            }
 
             // GEP to member
             int fieldIdx = -1;
@@ -445,7 +456,7 @@ llvm::Function *CodeGen::genFunction(const FunctionDecl *func,
                   m_ScopeStack[0].push_back({it->Name, fieldEP, fTy,
                                              it->IsUnique, it->IsShared,
                                              !dropFunc.empty(), // HasDrop
-                                             dropFunc});
+                                             dropFunc, baseType});
                 }
               } else {
               }
@@ -1035,6 +1046,10 @@ llvm::Value *CodeGen::genVariableDecl(const VariableDecl *var) {
     info.IsShared = var->IsShared;
     info.HasDrop = hasDrop;
     info.DropFunc = dropFunc;
+    if (m_Symbols.count(varName)) {
+        auto soul = m_Symbols[varName].soulTypeObj;
+        info.SoulName = soul ? soul->getSoulType()->getSoulName() : "";
+    }
 
     m_ScopeStack.back().push_back(info);
 
@@ -1149,7 +1164,7 @@ llvm::Value *CodeGen::genDestructuringDecl(const DestructuringDecl *dest) {
       llvm::Type *vAllocTy = alloca->getType();
       if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(alloca))
         vAllocTy = AI->getAllocatedType();
-      m_ScopeStack.back().push_back({v.Name, alloca, vAllocTy, false, false});
+      m_ScopeStack.back().push_back({v.Name, alloca, vAllocTy, false, false, false, "", deducedType});
     }
   }
   return nullptr;

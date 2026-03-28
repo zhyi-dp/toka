@@ -1,6 +1,6 @@
+import core/libc::*
+
 pub fn __toka_panic_handler(msg: str)
 {
-    // 裸机保底：死循环
-    while(true) {
-    }
-} 
+    libc_abort()
+}

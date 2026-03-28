@@ -2,9 +2,20 @@ import std/sync::{Mutex}
 import std/thread::{spawn, yield_now}
 import std/io::{println}
 
+shape Counter(
+    val#: i32
+)
+impl Counter@encap {
+    fn drop(self#) {
+        println("Counter dropped")
+    }
+}
 pub fn main() -> i32 {
     println("Testing atomic reference counting for ~Mutex...")
-    auto ~m = Mutex<i32>::make(0)
+    {
+        auto xxx = Mutex<Counter>::new(Counter(val=0))
+    }
+    auto ~m = Mutex<Counter>::make(Counter(val=0))
     
     auto ~m1 = ~m
     auto ~m2 = ~m
@@ -19,7 +30,7 @@ pub fn main() -> i32 {
             // Use locked value to ensure no optimization removes this
             auto lock = local.lock()
             if lock.is_err() { return cede 1 }
-            local.data = local.data + 1
+            local.data.val += 1
             local.unlock().unwrap()
             i = i + 1
         }
@@ -32,7 +43,7 @@ pub fn main() -> i32 {
             auto ~local = ~m2
             auto lock = local.lock()
             if lock.is_err() { return cede 1 }
-            local.data = local.data + 1
+            local.data.val += 1
             local.unlock().unwrap()
             i = i + 1
         }
@@ -45,7 +56,7 @@ pub fn main() -> i32 {
             auto ~local = ~m3
             auto lock = local.lock()
             if lock.is_err() { return cede 1 }
-            local.data = local.data + 1
+            local.data.val += 1
             local.unlock().unwrap()
             i = i + 1
         }
@@ -58,7 +69,7 @@ pub fn main() -> i32 {
             auto ~local = ~m4
             auto lock = local.lock()
             if lock.is_err() { return cede 1 }
-            local.data = local.data + 1
+            local.data.val += 1
             local.unlock().unwrap()
             i = i + 1
         }
@@ -71,7 +82,7 @@ pub fn main() -> i32 {
             auto ~local = ~m5
             auto lock = local.lock()
             if lock.is_err() { return cede 1 }
-            local.data = local.data + 1
+            local.data.val += 1
             local.unlock().unwrap()
             i = i + 1
         }
@@ -97,7 +108,7 @@ pub fn main() -> i32 {
         return 1
     }
 
-    println("Final Mutex data: {}", ~m.data)
+    println("Final Mutex data: {}", ~m.data.val)
 
     println("Stress test PASS! Reference counter didn't corrupt :)")
     return 0

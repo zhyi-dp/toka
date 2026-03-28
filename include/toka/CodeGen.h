@@ -149,6 +149,7 @@ private:
     bool IsShared;         // ~Type
     bool HasDrop;
     std::string DropFunc;
+    std::string SoulName; // [New] Correct type name for destructor lookup
   };
   std::vector<std::vector<VariableScopeInfo>> m_ScopeStack;
 
@@ -236,6 +237,7 @@ private:
   llvm::Value *genDestructuringDecl(const DestructuringDecl *stmt);
   llvm::Value *genDeleteStmt(const DeleteStmt *stmt);
   llvm::Value *genFreeStmt(const FreeStmt *stmt);
+  void emitDropCascade(llvm::Value *ptrAddr, const std::string &typeName);
 
   // Helpers
   llvm::AllocaInst *createEntryBlockAlloca(llvm::Type *type, llvm::Value *ArraySize = nullptr, const std::string &varName = "");

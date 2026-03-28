@@ -117,6 +117,72 @@ PhysEntity CodeGen::genAllocExpr(const AllocExpr *ae) {
   return castedPtr;
 }
 
+void CodeGen::emitDropCascade(llvm::Value *ptrAddr, const std::string &typeName) {
+  if (typeName.empty() || !ptrAddr) return;
+  
+  std::string dropFunc = "";
+  if (m_Shapes.count(typeName)) {
+    dropFunc = m_Shapes[typeName]->MangledDestructorName;
+  }
+  if (dropFunc.empty()) {
+    std::string try1 = "encap_" + typeName + "_drop";
+    std::string try2 = typeName + "_drop"; // Legacy
+    if (m_Module->getFunction(try1)) {
+        dropFunc = try1;
+    } else if (m_Module->getFunction(try2)) {
+        dropFunc = try2;
+    }
+  }
+
+  bool calledDestructor = false;
+  // 1. Core Action: Call custom destructor if present
+  if (!dropFunc.empty()) {
+    llvm::Function *dFn = m_Module->getFunction(dropFunc);
+    if (dFn) {
+      std::cerr << "[DEBUG] emitDropCascade: Calling destructor " << dropFunc << "\n";
+      llvm::Type *elemTy = resolveType(typeName, false);
+      if (elemTy) {
+        llvm::Value *typedPtr = m_Builder.CreateBitCast(ptrAddr, llvm::PointerType::getUnqual(elemTy));
+        m_Builder.CreateCall(dFn, {typedPtr});
+        calledDestructor = true;
+      }
+    } else {
+      std::cerr << "[DEBUG] emitDropCascade: Destructor function " << dropFunc << " NOT found in module!\n";
+    }
+  }
+
+  // 2. Cascade Drop: Recursively drop fields that are shapes natively
+  // [Fix] Bypass manual cascade if we already called a destructor (which handles its own fields)
+  if (!calledDestructor && m_Shapes.count(typeName)) {
+    const ShapeDecl *sh = m_Shapes[typeName];
+    llvm::StructType *st = m_StructTypes[typeName];
+    if (!st) return;
+
+    for (size_t i = 0; i < sh->Members.size(); ++i) {
+      std::string rawType = sh->Members[i].Type;
+      bool isPointer = false;
+      // Strip outer parens, though rare
+      while (!rawType.empty() && rawType[0] == '(' && rawType.back() == ')') {
+        rawType = rawType.substr(1, rawType.size() - 2);
+      }
+      // If it's a pointer type (*T, ^T, ~T), drop cascade is BYPASSED
+      if (!rawType.empty() && (rawType[0] == '*' || rawType[0] == '^' || rawType[0] == '~' || rawType[0] == '&' || rawType[0] == '#')) {
+        isPointer = true;
+      }
+      
+      std::string memberType = Type::stripMorphology(rawType);
+      
+      // If the bare member type is a shape and not behind a pointer, cascade into it!
+      if (!isPointer && m_Shapes.count(memberType)) {
+         std::cerr << "[DEBUG] emitDropCascade: Found shape field " << sh->Members[i].Name << " of type " << memberType << "\n";
+         llvm::Value *typedBase = m_Builder.CreateBitCast(ptrAddr, llvm::PointerType::getUnqual(st));
+         llvm::Value *fieldPtr = m_Builder.CreateStructGEP(st, typedBase, i, "drop_cascade.gep");
+         emitDropCascade(fieldPtr, memberType);
+      }
+    }
+  }
+}
+
 llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
   llvm::Function *freeHook = m_Module->getFunction("free");
 
@@ -188,91 +254,60 @@ llvm::Value *CodeGen::genFreeStmt(const FreeStmt *fs) {
       }
     }
 
-    std::string dropFunc = "";
     if (!typeName.empty()) {
-      if (m_Shapes.count(typeName)) {
-        dropFunc = m_Shapes[typeName]->MangledDestructorName;
-      }
-      if (dropFunc.empty()) {
-        std::string try1 = "encap_" + typeName + "_drop";
-        std::string try2 = typeName + "_drop"; // Legacy
-        if (m_Functions.count(try1))
-          dropFunc = try1;
-        else if (m_Functions.count(try2))
-          dropFunc = try2;
-      }
-    }
+      if (isArray) {
+        // We need the element size
+        llvm::Type *elemTy = resolveType(typeName, false);
 
-    // Use explicit count if provided, otherwise parsed array size
-    if (fs->Count) {
-      PhysEntity res = genExpr(fs->Count.get());
-      dynamicCount = res.load(m_Builder);
-      isArray = true;
-    }
-
-    if (!dropFunc.empty()) {
-      llvm::Function *dFn = m_Module->getFunction(dropFunc);
-      if (dFn) {
-        if (isArray) {
-          // Loop and drop
-          // We need the element size
-          llvm::Type *elemTy = resolveType(typeName, false);
-
-          llvm::Value *countVal = dynamicCount;
-          if (!countVal) {
-            countVal = llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context),
-                                              arraySize);
-          }
-
-          if (countVal->getType() != llvm::Type::getInt64Ty(m_Context)) {
-            countVal = m_Builder.CreateIntCast(
-                countVal, llvm::Type::getInt64Ty(m_Context), false,
-                "count_cast");
-          }
-
-          llvm::BasicBlock *preHeaderBB = m_Builder.GetInsertBlock();
-          llvm::Function *F = preHeaderBB->getParent();
-          llvm::BasicBlock *loopBB =
-              llvm::BasicBlock::Create(m_Context, "drop_loop", F);
-          llvm::BasicBlock *afterBB =
-              llvm::BasicBlock::Create(m_Context, "drop_after", F);
-
-          m_Builder.CreateBr(loopBB);
-          m_Builder.SetInsertPoint(loopBB);
-
-          llvm::PHINode *iVar =
-              m_Builder.CreatePHI(llvm::Type::getInt64Ty(m_Context), 2, "i");
-          iVar->addIncoming(
-              llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 0),
-              preHeaderBB);
-
-          // GEP to element
-          // ptrAddr is the base pointer (void* or T*). Cast to T*
-          llvm::Value *typedBase = m_Builder.CreateBitCast(
-              ptrAddr, llvm::PointerType::getUnqual(elemTy));
-          llvm::Value *elemPtr =
-              m_Builder.CreateInBoundsGEP(elemTy, typedBase, iVar);
-
-          m_Builder.CreateCall(dFn, {elemPtr});
-
-          llvm::Value *nextI = m_Builder.CreateAdd(
-              iVar,
-              llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 1));
-          llvm::Value *cond = m_Builder.CreateICmpULT(nextI, countVal);
-          iVar->addIncoming(nextI, loopBB);
-
-          m_Builder.CreateCondBr(cond, loopBB, afterBB);
-          m_Builder.SetInsertPoint(afterBB);
-
-        } else {
-          // Single drop
-          // Cast ptrAddr to correct type if needed (though opaque pointers
-          // handling makes it easier, drop expects T*)
-          llvm::Type *elemTy = resolveType(typeName, false);
-          llvm::Value *typedPtr = m_Builder.CreateBitCast(
-              ptrAddr, llvm::PointerType::getUnqual(elemTy));
-          m_Builder.CreateCall(dFn, {typedPtr});
+        llvm::Value *countVal = dynamicCount;
+        if (!countVal) {
+          countVal = llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context),
+                                            arraySize);
         }
+
+        if (countVal->getType() != llvm::Type::getInt64Ty(m_Context)) {
+          countVal = m_Builder.CreateIntCast(
+              countVal, llvm::Type::getInt64Ty(m_Context), false,
+              "count_cast");
+        }
+
+        llvm::BasicBlock *preHeaderBB = m_Builder.GetInsertBlock();
+        llvm::Function *F = preHeaderBB->getParent();
+        llvm::BasicBlock *loopBB =
+            llvm::BasicBlock::Create(m_Context, "drop_loop", F);
+        llvm::BasicBlock *afterBB =
+            llvm::BasicBlock::Create(m_Context, "drop_after", F);
+
+        m_Builder.CreateBr(loopBB);
+        m_Builder.SetInsertPoint(loopBB);
+
+        llvm::PHINode *iVar =
+            m_Builder.CreatePHI(llvm::Type::getInt64Ty(m_Context), 2, "i");
+        iVar->addIncoming(
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 0),
+            preHeaderBB);
+
+        // GEP to element
+        // ptrAddr is the base pointer (void* or T*). Cast to T*
+        llvm::Value *typedBase = m_Builder.CreateBitCast(
+            ptrAddr, llvm::PointerType::getUnqual(elemTy));
+        llvm::Value *elemPtr =
+            m_Builder.CreateInBoundsGEP(elemTy, typedBase, iVar);
+
+        emitDropCascade(elemPtr, typeName);
+
+        llvm::Value *nextI = m_Builder.CreateAdd(
+            iVar,
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(m_Context), 1));
+        llvm::Value *cond = m_Builder.CreateICmpULT(nextI, countVal);
+        iVar->addIncoming(nextI, loopBB);
+
+        m_Builder.CreateCondBr(cond, loopBB, afterBB);
+        m_Builder.SetInsertPoint(afterBB);
+
+      } else {
+        // Single drop
+        emitDropCascade(ptrAddr, typeName);
       }
     }
 
@@ -700,7 +735,11 @@ PhysEntity CodeGen::genMemberExpr(const MemberExpr *mem) {
 
   llvm::Type *finalIrTy = irTy;
   if (mem->ResolvedType) {
-    finalIrTy = getLLVMType(mem->ResolvedType);
+    auto soul = mem->ResolvedType;
+    if (derefCount > 0) {
+        soul = soul->getSoulType();
+    }
+    finalIrTy = getLLVMType(soul);
   }
 
   if (mem->Member.size() >= 2 && mem->Member.substr(0, 2) == "??") {

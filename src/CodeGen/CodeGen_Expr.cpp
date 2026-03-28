@@ -119,10 +119,13 @@ void CodeGen::emitRelease(llvm::Value *sharedHandle, const TokaSymbol &sym, std:
       m_Builder.CreateExtractValue(sharedHandle, 0, "sh.rel_data");
 
   // Call drop if exists
-  if (sym.hasDrop && !sym.dropFunc.empty()) {
-    if (auto *df = m_Module->getFunction(sym.dropFunc)) {
-      m_Builder.CreateCall(df, {data});
+  if (sym.hasDrop) {
+    std::string cleanName = "";
+    if (sym.soulTypeObj) {
+      cleanName = sym.soulTypeObj->getSoulType()->getSoulName();
     }
+    std::cerr << "[DEBUG] emitRelease: dropFunc=" << sym.dropFunc << " cleanName=" << cleanName << "\n";
+    emitDropCascade(data, cleanName);
   }
 
   llvm::Function *freeFn = m_Module->getFunction("free");
@@ -219,10 +222,14 @@ void CodeGen::emitEnvelopeRebind(llvm::Value *handleAddr, llvm::Value *rhsVal,
     m_Builder.CreateCondBr(nn, freeBB, contBB);
 
     m_Builder.SetInsertPoint(freeBB);
-    if (sym.hasDrop && !sym.dropFunc.empty()) {
-      if (auto *df = m_Module->getFunction(sym.dropFunc)) {
-        m_Builder.CreateCall(df, {oldVal});
+    std::cerr << "[DEBUG] emitEnvelopeRebind: Rebinding Unique " << sym.typeName << " hasDrop=" << sym.hasDrop << " dropFunc=" << sym.dropFunc << "\n";
+    if (sym.hasDrop) {
+      std::string cleanName = "";
+      if (sym.soulTypeObj) {
+        cleanName = sym.soulTypeObj->getSoulType()->getSoulName();
       }
+      std::cerr << "[DEBUG] emitEnvelopeRebind: calling dropCascade with cleanName=" << cleanName << "\n";
+      emitDropCascade(oldVal, cleanName);
     }
     llvm::Function *freeFn = m_Module->getFunction("free");
     if (freeFn) {
@@ -240,6 +247,7 @@ void CodeGen::emitEnvelopeRebind(llvm::Value *handleAddr, llvm::Value *rhsVal,
 }
 
 PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
+  std::cerr << "[DEBUG] emitAssignment: LHS=" << lhsExpr->toString() << "\n";
   // 1. Resolve Intent
   bool hasRebind = false;
   const Expr *targetLHS = lhsExpr;
@@ -410,8 +418,22 @@ PhysEntity CodeGen::emitAssignment(const Expr *lhsExpr, const Expr *rhsExpr) {
 }
 
 PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
+  auto unwrapHandle = [&](llvm::Value *v) -> llvm::Value * {
+    if (!v)
+      return nullptr;
+    while (v->getType()->isStructTy()) {
+      unsigned numElems = v->getType()->getStructNumElements();
+      if (numElems == 1 || numElems == 2) {
+        v = m_Builder.CreateExtractValue(v, 0);
+      } else {
+        break;
+      }
+    }
+    return v;
+  };
+
   const BinaryExpr *bin = expr;
-  // fprintf(stderr, "DEBUG: genBinaryExpr Op=%s\n", bin->Op.c_str());
+  std::cerr << "[DEBUG] genBinaryExpr: Op=" << bin->Op << " LHS=" << bin->LHS->toString() << "\n";
   if (bin->Op == "=" || bin->Op == "+=" || bin->Op == "-=" || bin->Op == "*=" ||
       bin->Op == "/=" || bin->Op == "%=") {
 
@@ -451,8 +473,11 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
     }
 
     // Standard Compound Logic
-    llvm::Value *lhsVal =
-        m_Builder.CreateLoad(destType, soulAddr, "compound.lhs");
+    llvm::Value *lhsVal = m_Builder.CreateLoad(destType, soulAddr, "lhs_val");
+    // [Fix] If LHS is reference-like, soulAddr might be address-of-pointer.
+    // However, emitEntityAddr is supposed to return the final Soul address.
+    // Let's ensure we are using the correct value for the operation.
+    lhsVal = unwrapHandle(lhsVal);
 
     llvm::Type *lhsTy = lhsVal->getType();
     llvm::Type *rhsTy = rhsVal->getType();
@@ -875,19 +900,6 @@ PhysEntity CodeGen::genBinaryExpr(const BinaryExpr *expr) {
   }
 
   // Final check to avoid assertion
-  auto unwrapHandle = [&](llvm::Value *v) -> llvm::Value * {
-    if (!v)
-      return nullptr;
-    while (v->getType()->isStructTy()) {
-      unsigned numElems = v->getType()->getStructNumElements();
-      if (numElems == 1 || numElems == 2) {
-        v = m_Builder.CreateExtractValue(v, 0);
-      } else {
-        break;
-      }
-    }
-    return v;
-  };
 
   if (lhsType->isFloatingPointTy() && rhsType->isFloatingPointTy()) {
     if (bin->Op == "+")

@@ -309,12 +309,8 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
             m_Builder.SetInsertPoint(dropBB);
 
             if (it->HasDrop) {
-              llvm::Function *dropFn = m_Module->getFunction(it->DropFunc);
-              if (dropFn) {
-                // Bitcast data to drop function arg type if mismatch (opaque
-                // ptrs usually handle this, but just in case)
-                m_Builder.CreateCall(dropFn, {data});
-              }
+              std::string cleanName = it->SoulName;
+              emitDropCascade(data, cleanName);
             }
             m_Builder.CreateBr(realFreeBB);
             m_Builder.SetInsertPoint(realFreeBB);
@@ -352,11 +348,8 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
           m_Builder.SetInsertPoint(valBB);
 
           if (it->HasDrop) {
-            llvm::Function *dropFn = m_Module->getFunction(it->DropFunc);
-            if (dropFn) {
-              // ptr is the T* loaded from alloca
-              m_Builder.CreateCall(dropFn, {ptr});
-            }
+            std::string cleanName = it->SoulName;
+            emitDropCascade(ptr, cleanName);
           }
 
           llvm::Function *freeFunc = m_Module->getFunction("free");
@@ -372,10 +365,8 @@ void CodeGen::cleanupScopes(size_t targetDepth) {
           currBB = contBB;
         }
       } else if (it->HasDrop && it->Alloca) {
-        llvm::Function *dropFn = m_Module->getFunction(it->DropFunc);
-        if (dropFn) {
-          m_Builder.CreateCall(dropFn, {it->Alloca});
-        }
+        std::string cleanName = it->SoulName;
+        emitDropCascade(it->Alloca, cleanName);
       }
     }
   }
